@@ -61,6 +61,23 @@ JS runtime, no WebView — as part of v1.44 THE NATIVE PM
 6. **Import paths** rewritten from
    `github.com/edgelesssys/continuum/internal/oss/<pkg>` to
    `github.com/ScoobyBaby1999/doomalay/engine/internal/pm/<pkg>`.
+7. **`privatemode/privatemode.go` — `InitializeWithPinnedCA` (ADDED,
+   v1.44.2 THE PIN)** — an additive constructor that wires the secret
+   machinery against a PINNED mesh CA (PEM bytes in, no network I/O, no
+   credential offer): upstream's updater already caches `meshCA`
+   in-memory and only re-attests when it is nil or after a failed
+   exchange; the engine persists exactly that cache across restarts
+   (encrypted at rest in the vault, `engine/internal/pmstate`), gated
+   by the one-shot WASM oracle at pin time. The pinned getter it wires
+   (`pinnedCAGetter`) never fetches, so a stale pin can never be
+   silently re-pinned — deployment drift is detected by the manager
+   (`pmstate.Manager` compares the pinned CA against a fresh attest
+   fetch on exchange failure and surfaces the honest re-verify error).
+   Also additive in the same file: `parseCAPEM` (PEM → x509). And in
+   **`attest/attest.go`**: `GetAttestedDoc` — the fetch half of
+   `GetAttestedMeshCA` refactored to also return the ACTIVE manifest
+   (manifests[0]) so the pin can persist both; `GetAttestedMeshCA` is
+   now a byte-compare wrapper over it (same wire, same errors).
 
 ## Dependencies added to engine/go.mod
 

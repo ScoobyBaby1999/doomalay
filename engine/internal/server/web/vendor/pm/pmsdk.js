@@ -85,6 +85,14 @@ function ensureVerified(c) {
         try {
           await c.verify();
           await c.refreshSecret();
+          // v1.44.2 THE PIN: the handshake just SUCCEEDED — this is the
+          // one-shot oracle moment. The wasm ran the FULL Contrast
+          // attestation verification (the thing the engine may never
+          // compile — its SDK is BSL-1.1). Report the verdict so the
+          // engine pins the mesh CA as verified; fire-and-forget so a
+          // failed report NEVER kills the turn (the next handshake
+          // retries — the pin stays TOFU/unverified until then).
+          reportBootstrap(c);
           return true;
         } catch (e) {
           lastErr = e;
@@ -98,6 +106,57 @@ function ensureVerified(c) {
     });
   }
   return verifyPromise;
+}
+
+// ── v1.44.2 THE PIN: the one-shot WASM oracle report ────────────────
+// After a successful verify()+refreshSecret() handshake, POST the
+// verdict + the exported secret to the engine's /api/pm/bootstrap. The
+// engine fetches its OWN attest doc and pins the mesh CA it extracts,
+// marking the pin verified=true ONLY because this oracle (Edgeless's
+// own verifier, distributed as an MIT wasm artifact) succeeded in the
+// same window. Until this lands, an engine pinned headlessly stays
+// TOFU — honestly surfaced as unverified in the provider card.
+// NOTE (phase law): the chat-turn bridge below stays until v1.44.4
+// THE STRIP retires it; from then on PM turns ride the engine and
+// this oracle is the ONLY thing the web layer runs.
+function u8ToB64(u8) {
+  var s = '';
+  try {
+    for (var i = 0; i < u8.length; i++) s += String.fromCharCode(u8[i]);
+    return btoa(s);
+  } catch (e) { return ''; }
+}
+
+function reportBootstrap(c) {
+  try {
+    var s = c.exportSecret(); // {id, data(base64), expiresAtUnix}
+    var mf = '';
+    try { mf = c._manifestBytes ? u8ToB64(c._manifestBytes) : ''; } catch (e) { /* informational only */ }
+    fetch('/api/pm/bootstrap', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        verified: true,
+        manifest: mf,
+        secret_id: (s && s.id) || '',
+        secret_data: (s && s.data) || '',
+        exp_unix: (s && s.expiresAtUnix) || 0
+      })
+    }).then(function (r) {
+      if (!r.ok) console.warn('[pm-oracle] bootstrap ' + r.status + ' — the pin stays as-is; retried at the next handshake');
+    }).catch(function (e) {
+      console.warn('[pm-oracle] bootstrap failed (offline?) — the pin stays as-is; retried at the next handshake');
+    });
+  } catch (e) {
+    console.warn('[pm-oracle] exportSecret failed — reporting verified without a secret seed');
+    try {
+      fetch('/api/pm/bootstrap', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ verified: true })
+      }).catch(function () { /* fire-and-forget */ });
+    } catch (e2) { /* never break the turn */ }
+  }
 }
 
 // ── v0.71: USAGE NORMALIZATION + ROUND-SUMMING (the PM tracking fix) ──
@@ -924,9 +983,27 @@ function mentionsEffort400(e) {
     s.indexOf('validation error') >= 0 || s.indexOf('input should be') >= 0;
 }
 
+// ── v1.44.2 THE PIN: the re-verify hook ──────────────────────
+// The providers screen's Re-verify button clears the engine pin, then
+// asks the oracle to run again IMMEDIATELY (the button's promise:
+// verification happens NOW, not "at the next chat"). The wasm core is
+// reused when alive — verify() re-runs the FULL attestation
+// verification against the CURRENT deployment doc — and a fresh boot
+// re-fetches everything. On success the oracle's reportBootstrap fires
+// and the engine re-pins verified; on failure the pin stays cleared
+// and the honest error surfaces to the caller.
+async function rerunOracle() {
+  var c = await getCore();  // loads the wasm + key when not alive yet
+  verifyPromise = null;     // force a fresh handshake
+  await ensureVerified(c);  // verify + refreshSecret → reportBootstrap fires
+  return true;
+}
+
 window.PMBridge = {
   streamChat: streamChat,
   available: function () { return typeof WebSocket !== 'undefined' && typeof WebAssembly !== 'undefined'; },
+  // v1.44.2 THE PIN: the honest re-verify drive (providers.js).
+  rerunOracle: rerunOracle,
   // v0.77.5: the rig suite drives the REAL loop with a scripted fake core
   // (chunk-level SSE shapes — the empty-round and phantom-recap exits).
   // Production code never touches this hook.

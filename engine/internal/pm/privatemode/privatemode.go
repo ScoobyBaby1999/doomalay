@@ -8,6 +8,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/x509"
+	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -410,6 +412,55 @@ func (c *Client) doEncryptedAPIRequest(req *http.Request) (*forwarder.StreamingR
 		return nil, fmt.Errorf("decrypting response: %w", err)
 	}
 	return plainResp, nil
+}
+
+// InitializeWithPinnedCA is a DOOMALAY local delta (see pm/PROVENANCE.md
+// delta 7): it wires the secret machinery against a PINNED mesh CA — the
+// persisted form of upstream's in-memory updater cache (the official
+// SDK stores meshCA and only re-attests when it is nil or after a
+// failed exchange; the engine persists exactly that cache across
+// restarts, gated by the one-shot WASM oracle at pin time —
+// engine/internal/pmstate owns the pin).
+//
+// Unlike [Client.Initialize] this performs NO network I/O: the mesh CA
+// is served from caPEM and no credential is offered, so no secret
+// exchange happens until the caller calls [Client.UpdateSecret] or
+// imports a cached secret with [Client.ImportSecret]. Call
+// [Client.SetCredential] before the first renewal. The pinned getter
+// NEVER re-fetches: on exchange failure the caller detects deployment
+// drift itself and surfaces the honest re-verify error — this client
+// never silently re-pins.
+func (c *Client) InitializeWithPinnedCA(ctx context.Context, caPEM []byte) error {
+	c.log.DebugContext(ctx, "Initializing Privatemode client with pinned mesh CA")
+	apiURL, err := url.Parse(c.apiBaseURL)
+	if err != nil {
+		return fmt.Errorf("parsing API base URL: %w", err)
+	}
+	pinned, err := parseCAPEM(caPEM)
+	if err != nil {
+		return fmt.Errorf("parsing pinned mesh CA: %w", err)
+	}
+	secretClient := secretclient.New(c.httpClient, apiURL.Host)
+	secretUpdater := updater.New(secretClient, pinnedCAGetter{cert: pinned}, c.log.WithGroup("secret-updater"))
+	c.secretManager = secretmanager.New(secretUpdater.UpdateSecret, false)
+	return nil
+}
+
+// pinnedCAGetter serves the pinned mesh CA; it never fetches.
+type pinnedCAGetter struct {
+	cert *x509.Certificate
+}
+
+func (p pinnedCAGetter) GetMeshCA(context.Context, auth.Credential) (*x509.Certificate, error) {
+	return p.cert, nil
+}
+
+func parseCAPEM(pemBytes []byte) (*x509.Certificate, error) {
+	block, _ := pem.Decode(pemBytes)
+	if block == nil {
+		return nil, errors.New("decoding mesh CA certificate failed")
+	}
+	return x509.ParseCertificate(block.Bytes)
 }
 
 type attestedMeshCAAdapter struct {

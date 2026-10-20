@@ -26,6 +26,7 @@ import (
         "github.com/ScoobyBaby1999/doomalay/engine/internal/forge"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/hub"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/mcpbus"
+        "github.com/ScoobyBaby1999/doomalay/engine/internal/pmstate"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/secrets"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/store"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/termuxbridge"
@@ -112,6 +113,15 @@ type Server struct {
         // (boot + every 5 min) runs on its own goroutine — failures cache as
         // the honest "unreachable" state, never a silent failure.
         ota *otaManager
+
+        // v1.44.2 THE PIN (PLAN-V144 §2): the PM pin manager — the persisted
+        // mesh CA + active manifest + cached secret (encrypted at rest in
+        // the vault's internal-state namespace) that lets the engine speak
+        // PM's E2E protocol natively without re-attesting on every boot.
+        // TOFU-gated by the one-shot WASM oracle (/api/pm/bootstrap from
+        // pmsdk.js); honestly surfaced (/api/pm/state). nil only when the
+        // vault itself failed to initialize.
+        pm *pmstate.Manager
 }
 
 // New constructs the server and registers all routes.
@@ -131,6 +141,11 @@ func New(cfg *config.Config, db *store.DB, br *brain.Brain) *Server {
         }
 
         s := &Server{cfg: cfg, db: db, vault: vault, brain: br, mux: http.NewServeMux(), remotes: map[string]*brain.RemoteBrain{}}
+        // v1.44.2 THE PIN: the PM pin manager rides the vault (nil when the
+        // vault failed — the pm endpoints then answer 500 honestly).
+        if vault != nil {
+                s.pm = pmstate.NewManager(vault)
+        }
         // v1.17.2 THE BRIDGE: the Termux bridge client (nil = not configured;
         // /api/termux/status answers {"available":false}).
         if cfg.TermuxBridge != "" {
@@ -303,6 +318,12 @@ func (s *Server) routes() {
         // general key-value endpoint would leak every provider's secret to
         // any same-origin JS bug). CORS middleware blocks foreign origins.
         s.mux.HandleFunc("GET /api/keys/value", s.handleKeysValue)
+        // v1.44.2 THE PIN: the PM pin surface — the one-shot wasm oracle
+        // reports here (bootstrap), the connect UI's pill reads state,
+        // reverify clears the pin for a fresh oracle run.
+        s.mux.HandleFunc("GET /api/pm/state", s.handlePMState)
+        s.mux.HandleFunc("POST /api/pm/bootstrap", s.handlePMBootstrap)
+        s.mux.HandleFunc("POST /api/pm/reverify", s.handlePMReverify)
         s.mux.HandleFunc("GET /api/probe-embed", s.handleProbeEmbed)
         s.mux.HandleFunc("GET /api/preview", s.handleLinkPreview)                  // v0.62.1: the universal link verdict
         s.mux.HandleFunc("GET /api/preview/screenshot", s.handlePreviewScreenshot) // v0.62.4: the T3 tier (501 when no chromium)

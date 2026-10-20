@@ -59,55 +59,67 @@ type attestationDoc struct {
 // extracts the mesh CA certificate. When expectedMfBytes is non-nil the
 // first manifest is compared byte-for-byte (the pinned-manifest check).
 func (c Getter) GetAttestedMeshCA(ctx context.Context, expectedMfBytes []byte, cred auth.Credential) (*x509.Certificate, error) {
+	cert, mf0, err := c.GetAttestedDoc(ctx, cred)
+	if err != nil {
+		return nil, err
+	}
+	if expectedMfBytes != nil && !bytes.Equal(mf0, expectedMfBytes) {
+		return nil, ErrManifestMismatch
+	}
+	return cert, nil
+}
+
+// GetAttestedDoc fetches the coordinator attestation document and
+// returns the mesh CA certificate plus the deployment's ACTIVE manifest
+// (manifests[0], decoded from the doc's base64). DOOMALAY local delta:
+// the pin flow (engine/internal/pmstate) persists both as the trust
+// anchor. Like GetAttestedMeshCA it performs NO attestation
+// verification (see the package trust contract above).
+func (c Getter) GetAttestedDoc(ctx context.Context, cred auth.Credential) (*x509.Certificate, []byte, error) {
 	nonce := make([]byte, 32)
 	if _, err := rand.Read(nonce); err != nil {
-		return nil, fmt.Errorf("generating nonce: %w", err)
+		return nil, nil, fmt.Errorf("generating nonce: %w", err)
 	}
 	attestReq, err := json.Marshal(httpapi.AttestReq{Nonce: nonce})
 	if err != nil {
-		return nil, fmt.Errorf("marshaling attest request: %w", err)
+		return nil, nil, fmt.Errorf("marshaling attest request: %w", err)
 	}
 	attestResp, err := httpapi.Do(ctx, c.httpClient, http.MethodPost, "https://"+c.endpoint+"/privatemode/v1/attest", attestReq, cred)
 	if err != nil {
-		return nil, fmt.Errorf("doing attest request: %w", err)
+		return nil, nil, fmt.Errorf("doing attest request: %w", err)
 	}
 	var outer struct {
 		AttestationDoc string `json:"AttestationDoc"`
 	}
 	if err := json.Unmarshal(attestResp, &outer); err != nil {
-		return nil, fmt.Errorf("unmarshaling attest response: %w", err)
+		return nil, nil, fmt.Errorf("unmarshaling attest response: %w", err)
 	}
 	inner, err := base64.StdEncoding.DecodeString(outer.AttestationDoc)
 	if err != nil {
-		return nil, fmt.Errorf("decoding attestation doc: %w", err)
+		return nil, nil, fmt.Errorf("decoding attestation doc: %w", err)
 	}
 	var doc attestationDoc
 	if err := json.Unmarshal(inner, &doc); err != nil {
-		return nil, fmt.Errorf("unmarshaling attestation doc: %w", err)
+		return nil, nil, fmt.Errorf("unmarshaling attestation doc: %w", err)
 	}
 	if len(doc.Manifests) == 0 {
-		return nil, errors.New("coordinator state does not include manifests")
+		return nil, nil, errors.New("coordinator state does not include manifests")
 	}
-	if expectedMfBytes != nil {
-		mf, err := base64.StdEncoding.DecodeString(doc.Manifests[0])
-		if err != nil {
-			return nil, fmt.Errorf("decoding manifest: %w", err)
-		}
-		if !bytes.Equal(mf, expectedMfBytes) {
-			return nil, ErrManifestMismatch
-		}
+	mf0, err := base64.StdEncoding.DecodeString(doc.Manifests[0])
+	if err != nil {
+		return nil, nil, fmt.Errorf("decoding manifest: %w", err)
 	}
 	caPEM, err := base64.StdEncoding.DecodeString(doc.MeshCA)
 	if err != nil {
-		return nil, fmt.Errorf("decoding mesh CA: %w", err)
+		return nil, nil, fmt.Errorf("decoding mesh CA: %w", err)
 	}
 	block, _ := pem.Decode(caPEM)
 	if block == nil {
-		return nil, errors.New("decoding mesh CA certificate failed")
+		return nil, nil, errors.New("decoding mesh CA certificate failed")
 	}
 	cert, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
-		return nil, fmt.Errorf("parsing mesh CA certificate: %w", err)
+		return nil, nil, fmt.Errorf("parsing mesh CA certificate: %w", err)
 	}
-	return cert, nil
+	return cert, mf0, nil
 }

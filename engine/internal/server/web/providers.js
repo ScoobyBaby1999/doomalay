@@ -76,6 +76,15 @@
     var keysP = fetch('/api/keys')
       .then(function (r) { return r.json(); })
       .catch(function () { return {}; });
+    // v1.44.2 THE PIN: the engine's PM pin state (best-effort — the pill
+    // renders only for PrivateMode with a saved key; a slow/failed fetch
+    // never blocks the panel).
+    var pmPin = null;
+    withTimeout(fetch('/api/pm/state').then(function (r) { return r.json(); }), 3000, null)
+      .then(function (p) {
+        pmPin = p;
+        if (opened) render(); // never open the panel early on this fetch
+      }).catch(function () {});
     var gotLive = false;
     var isPartial = false;
     // v0.35: keysP gets a timeout too — a wedged /api/keys request used to
@@ -293,6 +302,23 @@
       // the header — never truncated (user report: the OpenCode 401 text was
       // cut off mid-sentence and unreadable).
       var valReasonBlock = (val && !val.checking && val.reason) ? reasonHTML(val.reason) : '';
+      // v1.44.2 THE PIN: the honest engine-pin pill (PrivateMode only).
+      // The engine pins the deployment's mesh CA for its NATIVE PM turns
+      // (encrypted at rest); verified=true ONLY when the one-shot wasm
+      // oracle (the app's own PM handshake) ran the attestation
+      // verification in the pin window. TOFU is surfaced honestly, never
+      // silently upgraded. Theme tokens only (the theme law).
+      var pinHTML = '';
+      if (name === 'privatemodeai' && isActive && pmPin && pmPin.pinned) {
+        if (pmPin.verified) {
+          pinHTML = '<div style="display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap">' +
+            '<span style="font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-2)">🔒 engine pinned · attestation verified</span>' +
+            '<button data-pm-reverify="1" style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--accent);background:rgba(var(--accent-rgb),0.1);border:1px solid rgba(var(--accent-rgb),0.3);padding:3px 8px;border-radius:6px;cursor:pointer;font-family:inherit;white-space:nowrap">re-verify</button>' +
+            '</div>';
+        } else {
+          pinHTML = '<div style="margin-top:6px;font-size: calc(var(--ui-small-fs) - 1px);color:var(--warn);line-height:1.4">◦ engine pinned · TOFU — unverified first contact. Open a PrivateMode chat once to run the verification handshake.</div>';
+        }
+      }
       // Cloudflare also needs an Account ID (stored as its own vault entry).
       var needAccount = !!cfg.extra_env_var;
 
@@ -328,6 +354,7 @@
         '</div>' +
         '</div>' +
         valReasonBlock +
+        pinHTML +
         // Key input (disabled once a key is saved — paste new to replace).
         // v0.56: inputs paint SURFACE RAISED (the old --bg-app fill made
         // them the same color as the overlay panel behind — the 2-level
@@ -401,6 +428,49 @@
         btn.addEventListener('click', function () {
           var name = btn.dataset.save;
           saveKey(name, btn);
+        });
+      });
+
+      // v1.44.2 THE PIN: re-verify clears the engine's PM pin and asks
+      // the oracle to RUN AGAIN NOW (the button's promise: verification
+      // happens here, not "at the next chat"). The bridge re-runs the
+      // wasm verify() against the CURRENT deployment; its bootstrap
+      // report re-pins the engine verified. Failure = the pin stays
+      // cleared + the honest error.
+      contentEl.querySelectorAll('[data-pm-reverify]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          btn.disabled = true; btn.textContent = 'verifying…';
+          fetch('/api/pm/reverify', { method: 'POST' })
+            .then(function (r) { return r.json(); })
+            .then(function () {
+              pmPin = null;
+              render();
+              if (!(window.PMBridge && window.PMBridge.rerunOracle)) {
+                if (window.toast) window.toast('PM pin cleared — the next PrivateMode chat re-runs the verification');
+                return;
+              }
+              window.PMBridge.rerunOracle()
+                .then(function () {
+                  // the oracle fired — re-read the pin state it landed
+                  return fetch('/api/pm/state').then(function (r) { return r.json(); });
+                })
+                .then(function (p) {
+                  pmPin = p || null;
+                  if (pmPin && pmPin.pinned && pmPin.verified) {
+                    if (window.toast) window.toast('✓ PrivateMode re-verified — the engine pin is back, attestation verified');
+                  } else {
+                    if (window.toast) window.toast('PM re-verify did not complete — the pin stays cleared; open a PrivateMode chat to retry');
+                  }
+                  render();
+                })
+                .catch(function (e) {
+                  if (window.toast) window.toast('PM re-verify failed: ' + ((e && e.message) || 'the attestation was refused'));
+                  render();
+                });
+            })
+            .catch(function () {
+              btn.disabled = false; btn.textContent = 're-verify';
+            });
         });
       });
 
