@@ -1152,7 +1152,7 @@
     // + arrows + atoms ride ONE call (the worker message or the inline
     // main-thread paint)
     renderGrid();
-    for (const icon of world.entities) icon.render(offsetX, offsetY, scale);
+    renderIconsCulled();   // v1.42.2 THE FIELD: O(visible) render, not O(world)
     // v0.88: the world layer's on-demand driver — a full-frame funnel
     // (a pan, a drag, a repaint) means the camera or the icons moved; one
     // poke re-lights its rAF driver (it self-stops when the world rests).
@@ -1177,6 +1177,60 @@
   // pure wasted work (physics + a full lattice frame + icon transforms
   // + the worker post, per EVENT). The state math (offset/velocity, the
   // per-event dt EMA) stays per-event — only the RENDER is coalesced to
+  // ── v1.42.2 THE FIELD — THE VISIBILITY LAW (PLAN-V142 §3.0) ─────
+  // Per-frame DOM cost becomes O(visible), not O(world). We own the
+  // camera (offsetX/offsetY/scale) and the viewport (W/H), so an icon's
+  // visibility is a two-comparison fact — no getBoundingClientRect, no
+  // IntersectionObserver, no content-visibility rect guessing (R11's
+  // transform caveat: transforms are visual, not layout — a JS cull
+  // keyed on the camera is the guaranteed path; the Pixi layer already
+  // hand-rolls the same pad-cull this mirrors).
+  //   · IN-view icons render (the existing skip-if-identical guard
+  //     keeps stationary-camera frames at zero style writes).
+  //   · OUT-of-view icons get display:none — they skip the transform
+  //     write entirely (a moving camera changed EVERY icon's string,
+  //     so a 500-icon world paid 500 style writes per pan frame).
+  //   · Un-culling forces one re-render (__lastTf reset — the icon may
+  //     have moved while culled).
+  // The pad covers the icon glyph + name label + badges + the orbit
+  // lift at any zoom (icons are ~120px visual at scale 1; 320px is the
+  // safe envelope at max zoom 2.1 with margin).
+  var CULL_PAD = 320;
+  function iconInView(icon) {
+    const sx = (icon.x - offsetX) * scale;
+    const sy = (icon.y - offsetY) * scale;
+    return sx > -CULL_PAD && sx < W + CULL_PAD && sy > -CULL_PAD && sy < H + CULL_PAD;
+  }
+  function renderIconsCulled() {
+    for (const icon of world.entities) {
+      if (iconInView(icon)) {
+        if (icon.__culled) {
+          icon.__culled = false;
+          icon.el.style.display = '';
+          icon.__lastTf = null;   // force one re-render on return
+        }
+        icon.render(offsetX, offsetY, scale);
+      } else if (!icon.__culled) {
+        icon.__culled = true;
+        icon.el.style.display = 'none';
+      }
+    }
+  }
+  // The orbit-member twin (the members loop is a subset of entities —
+  // the same law, applied to TabGroups' moving members).
+  function renderMembersCulled(members) {
+    for (var mi = 0; mi < members.length; mi++) {
+      var m = members[mi];
+      if (iconInView(m)) {
+        if (m.__culled) { m.__culled = false; m.el.style.display = ''; m.__lastTf = null; }
+        m.render(offsetX, offsetY, scale);
+      } else if (!m.__culled) {
+        m.__culled = true;
+        m.el.style.display = 'none';
+      }
+    }
+  }
+
   // one rAF, latest-wins. (Chrome's aligned-input guidance — the same
   // discipline the browser applies to pointermove.)
   var updateQueued = false;
@@ -1279,7 +1333,7 @@
         if (latticeDue) {
           renderGrid();
           lastAmbientFull = now;
-          for (const icon of world.entities) icon.render(offsetX, offsetY, scale);
+          renderIconsCulled();   // v1.42.2 THE FIELD: O(visible), not O(world)
         } else if (atomsLive) {
           paintGridFrame(true);
         }
@@ -1291,8 +1345,7 @@
     // v0.88.2: the orbiting members re-render even on a resting canvas
     // (the atoms-only path skips icon.render — the members DID move)
     if (orbitMoved) {
-      var mems = window.TabGroups.members();
-      for (var mi = 0; mi < mems.length; mi++) mems[mi].render(offsetX, offsetY, scale);
+      renderMembersCulled(window.TabGroups.members());   // v1.42.2: the cull law for the orbit pass
     }
     if (moving) { scheduleSave(); requestAnimationFrame(tick); }
     else if (ambientActive()) { requestAnimationFrame(tick); } // v0.75: animate — offsets unchanged, no save; v0.84.1: atoms too

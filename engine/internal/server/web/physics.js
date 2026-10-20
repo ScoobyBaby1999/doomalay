@@ -121,6 +121,20 @@
       // move every frame; a persistent grid's update cost exceeds the
       // rebuild for n ≤ a few thousand).
       this._grid = new Map();
+      // v1.42.2 THE FIELD (PLAN-V142 §3.0 — the sleep law): the SLEEPER
+      // grid. At-rest entities (vx=vy=0, no drag, no orbit) can neither
+      // move nor initiate a collision — they bin into a STATIC grid that
+      // rebuilds only when the sleeper set changes (a wake/sleep
+      // transition or a position correction). A fully-resting world
+      // costs O(1) per step; a fling costs O(awake + sleepers-near-the-
+      // fling), never O(world). The old path binned EVERY entity on
+      // EVERY substep — a 500-icon resting world paid 500 Map inserts +
+      // the broadphase walk per 33ms ambient frame, forever (the H4/H5
+      // install-age shape: cost scaled with how much the user ever
+      // placed, not with what was happening).
+      this._staticGrid = new Map();
+      this._staticDirty = true;   // first step builds it
+      this._staticCell = 0;
     }
 
     add(e) { this.entities.push(e); }
@@ -153,14 +167,31 @@
     _substep(dt) {
       const ents = this.entities;
 
-      // -- 1) Integration --------------------------------------
+      // -- 1) Integration + the sleep ledger -------------------------
       // v0.90.1: grouped members (e._orbit) skip friction -- their damping
       // is the orbit steering's exponential blend (a sustained orbit
       // speed must not decay); MIN_VEL zeroing would stall slow orbits.
       // v0.94.4 F3: friction + travel scale by the real elapsed time.
+      // v1.42.2: the pass also settles ASLEEP flags — an entity is asleep
+      // iff it is at exact rest (vx=vy=0), not dragged, not orbiting.
+      // Transitions dirty the static grid (rebuilt lazily below).
       const fr = dt === 1 ? FRICTION : Math.pow(FRICTION, dt);
-      for (const e of ents) {
-        if (e.dragging) continue;
+      let anyAwake = false;
+      for (let ei = 0; ei < ents.length; ei++) {
+        const e = ents[ei];
+        // v1.42.2: the STILL-ASLEEP FAST PATH — a sleeper whose rest is
+        // unchanged (no drag, no orbit, exact-zero velocity) has nothing
+        // to integrate. This one compound check is the whole per-sleeper
+        // cost of a resting frame (~4 reads + a branch); external writes
+        // (an app nudge setting vx) fall through to the full path and
+        // re-derive asleep honestly — the fast path is SAFE by
+        // re-verification, not by trust.
+        if (e._asleep && e.vx === 0 && e.vy === 0 && !e.dragging && !e._orbit) continue;
+        if (e.dragging) {
+          anyAwake = true;
+          if (e._asleep) { e._asleep = false; this._staticDirty = true; }
+          continue;
+        }
         e.x += e.vx * dt;
         e.y += e.vy * dt;
         if (!e._orbit) {
@@ -170,23 +201,39 @@
             e.vx = 0; e.vy = 0;
           }
         }
+        const asleep = !e._orbit && e.vx === 0 && e.vy === 0;
+        if (asleep !== e._asleep) {
+          e._asleep = asleep;
+          this._staticDirty = true;
+        }
+        if (!asleep) anyAwake = true;
       }
 
-      // -- 2) THE SPATIAL HASH BROADPHASE (v0.94.4 F2) -------
-      // Cell = the max pair distance (2x max radius, min 64). Every
-      // entity bins into its cell; each pair is visited exactly once
-      // via the half-neighborhood walk (own bin above-diagonal + the
-      // E/SW/S/SE neighbors).
+      // v1.42.2 THE SLEEP LAW, the O(1) case: nothing awake means
+      // nothing can move and no pair can be approached — the broadphase
+      // (and its hash rebuild) is skipped entirely. A resting world of
+      // any size steps for free.
+      if (!anyAwake) {
+        this.fireContacts();
+        return;
+      }
+
+      // -- 2) THE TWO-TIER BROADPHASE (v1.42.2 THE FIELD) ------------
+      // Fine grid: AWAKE entities only (rebuilt per substep — they can
+      // move). Static grid: sleepers (rebuilt only when dirty). Cell =
+      // the max pair distance (2x max radius, min 64).
       const n = ents.length;
-      if (n < 2) return;
       let maxR = 0;
       for (let i = 0; i < n; i++) if (ents[i].radius > maxR) maxR = ents[i].radius;
       const cell = Math.max(64, maxR * 2);
+
       const grid = this._grid;
       grid.clear();
+      let awakeN = 0;
       for (let i = 0; i < n; i++) {
         const e = ents[i];
-        e._gi = i;                      // own-bin pair ordering
+        if (e._asleep && !e.dragging) continue;   // sleepers ride the static grid
+        e._gi = awakeN++;                         // own-bin pair ordering
         // integer merge key -- a hash collision only adds a harmless
         // extra check (the pair test verifies the real distance)
         const k = ((e.x / cell) | 0) * 46341 + ((e.y / cell) | 0);
@@ -194,16 +241,50 @@
         if (!bin) { bin = []; grid.set(k, bin); }
         bin.push(e);
       }
+
+      this._ensureStaticGrid(cell);
+      const sgrid = this._staticGrid;
+
       for (let i = 0; i < n; i++) {
         const a = ents[i];
+        if (a._asleep && !a.dragging) continue;   // sleepers never initiate
         const cx = (a.x / cell) | 0, cy = (a.y / cell) | 0;
+        // awake-vs-awake: the half-neighborhood walk (each pair once)
         this._collideBin(a, grid.get(cx * 46341 + cy), true);
         this._collideBin(a, grid.get((cx + 1) * 46341 + cy), false);
         this._collideBin(a, grid.get((cx - 1) * 46341 + (cy + 1)), false);
         this._collideBin(a, grid.get(cx * 46341 + (cy + 1)), false);
         this._collideBin(a, grid.get((cx + 1) * 46341 + (cy + 1)), false);
+        // awake-vs-sleeper: the static grid's same neighborhood (a is
+        // never in it — the b !== a guard is structural, kept for
+        // symmetry). A hit can wake the sleeper (impulse) or shove it
+        // (position correction) — both dirty the static grid.
+        this._collideBin(a, sgrid.get(cx * 46341 + cy), false);
+        this._collideBin(a, sgrid.get((cx + 1) * 46341 + cy), false);
+        this._collideBin(a, sgrid.get((cx - 1) * 46341 + (cy + 1)), false);
+        this._collideBin(a, sgrid.get(cx * 46341 + (cy + 1)), false);
+        this._collideBin(a, sgrid.get((cx + 1) * 46341 + (cy + 1)), false);
       }
       this.fireContacts();
+    }
+
+    // _ensureStaticGrid rebuilds the sleeper grid when (and only when)
+    // the sleeper set or its positions changed (the dirty flag). Cost:
+    // O(sleepers), paid on transitions — never per frame in a world at
+    // rest.
+    _ensureStaticGrid(cell) {
+      if (!this._staticDirty && this._staticGrid && this._staticCell === cell) return;
+      const g = this._staticGrid;
+      g.clear();
+      for (const e of this.entities) {
+        if (!e._asleep || e.dragging) continue;
+        const k = ((e.x / cell) | 0) * 46341 + ((e.y / cell) | 0);
+        let bin = g.get(k);
+        if (!bin) { bin = []; g.set(k, bin); }
+        bin.push(e);
+      }
+      this._staticDirty = false;
+      this._staticCell = cell;
     }
 
     // check entity a against a bin's members. sameBin = only entries
@@ -248,17 +329,22 @@
           // Push entities apart so they're just touching. If one is
           // being dragged (infinite mass), only the other moves.
           // Otherwise split the overlap 50/50.
+          // v1.42.2: a SLEEPER that is shoved (position-corrected)
+          // marks the static grid dirty — its binned position is stale.
           if (a.dragging && !b.dragging) {
             b.x += nx * overlap;
             b.y += ny * overlap;
+            if (b._asleep) this._staticDirty = true;
           } else if (b.dragging && !a.dragging) {
             a.x -= nx * overlap;
             a.y -= ny * overlap;
+            if (a._asleep) this._staticDirty = true;
           } else if (!a.dragging && !b.dragging) {
             a.x -= nx * overlap * 0.5;
             a.y -= ny * overlap * 0.5;
             b.x += nx * overlap * 0.5;
             b.y += ny * overlap * 0.5;
+            if (a._asleep || b._asleep) this._staticDirty = true;
           }
           // (both dragging = rare; leave them overlapping rather than
           // fighting the cursor)

@@ -1,4 +1,72 @@
 ---
+Task ID: v1.42.2
+Agent: Main orchestrator (Z.ai Code sandbox — THE MANY WORLDS wave)
+Task: PLAN-V142 §3.0 W0 phase 2 — THE FIELD: the visibility law (DOM
+render cost O(visible), not O(world)) + the sleep law (resting physics
+~zero), per the house law (R11/R12 research already in the plan; the
+code-evidence pass + rig first, no speculative rework).
+
+Work Log:
+- THE VISIBILITY LAW (app.js): renderIconsCulled/renderMembersCulled —
+  the camera-authoritative DOM cull. We own the camera (offset/scale)
+  and viewport (W/H): an icon's visibility is a two-comparison fact
+  (CULL_PAD 320 covers glyph + label + badges + orbit lift at max zoom).
+  Offscreen icons get display:none + skip their transform write entirely
+  (the old moving-camera frame changed EVERY icon's transform string —
+  a 500-icon world paid 500 style writes per pan frame). Un-culling
+  resets __lastTf so the return frame re-renders. JS-driven per R11's
+  caveat (transforms are visual, not layout — content-visibility's cull
+  rect can't track them; the camera IS the truth). All THREE render
+  sites wired: update()'s full render, tick()'s latticeDue branch, the
+  orbit-members pass. content-visibility evaluated and DECLINED (the
+  documented decision — the guaranteed path shipped).
+- THE SLEEP LAW (physics.js): the two-tier broadphase. At-rest entities
+  (exact vx=vy=0, no drag, no orbit) bin into a STATIC grid rebuilt only
+  on transitions (wake/sleep/shove — the dirty flag); awake entities
+  ride the per-substep fine grid. The broadphase walk only visits awake
+  initiators × (fine + static) neighborhoods. A FULLY-resting world
+  early-outs to O(1) (nothing awake = nothing can move or approach).
+  The STILL-ASLEEP FAST PATH in integration (~4 reads + a branch per
+  sleeper — the rig caught the first cut at 250µs/step for 600 and the
+  fast path brought it under budget): external writes (an app nudge
+  setting vx) fall through and re-derive honestly — safe by
+  re-verification, not trust. Position corrections on sleepers dirty
+  the static grid; contacts still fire through it (the TabGroups dots
+  law); the drag plow's boost works on sleepers via the static path.
+- The accepted edge, pinned honestly: two OVERLAPPING sleepers don't
+  self-correct (they can't approach each other) — any nudge restores
+  order. Documented in the rig, not hidden.
+- THE RIG (scripts/v1422-framebudget-rig.mjs, joins the battery): 26/26
+  — source pins (the cull owns all three sites; no uncalled full-world
+  render loops remain) + behavioral vm physics (resting 600 vs 20 flat
+  ratio, mover wakes + displaces the pile, drag plow boosts sleepers,
+  contacts fire, orbits never sleep, ZERO static rebuilds across 100
+  resting steps, elastic parity, the edge + its wake path).
+- THE WALK (scripts/v1422-framebudget-walk.mjs — the real app, the real
+  input wiring, agent-browser): 24/24 — 100/250/500-icon worlds (9%
+  near the origin, 91% the aged far field 8k-76k px out): the far field
+  culled exactly (display:none), the near field alive with transforms,
+  the un-cull works (camera at a far icon → it reappears with a fresh
+  transform), reload parity, zero page errors. THE LAW LEDGER: the
+  scripted-pan avg rAF delta is 16.7ms at 100 AND 250 AND 500 (the
+  vsync floor — 5× world growth added ZERO frame cost) + the resting
+  500-world steps at ~free per direct world.step() probe.
+- Battery: v1422 rig 26/26 · v1422 walk 24/24 · v1310 58/58 (the old
+  frame-budget pins still hold) · v1400 58/58 · theme source-pin PASS ·
+  v1390 30/30 · v1391 10/10 · discipline 7 PASS + the documented
+  pre-existing B1 · go server+store ok · node --check clean.
+
+Stage Summary:
+- The install-age ledger's H4/H5 closed: a 500-icon world renders and
+  steps like a 50-icon one; a resting world costs ~nothing per frame
+  (the 33ms ambient cadence now rides a free step); pans cost O(visible)
+  style writes. Option B (the full-Pixi icon rewrite) NOT needed — the
+  rig + walk prove the laws hold with the DOM path (the plan's fallback
+  discipline: measure first, rewrite never). W0 THE LONG HAUL is
+  COMPLETE (v1.42.1 audit+hygiene + v1.42.2 the field); the queue moves
+  to v1.42.3 THE EDGE (the bounded world).
+
+---
 Task ID: v1.42.1
 Agent: Main orchestrator (Z.ai Code sandbox — THE MANY WORLDS wave)
 Task: PLAN-V142 §3.0 W0 phase 1 — THE LONG HAUL: the install-age
