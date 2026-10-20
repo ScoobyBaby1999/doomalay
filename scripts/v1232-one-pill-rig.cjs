@@ -169,16 +169,9 @@ const msgs = () => [
 }
 
 // ══ 3. THE SOURCE CONTRACTS ══════════════════════════════════════════
-// the PM loop passes the RAW args (the label derives at render)
-ok(/opts\.onTool && opts\.onTool\(\{ name: name, summary: summary, args: argsObj \}\)/.test(pmsdk),
-  'pmsdk: the use event carries the RAW args object');
-// the nested command wins the summary (the "exec" vagueness dies)
-ok(/for \(var nk of \['command', 'path', 'pattern', 'name', 'query'\]\)/.test(pmsdk) &&
-  /argsObj\.args\[nk\]/.test(pmsdk) &&
-  pmsdk.indexOf("for (var nk of ['command'") < pmsdk.indexOf("for (var sk of ['query'"),
-  'pmsdk: the nested args scan runs BEFORE the flat key scan');
-// the PM persist carries args (the replay derives the same label)
-ok(/args: ev\.args/.test(cpSrc), 'chatpanel: the PM persist JSON carries args');
+// v1.44.4 THE STRIP: the pmsdk PM-loop source pins are RETIRED with the
+// bridge (the engine's native tool loop owns the args contract now; the
+// chatpanel persist/hide/view pins below still hold).
 // the hide flow honors ei2 (the merged vessel drops when either half hides)
 ok(/hm\.ei2 && hideSet\[hm\.ei2\]/.test(cpSrc), 'chatpanel: the hide flow checks ei2');
 // the full view reads the merged result

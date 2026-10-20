@@ -85,9 +85,11 @@
   // ── QUICK CHAT (the v0.15 behavior, expressed as a ChatType) ─────
   //
   // Sandbox 'quick': cloud provider or local model. Capabilities:
-  // effort ladder + web search + deep research. Transport: engine WS
-  // (Go direct proxy) or — for PrivateMode — the official SDK bridge
-  // running in this WebView.
+  // effort ladder + web search + deep research. Transport: the engine
+  // WS for EVERY provider — v1.44.4 THE STRIP: PrivateMode rides the
+  // engine's native PM wire too (llm.Chat speaks the E2E protocol
+  // engine-side since v1.44.3); the WebView SDK bridge is now the
+  // connect-time attestation oracle ONLY (pmsdk.js).
   class QuickChatType extends ChatType {
     constructor() {
       super({
@@ -192,19 +194,14 @@
     // The capability toolbar (effort ladder + web/deep toggles + export).
     toolbar(ctx) { return []; } // built imperatively by the host (needs catalog)
 
-    // THE TURN. Quick chat transports: PrivateMode → SDK bridge in this
-    // WebView; everything else → the engine WebSocket.
+    // THE TURN. Every quick chat rides the engine WebSocket — PM's
+    // encrypted wire is engine-native since v1.44.3 (PLAN-V144 §4).
     send(text, state, ctx) {
-      if (state.provider === 'privatemodeai') {
-        return ctx.runPMTurn(text);
-      }
       return ctx.runWSTurn(text);
     }
 
     stop(state, ctx) {
-      if (state.provider === 'privatemodeai') {
-        if (state._pmAbort) state._pmAbort.abort(); // v0.17 fix: was ctx.pmAbort (never set)
-      } else if (state.client) {
+      if (state.client) {
         state.client.stop();
       }
     }

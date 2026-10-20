@@ -1037,8 +1037,7 @@
       tries++;
       if (!isOwner(state) || state.isStreaming || state._holdQueue ||
           !state.queue || !state.queue.length) { clearInterval(t); return; }
-      var ready = (state.provider === 'privatemodeai') ||
-        (state.client && state.client.connected &&
+      var ready = (state.client && state.client.connected &&
           (Date.now() - (state._lastEvAt || 0) > 600));
       if (ready || tries > 100) {
         clearInterval(t);
@@ -2521,6 +2520,7 @@
         stopTurnIfStreaming(state, bodyEl);
         state.model = canonicalModel(provider, modelId);
         state.provider = provider;
+        pmOracleNudge(state); // v1.44.4: PM connect = the oracle moment
         // v0.89.2: every model CHOICE gets one self-heal chance (same as
         // applyModelChoice — a dial-less pick must not consume the chat's
         // only catalog refresh for the NEXT model).
@@ -2568,671 +2568,8 @@
         }
         state.client.send(text, opts);
       },
-
-      runPMTurn: function (text) { return runPMTurn(text, state, bodyEl, icon); }
     };
     return ctx;
-  }
-
-  // ── A PrivateMode turn (SDK bridge, runs in the WebView) ──────────
-
-  // pmMetadataBlock (v0.68 THE METADATA PERSONAS) — the PM twin of the
-  // engine's chatMetadataPreamble: PM turns bypass the engine, so the
-  // live controls block rides the client-composed system message. Same
-  // shape, same live values (state._tweaks carries botLib/botDL — the
-  // tweaks blob loads on chat open; absent = enabled, the same default).
-  function pmMetadataBlock(state) {
-    var t = (state && state._tweaks) || {};
-    var libOn = !!(state.libAuto || state.templateAuto || state.skillsAuto);
-    if (t.botLib === false) libOn = false;   // the tweaks half (either off = off)
-    var dlOn = libOn && t.botDL !== false;
-    var eff = state.effort || 'med';
-    var lines = [
-      '## This chat\u2019s controls (what the user can flip \u2014 name the pill + the path when relevant)',
-      '- effort (toolbar pill, currently "' + eff + '"): how deeply you reason per turn (low / med / high ladder).',
-      '- web search: ON by default \u2014 you search whenever a live fact matters.',
-      state.deepResearch
-        ? '- deep research: currently ON \u2014 be thorough, multi-source, cross-referenced, cited.'
-        : '- deep research: currently OFF (armed via the lib pill\u2019s + when a template owns the composer).',
-      libOn
-        ? '- Bot Library (the \ud83e\uddf0 lib toolbar pill + \u2726 tweaks \u2192 Bot Library): currently ON \u2014 you may browse, download and use the app\u2019s library on the fly.'
-        : '- Bot Library (the \ud83e\uddf0 lib toolbar pill + \u2726 tweaks \u2192 Bot Library): currently OFF \u2014 you can browse + recommend only; downloads/loads refuse until the user flips it back on.',
-      dlOn
-        ? '- Can download bundles (\u2726 tweaks \u2192 Bot Library \u2192 Can download bundles): currently ON \u2014 you may download new bundles and use them right away.'
-        : '- Can download bundles (\u2726 tweaks \u2192 Bot Library \u2192 Can download bundles): currently OFF \u2014 only bundles already in the user\u2019s library ("Yours") are usable; new downloads refuse with that switch path.',
-      (state.template && state.template.name)
-        ? '- active template (the \u29c9 chip above the composer): "' + state.template.name + '" \u2014 its methodology is armed for every turn of this chat.'
-        : '- active template: none armed (the user can apply one from the library\u2019s USE button).',
-      (state.slidingWindow && state.slidingWindow > 0)
-        ? '- context (the mind pill + \u2726 tweaks \u2192 mind): the last ' + state.slidingWindow + ' messages ride each turn (the sliding window).'
-        : '- context (the mind pill + \u2726 tweaks \u2192 mind): the whole chat rides each turn (no sliding window).',
-      wsPillLine(state),
-      bundlePillLine(state),
-      '- \u2726 tweaks (the header pill): this chat\u2019s OWN look \u2014 icon, colors, text sizes, background \u2014 purely cosmetic, plus the library switches above.',
-      '- When the user asks what a pill or a setting does, answer from THIS block: these are your own controls and their live state. Name the pill, say what it does, and tell the user where to flip it. Never claim a pill wasn\u2019t described to you.'
-    ];
-    return '\n\n' + lines.join('\n');
-  }
-
-  // v0.82.1 THE PILL LEDGER (the PM twin of the engine's boundWorkspaceLines):
-  // the +workspace badge line, live-valued from the same connections snapshot
-  // pmSessionContext renders (state._pmConn.bound — primed per turn by
-  // pmPrimeSessionContext; absent = unknown, degrade honestly).
-  function wsPillLine(state) {
-    var conn = (state && state._pmConn) || {};
-    var bound = conn.bound || [];
-    if (bound.length) {
-      var names = bound.map(function (w) {
-        return (w.kind || 'repo') + ' ' + (w.name || ((w.owner || '') + '/' + (w.repo || ''))) + ' (' + (w.access || 'read') + ')';
-      }).join(', ');
-      return '- workspaces (the +workspace badge on the toolbar, right of the lib pill): repos bound to THIS chat \u2014 currently ' + bound.length + ' (' + names + '). Binding/unbinding is the user\u2019s move on that badge; the workspace tool works exactly on these repos at the access level shown.';
-    }
-    return '- workspaces (the +workspace badge on the toolbar, right of the lib pill): NO repo is bound to this chat yet' +
-      (conn.totalWorkspaces ? ' (the user has ' + conn.totalWorkspaces + ' workspace(s) connected \u2014 they can bind one there).' : '.') +
-      ' Until one is bound the workspace tool has nothing bound (the unbounded explore tool still reaches ANY public repo).';
-  }
-
-  // v0.82.1: the bundle pill line \u2014 the current-turn bundle rides client
-  // state (state.bundle, the same payload the PM send composes into the
-  // attached-bundle manifest).
-  function bundlePillLine(state) {
-    var b = (state && state.bundle) || {};
-    var n = (b.members && b.members.length) || 0;
-    if (b.name && n) {
-      return '- bundle (the small pill immediately right of the lib pill): the bundle armed for the CURRENT turn \u2014 currently armed: "' + b.name + '" (' + n + ' member(s)). Its members ride the turn; you pick and load the fitting member, never the whole bundle at once.';
-    }
-    return '- bundle (the small pill immediately right of the lib pill): the bundle armed for the CURRENT turn \u2014 the user picks it in the library (USE button) or you load members via hublib; its members ride the turn when armed.';
-  }
-
-  // pmLibraryPreamble (v0.68) — the PM twin of the engine's
-  // libraryPreamble (chat.go): the default persona's LIBRARY discipline
-  // block, conditional on the effective lib gate. PM turns reach the hub
-  // through the ACTION tool protocol (hublib), so the phrasing says
-  // ACTION; the discipline mirrors the engine's MUST/SHOULD/MAY/MUST NOT
-  // block. v0.73: the everything-is-a-bundle contract — six types,
-  // bundles, per-type use, BOTH gates. Appended ONLY to the default
-  // persona (the engine's contract).
-  function pmLibraryPreamble(state) {
-    var t = (state && state._tweaks) || {};
-    var libOn = !!(state.libAuto || state.templateAuto || state.skillsAuto);
-    if (t.botLib === false) libOn = false;
-    if (libOn) {
-      return '\n\n## The Doomalay Library\n' +
-        'This chat\u2019s library is ON. The Doomalay app has a LIBRARY \u2014 the public hub where EVERY type is browsable, downloadable and usable: personas, templates, skills, themes, scripts, and docs (each single item is a bundle of one), plus curated BUNDLES (collections that work together). Browsing is via the hublib ACTION tool (search by keyword, popular, recent, by tag, by type; bundles lists the curated collections \u2014 always narrow with q or tag).\n\n' +
-        '## Library discipline\n' +
-        'MUST: Before answering any question that could be solved by an existing library entry (a methodology, a skill, a persona, a theme, a script), call hublib with a 1-3 keyword query and report the top result(s) in one line. Never answer from parametric memory for capability questions.\n' +
-        'SHOULD: Recommend the smallest entry that solves the actual sub-problem; cite name + the one capability you\u2019d use, and offer to download it for the user via the same tool.\n' +
-        'MAY: Pull an entry via hublib once you have decided it is the right fit; the download lands in the user\u2019s library (\u201cYours\u201d) and is immediately usable in this chat. USE each type the way it is meant: load a SKILL before the work it covers and follow it; follow a template\u2019s methodology; arm a downloaded PERSONA with persona_set {"from": "<name>", "activate": true}; a THEME describes a look the user applies from the hub page; scripts and docs are reference reading. For BUNDLES: browse the member list first, pick the member that fits the actual sub-problem \u2014 never the whole bundle at once.\n' +
-        'MUST NOT use a library entry when: the task fits in a few lines of trivial code or text; the entry\u2019s surface area exceeds the problem\u2019s; the user explicitly asked for a from-scratch implementation; or pulling it would steer away from the user\u2019s stated direction rather than toward it.\n' +
-        'GATES: the Bot Library switch (this one) gates USE; Can download bundles (\u2726 tweaks \u2192 Bot Library \u2192 Can download bundles) gates downloading NEW entries. When you download or load something, say which item you are using \u2014 it displays next to the lib+ pill for the user.\n';
-    }
-    return '\n\n## The Doomalay Library\n' +
-      'This chat\u2019s library switch is OFF (the user can flip it via the \U0001F6E0 lib toolbar pill or \u2726 tweaks \u2192 Bot Library). The Doomalay app still HAS a library \u2014 the public hub where every type is browsable: personas, templates, skills, themes, scripts, and docs (each single item is a bundle of one), plus curated BUNDLES (collections that work together). Browsing is via the hublib ACTION tool.\n\n' +
-      '## Library discipline (browse-only mode)\n' +
-      'MUST: When the user asks about capabilities (\u201ccan the app do X?\u201d, \u201cis there a skill for Y?\u201d), call hublib with a 1-3 keyword query and report the top result(s) in one line \u2014 never answer from parametric memory.\n' +
-      'SHOULD: Recommend entries by name + one-line capability; tell the user to flip the Bot Library switch ON to download + use them (and Can download bundles ON for new downloads).\n' +
-      'MUST NOT attempt to download or load entries \u2014 downloads refuse until the user flips the Bot Library switch back on. Do not pretend the library is unavailable; it IS available, just download-gated.\n';
-  }
-
-  // pmSessionContext (v0.78.1) — the PM twin of the engine's
-  // sessionContextPreamble (sessionctx.go): PM turns bypass the engine,
-  // so the live session dashboard (usage, pricing, context, connections,
-  // bound repos) rides the client-composed system message. Data sources:
-  // state._usage (the header-meter cache, primed per turn by
-  // pmPrimeSessionContext — the payload now carries `rates` too) +
-  // state._pmConn (the connections/workspaces snapshot). Keep the text
-  // in sync with the engine twin.
-  function pmSessionContext(state) {
-    var u = (state && state._usage) || {};
-    var ctx = u.context || {};
-    var tot = u.totals || {};
-    var conn = (state && state._pmConn) || {};
-    var lines = ['## Your session (live \u2014 what you are and what you\u2019re connected to)'];
-    if (ctx.limit > 0) {
-      var used = ctx.usedTokens || 0;
-      var remain = Math.max(0, ctx.limit - used);
-      lines.push('- Context window: ~' + ctx.limit.toLocaleString() + ' tokens; this turn rides ~' +
-        used.toLocaleString() + ' (' + (ctx.fillPct || 0) + '% full, ~' + remain.toLocaleString() + ' still free' +
-        (ctx.compacted ? ', older turns compacted to a summary' : '') + ').');
-    }
-    if (tot.turns > 0) {
-      var ul = '- This chat so far: ' + tot.turns + ' turn(s), ' + (tot.tokensIn || 0).toLocaleString() +
-        ' tokens in / ' + (tot.tokensOut || 0).toLocaleString() + ' tokens out';
-      if (tot.hasCost) ul += ', \u2248$' + (tot.cost || 0).toFixed(2) + ' at list rates.';
-      lines.push(ul);
-    }
-    var r = u.rates || {};
-    if (r.unpriced) {
-      lines.push('- Your rates: no price data for this model \u2014 tokens only, no cost estimate.');
-    } else if (r.free) {
-      lines.push('- Your rates: this tier is FREE ($0) \u2014 list would be $' + (+r.in).toFixed(2) + ' in / $' + (+r.out).toFixed(2) + ' out per 1M tokens.');
-    } else if (r.in != null) {
-      lines.push('- Your rates: $' + (+r.in).toFixed(2) + ' in / $' + (+r.out).toFixed(2) + ' out per 1M tokens (list).');
-    }
-    lines.push('- Connected platforms: ' + [
-      conn.hf ? ('Hugging Face: signed in as ' + conn.hf) : 'Hugging Face: not connected',
-      conn.gh ? ('GitHub: signed in as ' + conn.gh) : 'GitHub: not signed in',
-      conn.gitea ? ('Gitea: signed in as ' + conn.gitea) : 'Gitea: not signed in'
-    ].join('; ') + '.');
-    var bound = conn.bound || [];
-    if (bound.length) {
-      lines.push('- Repos bound to this chat (' + bound.length + '): ' + bound.map(function (w) {
-        return (w.kind || 'repo') + ' ' + (w.name || ((w.owner || '') + '/' + (w.repo || ''))) + ' (' + (w.access || 'read') + ')';
-      }).join(', ') + '.');
-    } else {
-      lines.push('- Repos bound to this chat: none yet.');
-    }
-    lines.push('- You have ' + (conn.totalWorkspaces || 0) + ' workspace(s) connected in total. You CAN be connected to workspaces \u2014 GitHub, Gitea, GitLab, Sourcehut and Hugging Face repos (models, datasets and Spaces) \u2014 many repo structures are available; the user connects them from the library/hub connect flow, and when bound the repo tools can list, grep, read and edit them at the access level shown above (read / partial / full).');
-    // v1.21.1 THE ARMED HAND: the termux twin \u2014 PM turns bypass the
-    // engine, so this block is the ONLY system-prompt place a PM bot
-    // learns the hand (the ungated /mcp manifest always listed the tool,
-    // but the model never knew what the chat was armed with \u2014 the user's
-    // live repro: the bot answered "no termux/workspace connected" while
-    // two device folders sat bound). The primed bound list already
-    // carries the kind:'termux' rows with their jailed paths.
-    var txRoots = (bound || []).filter(function (w) {
-      return (w.kind || w.Kind || '') === 'termux';
-    }).map(function (w) {
-      var m = w.meta || w.Meta || {};
-      return (m.termux_path || m.display_path || w.name || 'device folder');
-    });
-    if (txRoots.length) {
-      lines.push('- THE TERMUX HAND on this chat: the `termux` tool \u2014 a real Termux Linux shell on the user\'s device, the whole Linux userland (exec runs ANY command in $PATH; pkg installs any package and its commands go live instantly; cmds inventories every available command; background processes via session_start/session_kill), jailed to this chat\'s bound device folders: ' + txRoots.join(', ') + '. Use it whenever the user asks about their device\'s files or wants anything run, installed, compiled or served on the phone.');
-    } else if (state && state.termux) {
-      lines.push('- Termux capability: ARMED but no device folder is bound yet (the user connects one via +workspace \u2192 device storage; mention only if the user asks).');
-    }
-    if (state && state.sandbox === 'hf') {
-      lines.push('- This chat\u2019s sandbox runs on your Hugging Face Space \u2014 repo tools there can\u2019t reach the device\u2019s engine bridge; run repo work in a quick (on-device) chat when the user needs it.');
-    }
-    return '\n\n' + lines.join('\n');
-  }
-
-  // pmPrimeSessionContext (v0.78.1) — refresh the session-context caches
-  // in parallel (local engine, same origin): usage (+rates), hub auth, forge
-  // accounts, this chat's bound workspaces, the total count. 15s cache;
-  // never rejects \u2014 whatever arrives composes, whatever doesn't degrades
-  // honestly inside the block.
-  function pmPrimeSessionContext(state) {
-    if (!state || !state.sessionId) return Promise.resolve();
-    if (state._pmConnAt && Date.now() - state._pmConnAt < 15000) return Promise.resolve();
-    var sid = state.sessionId;
-    var jj = function (r) { return r.json().catch(function () { return null; }); };
-    return Promise.all([
-      fetch('/api/sessions/' + sid + '/usage').then(jj),
-      fetch('/api/hub/auth/status').then(jj),
-      fetch('/api/workspaces/accounts').then(jj),
-      fetch('/api/sessions/' + sid + '/workspaces').then(jj),
-      fetch('/api/workspaces').then(jj)
-    ]).then(function (rs) {
-      if (rs[0]) state._usage = rs[0];
-      var hub = rs[1] || {};
-      var gh = null, gitea = null;
-      ((rs[2] && rs[2].accounts) || []).forEach(function (a) {
-        if (a.kind === 'github' && a.signed_in) gh = a.login || 'signed in';
-        if (a.kind === 'gitea' && a.signed_in) gitea = a.login || 'signed in';
-      });
-      var bound = (rs[3] && rs[3].workspaces) || [];
-      state._pmConn = {
-        hf: (hub.connected && (hub.username || 'signed in')) || null,
-        gh: gh, gitea: gitea,
-        bound: bound,
-        totalWorkspaces: (rs[4] && Array.isArray(rs[4].workspaces)) ? rs[4].workspaces.length : bound.length
-      };
-      state._pmConnAt = Date.now();
-    }).catch(function () {});
-  }
-
-  // v0.19: the PM system message mirrors the engine's systemPromptFor —
-  // a live identity line + the chat's persona (or the default persona) +
-  // the artifact protocol when the persona doesn't carry it. PM turns
-  // bypass the engine, so the composition lives client-side.
-  // v0.20 FIX: this used to receive `model` BEFORE it was defined (a
-  // hoisted var) — every PM turn told the bot it was "an AI assistant
-  // hosted via privatemodeai" with NO model name. The model is now
-  // resolved before composition, and {model}/{provider} placeholders
-  // inside the persona are substituted with the live values.
-  // v0.26: multi-persona resolution + {name}/{skills}/custom keys —
-  // mirrors engine personas.go (trigger > shuffle > always > legacy).
-  // v0.68: the metadata block (pmMetadataBlock) rides every PM system
-  // message — default or custom persona — so the bot always knows the
-  // chat's controls + their live state.
-  function pmSystemMessage(state, model, metrics) {
-    var displayName = prettyModel(model);
-    var head = 'You are ' + (displayName || 'an AI assistant') +
-      (state.provider ? ', hosted via ' + state.provider : '') +
-      (state.sandbox === 'hf'
-        ? ", chatting inside the Doomalay app from your Hugging Face Space. Today is "
-        : ", chatting inside the Doomalay app on the user's own device. Today is ") +
-      new Date().toDateString() + '.';
-    // v0.44 TEMPLATE PILL: PM turns compose the system message client-side
-    // (they bypass the engine), so the METHOD TEMPLATE block is prepended
-    // HERE — the same shape the engine injects on the WS path.
-    if (state.template && state.template.brief) {
-      head = 'METHOD TEMPLATE — ' + (state.template.id || 'custom') +
-        "\nFollow this template's methodology for this task:\n" +
-        String(state.template.brief).trim() + "\n\n" + head;
-    }
-    // v0.71: DEEP RESEARCH on the PM path — the engine's stage pipeline
-    // never runs here (PM turns are WebView-driven), so the flag alone
-    // said nothing and the bot "didn't know it was using a template".
-    // The 8-stage methodology rides as a single-agent pipeline the bot
-    // EXECUTES with its live web tools (decompose → search → verify →
-    // synthesize → gap-check → refine → assemble, the hub payload's
-    // contract: [N] citations, Confidence + References sections).
-    if (state.deepResearch) {
-      head = 'METHOD TEMPLATE — deep research (you are running it NOW)\n' +
-        'Execute this pipeline for the task, using your web tools at every research step:\n' +
-        '1. DECOMPOSE the question into 3-6 specific, researchable sub-questions.\n' +
-        '2. SEARCH: per sub-question, run 2-4 differently-phrased web searches; scan the hits for authoritative sources (primary > secondary: official docs, .gov, .edu, peer-reviewed).\n' +
-        '3. VERIFY: fetch the promising pages; drop paywalled, empty, or unreachable ones. NEVER invent URLs, sources, or citations — omit when uncertain.\n' +
-        '4. SYNTHESIZE: answer each sub-question in 150-300 words, grounded in the verified sources, citing them as [N].\n' +
-        '5. GAP-CHECK: list which parts are weakly sourced, and refine them with more searches.\n' +
-        '6. ASSEMBLE the final briefing: "# <answer headline>" then "## <sub-question>" sections, then "## Confidence" (high/medium/low per sub-question, one-line why), then "## References" — exactly the verified sources as [N] Author. "Title". Year. URL.\n' +
-        'Tone: measured, citation-heavy, hedged where sources disagree. Target 800+ words. Do NOT pad — every claim carries a source or an explicit hedge.\n\n' + head;
-    }
-    var personaText;
-    if (state.personas && state.personas.length && window.Persona && window.Persona.resolveActive) {
-      window.Persona.setData(state.personas, state.persona || '', state.placeholders || {});
-      // v0.29: live name/model/provider — {name}/{model}/{provider} are
-      // trigger keys now, same as the engine's extended evaluation.
-      var active = window.Persona.resolveActive(state.personas, state.persona || '', metrics || {}, {
-        name: state.chatName, model: model, provider: state.provider
-      });
-      personaText = active && active.text && active.text.trim() ? active.text : '';
-    } else {
-      personaText = (state.persona || '').trim();
-    }
-    var defPersona = '';
-    if (!personaText) {
-      // v0.48 task 6: the default persona is mode-aware (quick vs HF)
-      // v1.15.3: persona.js ALWAYS provides the mode-aware default (it
-      // loads first in index.html — the dead local duplicate is gone).
-      defPersona = window.Persona.defaultPersonaFor(state.sandbox);
-      // v0.89.3: the HF default carries a {repo} slot (own-space repo or
-      // the shared marker) — substituteAll doesn't know it, so it's
-      // resolved HERE from the chat's own state (the engine twin's
-      // defaultPersonaFor {repo} replacement).
-      if (state.sandbox === 'hf') {
-        defPersona = defPersona.split('{repo}').join(
-          state.sandboxRepo ? (' (your Space: ' + state.sandboxRepo + ')') : '');
-      }
-    }
-    // ── v1.22.0 THE MIRROR: the PREAMBLE twin (the engine's
-    // systemPromptFor, client-side). '' | 'off' | '<id>'; the block
-    // placeholders expand through the PM builders — the PM default now
-    // matches the engine's shape (machinery above, voice below).
-    var sel = state.preambleSel || '';
-    var preTemplate = null;
-    if (sel !== 'off') {
-      preTemplate = window.Persona.defaultPreambleFor(state.sandbox);
-      if (sel && state.preambles && state.preambles.length) {
-        for (var pi = 0; pi < state.preambles.length; pi++) {
-          var pp = state.preambles[pi];
-          if (pp && pp.id === sel && String(pp.text || '').trim()) { preTemplate = pp.text; break; }
-        }
-      }
-    }
-    var teachesArtifact = /artifact/i.test(personaText || defPersona || '');
-    var sys = '';
-    if (preTemplate) {
-      sys = window.Persona.substituteAll(preTemplate, state.chatName, model, state.provider) + '\n\n';
-    }
-    sys += window.Persona.substituteAll(personaText || defPersona, state.chatName, model, state.provider);
-    // the MIRROR blocks expand AFTER substitution (live block text is
-    // never touched by custom {keys}); {artifacts} yields to a persona
-    // that already teaches the protocol.
-    sys = sys
-      .split('{repo_access}').join(pmRepoAccessBlock(state))
-      .split('{artifacts}').join(teachesArtifact ? '' : PM_ARTIFACT_PROMPT)
-      .split('{library}').join(pmLibraryPreamble(state))
-      .split('{controls}').join(pmMetadataBlock(state))
-      .split('{session}').join(pmSessionContext(state));
-    while (sys.indexOf('\n\n\n') >= 0) sys = sys.split('\n\n\n').join('\n\n');
-    return head + sys;
-  }
-
-  // pmRepoAccessBlock (v1.22.0) — the PM twin of the engine's
-  // workspaceManifestFor: the unbound public read hand, or the bound
-  // rows + the access-tier semantics from the primed connection cache.
-  function pmRepoAccessBlock(state) {
-    var PUB = 'PUBLIC REPO ACCESS (no connection needed): the workspace tool reads PUBLIC repos unbound — {"action":"read","ws":"owner/repo","path":"README.md"} and info/tree/ls/readme/grep/view, for any GitHub owner/repo or a full forge URL (gitea/gitlab/sourcehut/HF). Prefer this over hand-built fetches. Private repos and writes (put/pr/issues/…) need the user to connect a workspace (the +workspace pill).';
-    var bound = ((state._pmConn && state._pmConn.bound) || []).filter(function (w) {
-      return (w.kind || w.Kind || 'repo') !== 'termux';
-    });
-    if (!bound.length) return PUB;
-    var lines = bound.map(function (w) {
-      var name = w.name || w.Name || (((w.owner || w.Owner || '') + '/' + (w.repo || w.Repo || '')));
-      var kind = w.kind || w.Kind || 'repo';
-      var access = w.access || w.Access || 'read';
-      var ref = w.id || w.ID || '';
-      return '- ' + name + ' [' + kind + '] access=' + access + (ref ? (' (workspace ref: ' + ref + ')') : '');
-    });
-    return "CONNECTED CLOUD WORKSPACES (this chat's repos — act on them with the workspace tool):\n" +
-      lines.join('\n') +
-      '\naccess=read → browse/tree/read/grep/view only; partial → fork+PR flows; full → direct file writes (API commits). The tool routes through the engine, which holds the credentials.' +
-      '\n\n' + PUB;
-  }
-
-  function runPMTurn(text, state, bodyEl, icon) {
-    // v0.78.1: prime the session-context caches (usage/rates/connections/
-    // workspaces) BEFORE the system message composes; 400ms cap so a cold
-    // engine can't stall the turn — the block degrades honestly instead.
-    // The wrapper keeps the rest of the flow byte-identical.
-    return Promise.race([
-      pmPrimeSessionContext(state),
-      new Promise(function (res) { setTimeout(res, 400); })
-    ]).then(function () { return runPMTurnInner(text, state, bodyEl, icon); });
-  }
-
-  function runPMTurnInner(text, state, bodyEl, icon) {
-    var msgContainer = bodyEl.querySelector('#chat-messages');
-    var scrollEl = bodyEl.querySelector('#chat-scroll');
-    var abort = new AbortController();
-    state._pmAbort = abort;
-    // v0.44 INTERRUPT FIX (CAUSE #3, PM path): PM chats keep a WS client
-    // (event replay + hide channel), and the client's reconnect ladder
-    // reads turnActive — but only client.send() ever set it, so a mid-PM-
-    // turn socket drop only earned the SHORT ladder (3 tries ~5s) instead
-    // of the long mid-turn one. Set it for the PM turn's lifetime; finish()
-    // clears it on success/error alike.
-    if (state.client) state.client.turnActive = true;
-    // v0.42: no button wiring here — doSend already flipped the mode to
-    // STOP (isStreaming), and the tap dispatcher stops through
-    // type.stop → state._pmAbort.abort() (chatframework.js).
-
-    // v0.20 FIX: resolve the model BEFORE composing the history — the old
-    // order called pmSystemMessage(state, model) while `model` was still
-    // an undefined hoisted var, so PM bots never knew their own model.
-    var model = String(state.model || '');
-    if (model.indexOf('privatemodeai/') === 0) model = model.slice('privatemodeai/'.length);
-
-    // v0.26: live metrics feed trigger personas (mirrors the engine).
-    var userTurns = 0, msgs = 0;
-    for (var mi = 0; mi < state.messages.length; mi++) {
-      msgs++;
-      if (state.messages[mi].role === 'user') userTurns++;
-    }
-    var history = [{ role: 'system', content: pmSystemMessage(state, model, { messages: msgs, turns: userTurns + 1 }) }]; // v0.19: persona + identity + artifact protocol
-    for (var i = 0; i < state.messages.length; i++) {
-      var m = state.messages[i];
-      if (m.role === 'user') history.push({ role: 'user', content: m.text });
-      else if (m.role === 'assistant' && m.complete) history.push({ role: 'assistant', content: m.text });
-    }
-    var win = state.slidingWindow || 40;
-    if (history.length > win + 1) history = history.slice(0, 1).concat(history.slice(-(win)));
-
-    var showHint = function (msg) {
-      // v0.23: PM phase hints ride the activity indicator (five pulsing
-      // dots) instead of stacking one-off pills into the message list.
-      setActivity(bodyEl, state, msg);
-    };
-    var clearHint = function () {
-      // drops ONLY the explicit phase text — the watchdog decides whether
-      // the indicator itself stays (silence) or goes (deltas flowing).
-      state._actText = null;
-    };
-
-    showHint('establishing PrivateMode secure channel…');
-    ensureActivityWatch(bodyEl, state);
-
-    var streamMsg = null;
-    var getStreamMsg = function () {
-      if (!streamMsg) {
-        streamMsg = { role: 'assistant', text: '', complete: false, streaming: true, ts: Date.now() };
-        state.messages.push(streamMsg);
-        appendMessage(msgContainer, scrollEl, streamMsg, bodyEl, icon, state); // v1.33.5: ownerState — the WS twin's isolation law
-      }
-      return streamMsg;
-    };
-
-    var persist = function (type, payload, stampMsg) {
-      if (!state.sessionId) return Promise.resolve();
-      return fetch('/api/sessions/' + state.sessionId + '/events', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: type, text: payload })
-      }).then(function (r) { return r.json(); }).then(function (saved) {
-        if (saved && saved.id && saved.id > (state.lastEventI || 0)) {
-          state.lastEventI = saved.id;
-        }
-        // v0.37: capture the engine event id on the local message so
-        // delete/edit can mask it later (PM messages have no WS echo).
-        if (saved && saved.id && stampMsg) {
-          stampMsg.ei = saved.id;
-          if (!stampMsg.ts) stampMsg.ts = Date.now();
-        }
-      }).catch(function (e) { console.error('persist PM event failed', e); });
-    };
-
-    // v0.71: the persist boundary speaks the ENGINE usage shape. pmsdk
-    // normalizes at the stream (normUsage), but this seam is bridge-
-    // agnostic — any PMBridge implementation (or a future swap) that
-    // reports the OpenAI spelling still lands input_tokens/output_tokens
-    // in the status event, so server/usage.go counts the turn.
-    var normUsage = function (u) {
-      if (!u || typeof u !== 'object') return null;
-      var tin = (u.input_tokens !== undefined && u.input_tokens !== null) ? u.input_tokens : u.prompt_tokens;
-      var tout = (u.output_tokens !== undefined && u.output_tokens !== null) ? u.output_tokens : u.completion_tokens;
-      if ((tin === undefined || tin === null) && (tout === undefined || tout === null)) return null;
-      tin = Number(tin) || 0; tout = Number(tout) || 0;
-      return { input_tokens: tin, output_tokens: tout,
-               total_tokens: Number(u.total_tokens) || (tin + tout) };
-    };
-    var finish = function (errText, usage, finalText) {
-      clearHint();
-      state.isStreaming = false;
-      if (state.client) state.client.turnActive = false; // v0.44 (CAUSE #3): the PM turn is over
-      hideActivity(bodyEl, state);
-      // v0.77.5 NEVER-LOSE-CONTENT (the third net): the bridge's return
-      // value is the turn's AUTHORITATIVE text — when the live deltas
-      // never landed (a suppressed final round, a pump loss), streamMsg
-      // is missing or empty and the turn would end silent. Render + let
-      // the persist below carry it — the direct-equivalent of the
-      // engine's turn-end full assistant event (server/chat.go).
-      if (!errText && finalText && finalText.trim() &&
-          (!streamMsg || !(streamMsg.text || '').trim())) {
-        var m = getStreamMsg();
-        m.text = finalText;
-        updateMessageEl(bodyEl, m, false, state);
-      }
-      // v0.27: turn end — the header meters (ring + cost) refresh.
-      refreshHeaderMeters(bodyEl, state);
-      completeAllStreaming(bodyEl, state); // v0.25: every thinking bubble + cursor stops animating
-      // v0.42: the mode machine paints whatever the turn left behind
-      // (retry when the error bubble lands below, else send). A failed PM
-      // turn parks the queue; a clean one flushes ONE queued follow-up.
-      syncSendButton(bodyEl, state);
-      if (errText) state._holdQueue = true;
-      else flushSendQueue(bodyEl, state);
-      if (streamMsg) {
-        streamMsg.complete = true;
-        streamMsg.streaming = false;
-        updateMessageEl(bodyEl, streamMsg, true, state);
-        finalizeArtifacts(streamMsg, state, bodyEl); // v0.17
-      }
-      // v0.20: CHAIN the persists — the old fire-and-forget raced the
-      // assistant + status fetches, and the status could land in the log
-      // BEFORE the assistant text (replayed histories read out of order).
-      var p = streamMsg && streamMsg.text ? persist('assistant', streamMsg.text, streamMsg) : Promise.resolve();
-      p.then(function () {
-        if (errText) {
-          return persist('error', errText).then(function () {
-            var epm = { role: 'error', text: errText };
-            state.messages.push(epm);
-            appendMessage(msgContainer, scrollEl, epm, bodyEl, icon, state); // v1.33.5: ownerState
-            syncSendButton(bodyEl, state); // v0.42: the failed turn → retry affordance
-            return persist('status', JSON.stringify({ state: 'error', usage: usage || null }));
-          });
-        }
-        return persist('status', JSON.stringify({ state: 'idle', usage: usage || null }));
-      });
-    };
-
-    // v0.37: stamp the doSend-pushed user message (the last one in state)
-    // with its engine event id so PM-path user messages are deletable too.
-    var lastUserMsg = null;
-    for (var lu = state.messages.length - 1; lu >= 0; lu--) {
-      if (state.messages[lu].role === 'user') { lastUserMsg = state.messages[lu]; break; }
-    }
-    persist('user', text, lastUserMsg);
-
-    return window.PMBridge.streamChat({
-      model: model,
-      messages: history,
-      signal: abort.signal,
-      sessionId: state.sessionId || '', // v0.22: file tools save into this chat
-      // v0.71 FIX: deep research KEEPS the web tools on the PM path —
-      // the old `tools: !state.deepResearch` blindfolded the bot (the
-      // engine-native stage pipeline never runs for PM turns, so there
-      // was no web at all; the model answered from memory and "didn't
-      // know it was using a template"). The methodology block in
-      // pmSystemMessage + live tools = the template, executed.
-      tools: true,
-      // v0.26: the PM effort toggle (on/off → chat_template_kwargs.thinking).
-      effort: state.effort || '',
-      // v0.60 pt C.13: the lib pill rides the PM turn — ON prepends the
-      // superpowers bootstrap + arms the skills/hublib ACTION tools.
-      lib: !!(state.libAuto || state.templateAuto || state.skillsAuto),
-      // v0.71: the attached WHOLE BUNDLE rides the PM turn — the manifest
-      // + decision protocol prepend the system message (the bot reads the
-      // bundle and picks the member that fits the request).
-      bundle: state.bundle || null,
-      // v0.22: throttled re-render (the WS path already used scheduleUpdate;
-      // PM fired a FULL markdown+DOMPurify+Prism pass per token — the
-      // "replies outside the thinking box don't stream smoothly" freeze).
-      onThinking: function (t) {
-        clearHint();
-        bumpActivity(state);
-        var last = state.messages[state.messages.length - 1];
-        if (!last || last.role !== 'thinking') {
-          last = { role: 'thinking', text: '', open: true, streaming: true, startedAt: Date.now(), ts: Date.now() };
-          state.messages.push(last);
-          appendMessage(msgContainer, scrollEl, last, bodyEl, icon, state); // v1.33.5: ownerState — the blank-reasoning-box leak dies
-        }
-        last.text += t;
-        scheduleUpdate(bodyEl, last, false, state);
-      },
-      // v0.27.1: pmsdk fires this when the thinking phase ends (content
-      // starts or the stream closes) — freeze the bubble's timer there
-      // instead of letting it count tool time as "reasoning".
-      onThinkingEnd: function () { stampThinkEnd(state, 0, bodyEl); },
-      onDelta: function (t) {
-        clearHint();
-        bumpActivity(state);
-        var m2 = getStreamMsg();
-        m2.text += t;
-        scheduleUpdate(bodyEl, m2, false, state);
-      },
-      // v0.23 NO-SILENCE (PM path): the suppressed ACTION stream reports
-      // "building X · 12.4 KB so far" from inside roundTripOnce — same
-      // phases the engine emits for its ReAct loop.
-      onProgress: function (p) {
-        setActivity(bodyEl, state, p && p.text);
-      },
-      onReset: function () {
-        // v0.95.2 THE SEGMENTED FLOW (PM path — the user's live report:
-        // "the final response replaces the previous final response in the
-        // previous final response's location"): the old code WIPED the
-        // singleton streamMsg (streamMsg.text = '') and left it in place,
-        // so the next round's text re-streamed into the SAME bubble at its
-        // OLD position high up the transcript. The narration before a tool
-        // call is a real response block (the engine paths have kept it as
-        // one since v0.93.3) — CLOSE it as its own completed block, persist
-        // it as a segment, and null the singleton so the next round's
-        // deltas open a NEW bubble at the bottom, under the tool pills.
-        if (streamMsg && (streamMsg.text || '').trim()) {
-          streamMsg.complete = true;
-          streamMsg.streaming = false;
-          updateMessageEl(bodyEl, streamMsg, true, state);
-          persist('assistant', streamMsg.text, streamMsg);
-          streamMsg._segPersisted = true;
-        }
-        streamMsg = null; // the next onDelta opens a fresh bubble at the bottom
-      },
-      // v1.23.3 THE LIVE STREAM (the PM twin): the poll's deltas land here —
-      // the same append-to-pending-pill + bumpActivity law the WS
-      // tool_stream events follow (the stall fix rides identically).
-      onToolStream: function (ev) {
-        if (!ev || !ev.delta) return;
-        bumpActivity(state);
-        var sName = ev.name || 'termux';
-        for (var sMi = state.messages.length - 1; sMi >= 0; sMi--) {
-          var sMsg = state.messages[sMi];
-          if (!sMsg || sMsg.role !== 'tool' || !sMsg.tool || sMsg.res !== undefined) continue;
-          var sPay = sMsg.payload || {};
-          if ((sPay.name || '') === sName) {
-            sMsg.streamText = (sMsg.streamText || '') + String(ev.delta);
-            if (sMsg.streamText.length > 262144) sMsg.streamText = sMsg.streamText.slice(-262144);
-            setActivity(bodyEl, state, 'running ' + (toolPillLabelParts(sMsg).label || sName) + '… ' + ((sMsg.streamText.length / 1024).toFixed(1)) + ' KB');
-            refreshToolRow(bodyEl, state, sMi);
-            tvStreamTick(sMsg); // the open full-view overlay repaints too (v1.23.4)
-            return;
-          }
-        }
-      },
-      onTool: function (ev) {
-        bumpActivity(state);
-        if (ev.name === 'web_search' && ev.sources) {
-          var srcs = ev.sources.map(function (s) {
-            return { title: s.title, url: s.url, snippet: s.snippet };
-          });
-          var pmSrc = { role: 'sources', sources: srcs, ts: Date.now() };
-          state.messages.push(pmSrc);
-          appendMessage(msgContainer, scrollEl, pmSrc, bodyEl, icon, state); // v1.33.5: ownerState
-          persist('sources', JSON.stringify(srcs));
-        }
-        // v1.23.2 THE ONE PILL (the PM twin): the use half mints the
-        // vessel (the RAW args ride the payload so the label derives at
-        // render — pmsdk passes them since this wave); the result half
-        // MERGES into the pending same-name pill — ONE pill per action.
-        if (ev.result !== undefined && ev.result !== null && !ev.summary) {
-          var merged = mergeToolResult(state.messages, { name: ev.name, text: String(ev.result || ''), sources: ev.sources }, null);
-          if (merged) {
-            var pmTvMi = state.messages.indexOf(merged);
-            refreshToolRow(bodyEl, state, pmTvMi);
-            tvResultLanded(state, pmTvMi, merged); // the open overlay re-renders with the final result (v1.23.4)
-            persist('tool_result',
-              JSON.stringify({ name: ev.name, summary: '', text: ev.result || '' }), merged);
-            if (ev.artifact && ev.artifact.name) {
-              state.messages.push({ role: 'artifact', artifact: ev.artifact });
-              appendMessage(msgContainer, scrollEl, state.messages[state.messages.length - 1], bodyEl, icon, state); // v1.33.5: ownerState
-              refreshArtifactCount(state, bodyEl);
-              if (!state._toolArtifactNames) state._toolArtifactNames = {};
-              state._toolArtifactNames[ev.artifact.name.toLowerCase()] = true;
-            }
-            return;
-          }
-        }
-        var chip = { role: 'tool', text: ev.summary || '', tool: true, payload: ev, ts: Date.now() };
-        if (ev.result) chip = { role: 'tool', text: ev.summary || '', result: true, payload: ev, ts: Date.now() };
-        state.messages.push(chip);
-        appendMessage(msgContainer, scrollEl, chip, bodyEl, icon, state); // v1.33.5: ownerState — a backgrounded PM turn's tool pills never land in the foreground chat
-        // v1.23.2: the RAW args persist with the use (the replay derives
-        // the same label — the derived-program head survives reloads).
-        persist(chip.result ? 'tool_result' : 'tool_use',
-          JSON.stringify({ name: ev.name, summary: ev.summary || '', text: ev.result || '', args: ev.args }), chip);
-        // v0.22: file tools saved a binary — card + refresh the drawer count
-        if (ev.artifact && ev.artifact.name) {
-          state.messages.push({ role: 'artifact', artifact: ev.artifact });
-          appendMessage(msgContainer, scrollEl, state.messages[state.messages.length - 1], bodyEl, icon, state); // v1.33.5: ownerState
-          refreshArtifactCount(state, bodyEl);
-          // v0.26: remember tool-saved names — the model sometimes ALSO
-          // writes an artifact block for the same file (the double-
-          // attachment report); finalizeArtifacts skips those.
-          if (!state._toolArtifactNames) state._toolArtifactNames = {};
-          state._toolArtifactNames[ev.artifact.name.toLowerCase()] = true;
-        }
-      },
-      onStatus: function (st) {
-        if (st === 'running') showHint('establishing PrivateMode secure channel…');
-      }
-    }).then(function (result) {
-      finish(null, normUsage(result && result.usage), (result && result.text) || '');
-      return result;
-    }).catch(function (e) {
-      finish(friendlyError(e && e.message ? e.message : 'PrivateMode turn failed'));
-      return null;
-    });
   }
 
   // ── v0.24 friendly provider errors (both chat paths) ─────────────
@@ -3306,34 +2643,6 @@
     }).catch(function () {});
   }
 
-  // v0.89.2: THE CLIENT PM LADDER — docs.privatemode.ai verified
-  // 2026-10-01 (the same table the engine's effort.go SOURCE 1.5
-  // serves, and the ladders the live /api/models carries):
-  //   · kimi* → on/off, default ON — and 'off' is a REAL param on the
-  //     wire (chat_template_kwargs.thinking:false switches reasoning
-  //     off per the docs; pmsdk builds it).
-  //   · glm-5.x (all current glm) → low/high/max, default max;
-  //     reasoning CANNOT be switched off (any other value maps to max).
-  //   · gpt-oss* → low/medium/high, default medium.
-  //   · deepseek-ocr* → dial-less (no knob).
-  // Used ONLY when the catalog returns nothing for the model: the
-  // cold-boot static catalog serves every group with models:null and a
-  // partial first live sync can lock the PM group empty for the whole
-  // session — with this, the PM pill renders on FIRST panel open, no
-  // catalog dependency. The engine's ladder wins whenever present.
-  function pmDocsLadder(modelId) {
-    var s = String(modelId || '').toLowerCase();
-    s = s.replace(/^privatemodeai\//, '').replace(/^openai\//, '');
-    if (s.indexOf('deepseek-ocr') >= 0) return null;
-    if (s.indexOf('kimi') >= 0)
-      return { levels: ['on', 'off'], def: 'on' };
-    if (s.indexOf('glm') >= 0)
-      return { levels: ['low', 'high', 'max'], def: 'max' };
-    if (s.indexOf('gpt-oss') >= 0)
-      return { levels: ['low', 'medium', 'high'], def: 'medium' };
-    return null;
-  }
-
   // v0.83.2: returns { levels, def } — the ladder AND the model's own
   // default (the catalog's effortDefault — the provider's documented
   // pick, e.g. PM glm's max). Callers that only want the array read .levels.
@@ -3356,14 +2665,10 @@
           if (mm.effortLevels && mm.effortLevels.length) {
             return { levels: mm.effortLevels, def: mm.effortDefault || null };
           }
-          // v0.89.2: matched but ladder-less — for PM the docs ladder
-          // answers (a new PM model can land in the live list before
-          // the engine's table learns it); deepseek-ocr stays dial-less
-          // there. Everyone else: no knob.
-          if (provider === 'privatemodeai') {
-            var pm0 = pmDocsLadder(modelId);
-            if (pm0) return { levels: pm0.levels, def: pm0.def };
-          }
+          // v1.44.4 THE STRIP: the client-side PM docs ladder is retired
+          // — the engine's effort registry (effort.go, the live catalog)
+          // owns every provider's ladder now that PM turns ride the
+          // engine. A ladder-less model is honestly dial-less.
           return null;
         }
       }
@@ -3378,23 +2683,9 @@
           if (lv && lv.length) {
             return { levels: lv, def: attr.effortDefault || attr.effort_default || null };
           }
-          // v0.89.2: same as the group branch — ladder-less PM match
-          // falls to the docs ladder.
-          if (provider === 'privatemodeai') {
-            var pm1 = pmDocsLadder(modelId);
-            if (pm1) return { levels: pm1.levels, def: pm1.def };
-          }
           return null;
         }
       }
-    }
-    // v0.89.2: the catalog has nothing for this model — for PM, the
-    // docs-verified client ladder answers so the pill ALWAYS renders
-    // (the "gone, doesn't render" fix; the engine's ladder wins when
-    // the catalog later carries one).
-    if (provider === 'privatemodeai') {
-      var pm = pmDocsLadder(modelId);
-      if (pm) return { levels: pm.levels, def: pm.def };
     }
     return null;
   }
@@ -4463,6 +3754,33 @@
   // for the same fresh chat (quick-chat + cloud provider repro) — two POSTs
   // raced, the WS bound session #1 while state.sessionId landed on #2, and
   // histories crossed after reload. One in-flight creation, queued cbs.
+  // ── v1.44.4 THE STRIP: the PM attestation-oracle nudge ──────────
+  // With the WebView turn bridge retired, the wasm verify() (the only
+  // licensed attestation verifier — PLAN-V144 §V4) runs at PM CONNECT:
+  // when a PrivateMode chat opens (session restore) or a PM model is
+  // picked, an UNVERIFIED pin (headless TOFU) gets its oracle upgrade
+  // here — once per chat per page life, fire-and-forget, never blocking
+  // the panel. Verified pins skip the 6.1MB wasm entirely (the lazy-wasm
+  // law); the provider card's Re-verify button remains the manual drive.
+  function pmOracleNudge(state) {
+    if (!state || state.provider !== 'privatemodeai') return;
+    if (state._pmOracleNudged) return;
+    state._pmOracleNudged = true;
+    if (!(window.PMBridge && window.PMBridge.rerunOracle)) return;
+    fetch('/api/pm/state').then(function (r) { return r.json(); }).then(function (p) {
+      if (p && p.pinned && p.verified) return; // already verified — no wasm load
+      return window.PMBridge.rerunOracle().then(function () {
+        return fetch('/api/pm/state').then(function (r) { return r.json(); });
+      }).then(function (p2) {
+        if (p2 && p2.pinned && p2.verified && window.toast) {
+          window.toast('✓ PrivateMode attestation verified — the engine pin is upgraded');
+        }
+      });
+    }).catch(function (e) {
+      console.warn('[pm-oracle] connect-time verify failed:', e && e.message);
+    });
+  }
+
   function ensureSession(icon, state, cb) {
     if (state.sessionId) { cb(); return; }
     if (state._ensureQ) { state._ensureQ.push(cb); return; }
@@ -4590,6 +3908,7 @@
         if (data.SandboxRepo !== undefined && data.Sandbox === 'hf') state.sandboxRepo = data.SandboxRepo || '';
         if (!state.model && data.Model) state.model = data.Model;
         if (!state.provider && data.Provider) state.provider = data.Provider;
+        pmOracleNudge(state); // v1.44.4: PM connect = the oracle moment
         if (data.SlidingWindow) state.slidingWindow = data.SlidingWindow;
         // v0.20 FIX: restore the FULL capability set from the engine
         // session — the old restore dropped web_search/deep_research/effort/
@@ -7122,6 +6441,7 @@
     stopTurnIfStreaming(state, bodyEl);
     state.model = canonicalModel(provider, modelId);
     state.provider = provider;
+    pmOracleNudge(state); // v1.44.4: PM connect = the oracle moment
     // v0.89.2: every model CHOICE gets one self-heal chance — the flag
     // resets here so a dial-less pick (e.g. deepseek-ocr) doesn't consume
     // the chat's only refresh for the NEXT model (cloudflare after ocr
@@ -7177,21 +6497,16 @@
     state._editStash = null;
   }
 
-  // Mask engine events (edit/delete/regenerate) on BOTH chat paths:
-  // WS sessions send a hide control frame; PrivateMode sessions POST
-  // the same shape to the events endpoint. The engine persists ONE
-  // 'hide' event carrying the ids — buildHistory + replay skip them.
+  // Mask engine events (edit/delete/regenerate): the session's WS
+  // client sends a hide control frame (v1.44.4 THE STRIP: PM rides the
+  // WS like every provider — the old PM POST path is gone). The engine
+  // persists ONE 'hide' event carrying the ids — buildHistory + replay
+  // skip them.
   function emitHideEvents(state, ids) {
     if (!ids || !ids.length || !state.sessionId) return;
-    if (state.provider === 'privatemodeai') {
-      fetch('/api/sessions/' + state.sessionId + '/events', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'hide', text: JSON.stringify(ids) })
-      }).catch(function (e) { console.error('hide persist failed', e); });
-    } else if (state.client && state.client.sendRaw) {
+    if (state.client && state.client.sendRaw) {
       state.client.sendRaw({ type: 'hide', ids: ids });
-    } else if (state.provider !== 'privatemodeai' && state.sessionId) {
+    } else if (state.sessionId) {
       // no live WS (rare — session closed): the POST endpoint covers it.
       fetch('/api/sessions/' + state.sessionId + '/events', {
         method: 'POST',
@@ -7301,8 +6616,9 @@
     setActivity(bodyEl, state, 'sending…');
     syncSendButton(bodyEl, state);
 
-    // PrivateMode turns must never wait for the engine WS.
-    if (state.provider !== 'privatemodeai' && !(state.client && state.client.connected)) {
+    // v1.44.4 THE STRIP: PM rides the engine WS like every provider —
+    // the "never wait for the engine WS" carve-out is gone.
+    if (!(state.client && state.client.connected)) {
       if (!state.client && !state.sessionId) {
         ensureSession(icon, state, function () { connectWS(bodyEl, state, msgContainer); });
       } else if (state.client && state.client.state !== 'connecting' && state.client.state !== 'open') {

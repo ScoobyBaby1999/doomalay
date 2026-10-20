@@ -294,8 +294,12 @@ async function run() {
   // ── S3 THE PM SYSTEM-MESSAGE TWIN (the PWA-side teaching, static pin) ─
   console.log('S3 — the PWA teaching twin (source pins):');
   const panelSrc = fs.readFileSync(__ROOT + '/engine/internal/server/web/chatpanel.js', 'utf8');
-  ok(/THE TERMUX HAND on this chat: the `termux` tool/.test(panelSrc), 'pmSessionContext carries THE TERMUX HAND line');
-  ok(/txRoots\.join\(', '\)/.test(panelSrc), 'the PM block lists the REAL jailed roots');
+  const engineSrc = fs.readFileSync(__ROOT + '/engine/internal/server/sessionctx.go', 'utf8');
+  // v1.44.4 THE STRIP: pmSessionContext (the PM twin) is RETIRED — the
+  // ENGINE's session context owns the Termux hand line for every provider
+  // now (PM turns ride the engine WS). The pins retarget the engine twin.
+  ok(/THE TERMUX HAND on this chat: the `termux` tool/.test(engineSrc), 'the engine session context carries THE TERMUX HAND line');
+  ok(/strings\.Join\(roots, ", "\)/.test(engineSrc), 'the engine block lists the REAL jailed roots (strings.Join)');
   ok(/r\.ok\)/.test(panelSrc) && /could not save the capability flip/.test(panelSrc), 'persistCaps checks res.ok and toasts the failure (the silent-death fix)');
 
   // done
