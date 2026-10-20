@@ -1355,7 +1355,13 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
                                 // under the DOOM_TRACE_DELTAS gate (0 = counts
                                 // only, 1 = 64-rune head, 2 = full text). The
                                 // tallies ride the finish event at every gate.
-                                if r := choice.Delta.Reasoning + choice.Delta.ReasoningOR; r != "" {
+                                // v1.46.1 THE ALIAS LAW: the two wire spellings are documented
+                                // aliases of ONE channel — PM's vllm-0.31 gateway emits BOTH
+                                // byte-equal on every reasoning delta (live-convicted:
+                                // "every word appears twice"), so mergeWireReasoning
+                                // dedupes the pair; single-spelling senders (OpenRouter
+                                // reasoning / NIM reasoning_content) pass through as-is.
+                                if r := mergeWireReasoning(choice.Delta.Reasoning, choice.Delta.ReasoningOR); r != "" {
                                         nReason++
                                         if obs.DeltaTrace() >= 2 {
                                                 obs.EmitS(ctx, obs.ReasoningDelta, "len", len(r), "text", r)
@@ -1378,10 +1384,14 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
                                         // v1.14.6 THE NORMALIZATION TABLE: one canonical
                                         // reasoning channel — wire-native reasoning_content
                                         // / reasoning AND the think-tag extraction merge
-                                        // here; only one shape is ever non-empty per
-                                        // chunk in practice, and the sum is always the
+                                        // here. v1.46.1: the two wire spellings merge via
+                                        // mergeWireReasoning (the PM alias pair is ONE
+                                        // channel — the old blind concatenation doubled
+                                        // every word of PM-native reasoning); the extracted
+                                        // think-tag text (a DIFFERENT channel — content)
+                                        // still appends, and the sum is always the
                                         // model's thinking.
-                                        onDelta(choice.Delta.Reasoning+choice.Delta.ReasoningOR+extracted, visible)
+                                        onDelta(mergeWireReasoning(choice.Delta.Reasoning, choice.Delta.ReasoningOR)+extracted, visible)
                                 }
                         }
                 }

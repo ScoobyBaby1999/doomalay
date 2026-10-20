@@ -11,20 +11,59 @@ package llm
 //      ├──────────────────────┼───────────────────────────┼─────────────────────────────┤
 //      │ DeepSeek-style       │ delta.reasoning_content   │ direct (wire-native)        │
 //      │ OpenRouter-style     │ delta.reasoning           │ direct (wire-native)        │
+//      │ ALIAS PAIR (v1.46.1 —│ reasoning + reasoning_    │ ONE copy — the SAME         │
+//      │ PM's vllm-0.31 shim) │ content, byte-equal, in   │ channel in two spellings    │
+//      │                      │ one delta                 │ (mergeWireReasoning)        │
 //      │ inline think tags    │ <think>…</think> inside   │ extracted → thinking;       │
 //      │ (QwQ, R1-distills,   │ delta.content             │ stripped from content       │
 //      │ Mistral-old:         │                           │                             │
 //      │ <thinking>…)         │                           │                             │
 //      └──────────────────────┴───────────────────────────┴─────────────────────────────┘
 //
-// The two wire-native shapes already merge at the scanSSECollect onDelta
-// site (only one is ever non-empty per chunk). This file implements the
+// The two wire-native shapes merge at the scanSSECollect onDelta site
+// through mergeWireReasoning — the v1.14.6 assumption ("only one is ever
+// non-empty per chunk") was convicted live on PrivateMode (2026-10-20, probe:
+// glm-5.3 + gpt-oss-120b, plain + tool rounds, streaming + non-streaming):
+// the PM gateway (vllm-0.31.0) serves EVERY reasoning delta in BOTH spellings
+// byte-equal for client compatibility (vLLM renamed the channel
+// reasoning_content → reasoning; the deployment answers to both names).
+// Concatenating both — the old merge — doubled every word of PM reasoning
+// (the user's "every word appears twice" report). The alias law: a byte-equal
+// pair is ONE channel seen twice → one copy. This file implements the
 // third: a stateful, fragment-safe filter — tags arrive SPLIT across SSE
 // fragments ("<th", "ink>…"), so matching works on a holdback buffer and
 // every held byte is released at flush (an unclosed <think> — the
 // finish_reason=length class — delivers its whole tail as reasoning).
 
 const thinkTagMax = len("</thinking>") // 11 — the longest tag we match
+
+// mergeWireReasoning merges the two wire-native reasoning spellings of ONE
+// delta into the canonical channel. They are DOCUMENTED ALIASES (vLLM:
+// "reasoning used to be called reasoning_content"), so a byte-equal pair is
+// ONE channel seen twice — return one copy. Senders that populate exactly
+// one (OpenRouter: reasoning; NIM/DeepSeek-style: reasoning_content) are
+// untouched; a both-non-empty-and-different delta (no known sender) keeps
+// the historical concatenation so no wire byte is ever dropped.
+//
+// Live conviction (2026-10-20, probe): PrivateMode's gateway (vllm-0.31.0)
+// emits {"reasoning":"The","reasoning_content":"The"} on EVERY reasoning
+// delta — the old Reasoning+ReasoningOR merge doubled every word (the
+// user's "every word appears twice in its reasoning" report).
+func mergeWireReasoning(reasoningContent, reasoning string) string {
+        switch {
+        case reasoningContent == "":
+                return reasoning
+        case reasoning == "":
+                return reasoningContent
+        case reasoningContent == reasoning:
+                // The alias pair: one channel, two spellings — ONE copy.
+                return reasoningContent
+        default:
+                // Different texts in both spellings: keep every byte (the
+                // pre-v1.46.1 behavior — never drop wire text on an unobserved shape).
+                return reasoningContent + reasoning
+        }
+}
 
 type thinkFilter struct {
         inThink bool
