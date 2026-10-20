@@ -98,7 +98,7 @@ patchable** — anything else in a manifest is skipped and counted in
 |----------|-----------|-----|
 | PWA assets (`engine/internal/server/web/*`) | ✅ live, no restart | Served through the ota-first overlay. |
 | The engine binary (`libdoomalayengine.so`) | ❌ never | The `min_engine` gate refuses the delta — the only path is the full APK (honest `engine_update_required` state). |
-| `web/vendor/pm/privatemode.wasm` | ⚠️ effectively no | A dedicated route serves the embedded gzipped bytes (transparent gzip decoding); a patched wasm needs the APK. v1.44: the wasm is the CONNECT-TIME ATTESTATION ORACLE only (verify() at PM connect + the Re-verify button — pmsdk.js); PM turns ride the ENGINE's native encrypted wire, so an OTA-patched oracle artifact never affects turn traffic. |
+| `web/vendor/pm/privatemode.wasm` | ⚠️ effectively no | A dedicated route serves the embedded gzipped bytes (transparent gzip decoding); a patched wasm needs the APK. v1.44: the wasm is the CONNECT-TIME ATTESTATION ORACLE only (pmsdk.js); v1.45.4 THE QUIET ORACLE: it fires STRICTLY from the provider card's explicit verify button (zero auto-load at connect or anywhere else); PM turns ride the ENGINE's native encrypted wire, so an OTA-patched oracle artifact never affects turn traffic. |
 | Kotlin/Java, AndroidManifest, gradle | ❌ | Requires recompilation / APK reinstall. |
 
 ## The PWA side
