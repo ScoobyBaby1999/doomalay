@@ -358,18 +358,17 @@ func (s *Server) routes() {
         s.mux.HandleFunc("GET /api/device-info", s.handleDeviceInfo)
         s.mux.HandleFunc("GET /api/local-models", s.handleLocalModels)
 
-        // v0.16: browser-side tool server (the PM SDK bridge's ReAct loop
-        // calls these same-origin — search + SSRF-guarded page fetch).
-        s.mux.HandleFunc("GET /api/tools/websearch", s.handleToolsWebSearch)
-        s.mux.HandleFunc("GET /api/tools/webfetch", s.handleToolsWebFetch)
-        // v0.20: local tool server for the PM bridge (calculator/time/
-        // uuid/hash/json/… — same Go implementations the engine uses).
-        s.mux.HandleFunc("GET /api/tools/local", s.handleToolsLocal)
-        // v0.60 pt C.13: the PM bridge's superpowers tools — the skills
-        // library (bootstrap/list/search/load/files/read) + the bot-side
-        // hub browse (search/get/download), both lib-gated server-side.
-        s.mux.HandleFunc("GET /api/tools/skills", s.handleToolsSkills)
-        s.mux.HandleFunc("GET /api/tools/hublib", s.handleToolsHublib)
+        // v1.47.3 THE BRIDGE PURGE: the old PM bridge's /api/tools/*
+        // routes (websearch/webfetch/local/skills/hublib) are GONE. The
+        // WebView-bridge chat that consumed them died with v1.44.0
+        // (THE NATIVE PM — the engine speaks PM's protocol itself), and
+        // a sweep found ZERO consumers left (web, app, brain, docs).
+        // The CURRENT surfaces all stay: the mcpbus (the chats' tools),
+        // /mcp (external consumers — the session-less fallback Turn),
+        // and /api/pm/local/v1/chat/completions (the co-located brain's
+        // PM bridge, v1.44.5 — litellm cannot speak PM's E2E protocol).
+        // The user's directive: "we can get rid of the fallback old pm
+        // bridge since we have native."
 
         // v0.21: usage + cost tracking (per chat + fleet-wide).
         s.mux.HandleFunc("GET /api/sessions/{id}/usage", s.handleSessionUsage)

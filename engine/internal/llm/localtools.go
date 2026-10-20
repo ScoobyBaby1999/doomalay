@@ -12,8 +12,10 @@
 //
 // Safety: every implementation is a pure function with hard size caps
 // (no eval, no shell, no FS; RE2 regexes can't backtrack-blow up;
-// inputs clamped). The PM bridge reaches these through
-// GET /api/tools/local?name=&args= — same code, one implementation.
+// inputs clamped). The mcpbus serves these to every chat turn (and the
+// session-less /mcp fallback Turn to external consumers) — one
+// implementation, one path (the old PM bridge's /api/tools/local twin
+// is retired, v1.47.3).
 package llm
 
 import (

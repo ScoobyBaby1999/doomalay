@@ -15,8 +15,9 @@
 //
 // Artifacts are saved through the ArtifactSink interface (compartment
 // boundary: the llm package never touches sessions/disk — the server
-// implements the sink; the PM bridge reaches the same code via
-// GET /api/tools/local?session=…).
+// implements the sink; every chat turn reaches the same code through
+// the mcpbus (the old PM bridge's /api/tools/local twin is retired,
+// v1.47.3).
 package llm
 
 import (

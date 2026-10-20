@@ -609,44 +609,26 @@ func TestV816_RestDoEndpoint(t *testing.T) {
 	}
 }
 
-// TestV816_PmToolServerRoute — the PrivateMode path's exact HTTP seam:
-// GET /api/tools/local?name=workspace&args=…&session=… answers with the
-// shared switch's observation (the user's repro got "unknown tool" here).
-func TestV816_PmToolServerRoute(t *testing.T) {
+// TestV816_WorkspaceRunnerSeam — v1.47.3 THE BRIDGE PURGE re-pin: the
+// old /api/tools/local PM route is GONE (the WebView-bridge chat died
+// with v1.44.0; zero consumers remained). The seam that serves
+// workspace calls today is the runner behind ChatRequest.WorkspaceToolFn
+// — the exact observations the dead route used to serve.
+func TestV816_WorkspaceRunnerSeam(t *testing.T) {
 	s, sid := newV765Server(t)
-	args := `{"action":"list"}`
-	path := "/api/tools/local?name=workspace&args=" + urlQueryEscape(args) + "&session=" + sid
-	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
-	if rec.Code != 200 {
-		t.Fatalf("pm route: %d %s", rec.Code, rec.Body.String())
-	}
-	var out map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
-		t.Fatalf("json: %v", err)
-	}
-	if !strings.Contains(str(out["result"]), "3 connected workspace(s)") {
-		t.Fatalf("pm route result: %v", out["result"])
+	ctx := context.Background()
+	out := s.runWorkspaceAction(ctx, sid, `{"action":"list"}`)
+	if !strings.Contains(out, "3 connected workspace(s)") {
+		t.Fatalf("runner list: %v", out)
 	}
 	// a read verb rides the seam too
-	args = `{"action":"readme","ws":"me/fullrepo"}`
-	path = "/api/tools/local?name=workspace&args=" + urlQueryEscape(args) + "&session=" + sid
-	rec = httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
-	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
-		t.Fatalf("json: %v", err)
+	out = s.runWorkspaceAction(ctx, sid, `{"action":"readme","ws":"me/fullrepo"}`)
+	if !strings.Contains(out, "README of me/fullrepo") {
+		t.Fatalf("runner readme: %v", out)
 	}
-	if !strings.Contains(str(out["result"]), "README of me/fullrepo") {
-		t.Fatalf("pm readme: %v", out["result"])
-	}
-	// the unknown-tool message now TEACHES the workspace tool
-	path = "/api/tools/local?name=repo_list&args=" + urlQueryEscape(`{}`) + "&session=" + sid
-	rec = httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
-	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
-		t.Fatalf("json: %v", err)
-	}
-	if !strings.Contains(str(out["result"]), `workspace {"action"`) {
-		t.Fatalf("unknown-tool teach: %v", out["result"])
+	// the unknown-action message TEACHES the valid verbs
+	out = s.runWorkspaceAction(ctx, sid, `{"action":"frobnicate"}`)
+	if !strings.Contains(out, `unknown workspace action "frobnicate"`) || !strings.Contains(out, "Valid: help, list") {
+		t.Fatalf("unknown-action teach: %v", out)
 	}
 }

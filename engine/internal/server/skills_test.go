@@ -9,6 +9,7 @@ import (
         "encoding/json"
         "net/http"
         "net/http/httptest"
+        "net/url"
         "os"
         "path/filepath"
         "strings"
@@ -60,14 +61,36 @@ func newSkillsTestServer(t *testing.T) *Server {
         return New(cfg, db, nil)
 }
 
+// skillsGet — v1.47.3 THE BRIDGE PURGE re-pin: the /api/tools/* routes
+// are GONE (the old PM bridge's orphaned contract); the tests drive the
+// DISPATCH CORES directly — the exact bodies the live closures
+// (runSkillsAction/runHublibAction behind ChatRequest.SkillsToolFn/
+// HublibToolFn) run. The query-string shape is preserved so every
+// assertion below reads unchanged.
 func skillsGet(t *testing.T, s *Server, path string) (int, map[string]any) {
         t.Helper()
-        req := httptest.NewRequest(http.MethodGet, path, nil)
-        rec := httptest.NewRecorder()
-        s.mux.ServeHTTP(rec, req)
-        var out map[string]any
-        _ = json.Unmarshal(rec.Body.Bytes(), &out)
-        return rec.Code, out
+        u, err := url.Parse(path)
+        if err != nil {
+                t.Fatalf("parse path: %v", err)
+        }
+        q := u.Query()
+        get := func(k string) string { return q.Get(k) }
+        switch {
+        case strings.HasPrefix(path, "/api/tools/skills"):
+                res, errStr := s.skillsDispatch(q.Get("action"), get, q.Get("session"))
+                if errStr != "" {
+                        return 200, map[string]any{"tool": "skills", "error": errStr}
+                }
+                return 200, map[string]any{"tool": "skills", "result": res}
+        case strings.HasPrefix(path, "/api/tools/hublib"):
+                res, errStr := s.hublibDispatch(q.Get("action"), get, q.Get("session"))
+                if errStr != "" {
+                        return 200, map[string]any{"tool": "hublib", "error": errStr}
+                }
+                return 200, map[string]any{"tool": "hublib", "result": res}
+        }
+        t.Fatalf("unhandled path %s", path)
+        return 0, nil
 }
 
 func mkLibSession(t *testing.T, s *Server, libOn bool) string {

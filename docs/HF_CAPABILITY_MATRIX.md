@@ -106,7 +106,7 @@ cloud models to void the system limitations."*
 | **Auto-compacting** | ✅ **DONE** v0.21 | `server/compact.go maybeCompact` — at 70% of the model's window, older turns are summarized into the session's compact summary (HF's proactive_compression, in Go); `buildHistoryCompacted` sends summary + recent tail; full history stays on disk; UI shows a compact pill |
 | **Real context tracking** | ✅ **DONE** v0.21 | per-turn usage from providers' own reports → per-session + fleet context fill (`/api/sessions/{id}/usage`, `/api/usage`) + the ⧗ usage panel |
 | **Cost tracking** | ✅ **DONE** v0.21 | `llm/pricing.go` — curated $/M-token list rates, per-model + per-provider + fleet totals; unpriced models never invent dollars; NVIDIA dev tier marked free |
-| Local tool server for PM | ✅ **DONE** v0.20 | `/api/tools/local` — one implementation, engine + WebView both use it |
+| Local tool server for PM | 🗑️ **RETIRED** v1.47.3 | the `/api/tools/*` PM-bridge routes are GONE — the WebView-bridge chat died with the native PM (v1.44.0); the tools ride the mcpbus (the chats), `/mcp` (external consumers) and the closures today |
 | Model identity + personas | ✅ **DONE** v0.20 | `{model}`/`{provider}` live placeholders + the merged HF-style default persona |
 
 ### Standing decisions (user directive: "make the decision wisely")

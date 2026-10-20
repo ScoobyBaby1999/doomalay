@@ -280,11 +280,11 @@ func TestPersonaTools(t *testing.T) {
 		}
 	}
 
-	// 6. the tool router serves them on the PM bridge too
-	req := httptest.NewRequest("GET", "/api/tools/local?name=persona_list&args=%7B%7D&session="+sid, nil)
-	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, req)
-	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "Default") {
-		t.Fatalf("tools/local persona_list HTTP %d: %s", rec.Code, rec.Body.String())
+	// 6. v1.47.3 THE BRIDGE PURGE re-pin: the /api/tools/local PM route is
+	// GONE — the persona tools ride the mcpbus closure seam today, which
+	// is runPersonaTool itself (the exact body PersonaToolFn wires).
+	out = s.runPersonaTool(sid, "persona_list", `{}`)
+	if !strings.Contains(out, "Default") {
+		t.Fatalf("persona_list runner: %s", out)
 	}
 }

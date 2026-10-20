@@ -151,10 +151,11 @@ func fromBusSources(sources []mcpbus.Source) []SearchResult {
 }
 
 // init registers the session-less fallback Turn external /mcp consumers
-// get (v1.13.4 THE CHAIN): local + web tools run exactly like the PM
-// bridge's /api/tools/* contract (no session, no keys beyond the live
-// ladder); session-scoped tools (persona/hublib/skills/workspace/
-// delegate, templates) refuse honestly.
+// get (v1.13.4 THE CHAIN): local + web tools run for any external caller
+// (no session, no keys beyond the live ladder — the same contract the
+// old PM bridge's /api/tools/* routes served, retired v1.47.3);
+// session-scoped tools (persona/hublib/skills/workspace/delegate,
+// djournal/fleet, templates) refuse honestly.
 func init() {
         mcpbus.SetFallbackTurn(func() *mcpbus.Turn {
                 return &mcpbus.Turn{

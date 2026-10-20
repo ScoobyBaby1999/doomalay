@@ -45,7 +45,6 @@ package server
 import (
         "encoding/json"
         "log"
-        "net/http"
         "os"
         "path/filepath"
         "sort"
@@ -368,20 +367,6 @@ func (s *Server) tweaksBotDLOn(sessID string) bool {
         return on
 }
 
-// handleToolsSkills is GET /api/tools/skills — the PM bridge's skills
-// half. `result` is the OBSERVATION-ready text (pmsdk wraps it). The
-// body lives in skillsDispatch (v0.72) so the DIRECT-path ACTION runner
-// (runSkillsAction — the quick chats) rides the exact same core.
-func (s *Server) handleToolsSkills(w http.ResponseWriter, r *http.Request) {
-        q := r.URL.Query()
-        res, errStr := s.skillsDispatch(q.Get("action"), q.Get, q.Get("session"))
-        if errStr != "" {
-                writeJSON(w, http.StatusOK, map[string]any{"tool": "skills", "error": errStr})
-                return
-        }
-        writeJSON(w, http.StatusOK, map[string]any{"tool": "skills", "result": res})
-}
-
 // skillsDispatch (v0.72, extracted from handleToolsSkills) — the shared
 // skills action core: the PM bridge (HTTP) AND the direct-path ACTION
 // runner both land here. get(k) resolves an argument by key. bootstrap +
@@ -563,18 +548,6 @@ func (s *Server) runSkillsAction(sessionID, argJSON string) string {
                 return "OBSERVATION:\nerror: " + errStr
         }
         return "OBSERVATION:\n" + res
-}
-
-// handleToolsHublib is GET /api/tools/hublib — the PM bridge's bot-side
-// hub browse (the pmsdk twin of the brain's dt_hublib).
-func (s *Server) handleToolsHublib(w http.ResponseWriter, r *http.Request) {
-        q := r.URL.Query()
-        res, errStr := s.hublibDispatch(q.Get("action"), q.Get, q.Get("session"))
-        if errStr != "" {
-                writeJSON(w, http.StatusOK, map[string]any{"tool": "hublib", "error": errStr})
-                return
-        }
-        writeJSON(w, http.StatusOK, map[string]any{"tool": "hublib", "result": res})
 }
 
 // hublibDispatch (v0.67.2, extracted) — the shared hub-lib action core:
