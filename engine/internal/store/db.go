@@ -23,9 +23,12 @@ import (
         _ "modernc.org/sqlite"
 )
 
-// DB wraps the sql.DB connection.
+// DB wraps the sql.DB connection. path is the main database file
+// ("<dataDir>/doomalay.db") — the maintenance pass (maintain.go) sizes
+// the -wal/-shm siblings from it.
 type DB struct {
         *sql.DB
+        path string
 }
 
 // Open opens (or creates) the SQLite database at dataDir/doomalay.db.
@@ -51,7 +54,14 @@ func Open(dataDir string) (*DB, error) {
         _ = os.Chmod(path, 0o600)
         _ = os.Chmod(path+"-wal", 0o600)
         _ = os.Chmod(path+"-shm", 0o600)
-        return &DB{db}, nil
+        out := &DB{DB: db}
+        out.path = path
+        // v1.42.1 THE LONG HAUL (H1a): bound the WAL file so post-checkpoint
+        // TRUNCATEs actually return disk space — without this the -wal file
+        // keeps its lifetime high-water size on disk forever (it only ever
+        // grew with install age).
+        _ = out.SetJournalSizeLimit(JournalSizeLimitBytes)
+        return out, nil
 }
 
 // Migrate creates the schema if missing. Idempotent.

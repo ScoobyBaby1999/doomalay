@@ -1,3 +1,102 @@
+---
+Task ID: v1.42.1
+Agent: Main orchestrator (Z.ai Code sandbox — THE MANY WORLDS wave)
+Task: PLAN-V142 §3.0 W0 phase 1 — THE LONG HAUL: the install-age
+degradation audit + rig-proven hygiene (H1/H2/H3), per the house law
+(hypothesis → research → real plan → build → redteam; the R13 research
+pass + this session's code-evidence pass came first).
+
+Work Log:
+- Rebased onto 586b133b (the parallel V144 wave's toolchain bump: go
+  1.26.0 + CI 1.26.9 — adopted; full battery re-verified green under
+  1.26.9 BEFORE any edit: 13/13 packages).
+- H1 verdicts (code-evidence): WAL grows unbounded (journal_size_limit
+  never set, no TRUNCATE checkpoint — the -wal file keeps its lifetime
+  high-water size); hub_items grows ONLY on download/publish (discovery
+  never persists — the plan's browse-cycle claim was overstated; rows
+  are user data with an explicit delete, so NO eviction — the usage row
+  surfaces it instead); metrics JSONL: VOID engine-side (obs is a capped
+  in-memory ring; usage computes from events; hub metrics are remote HF
+  datasets) — no fix needed, verdict recorded.
+- H1 fix: store/maintain.go — Open() applies PRAGMA journal_size_limit
+  (8MB); Maintain(force) = wal_checkpoint(TRUNCATE) + PRAGMA optimize +
+  gated VACUUM (freelist ≥25% AND ≥7d since last, stamped in
+  app_settings; force bypasses); the VACUUM path re-checkpoints so the
+  shrink reaches the filesystem (the photostructure WAL-vacuum study).
+- H3 verdict: healInterruptedTurns was THE boot storm —
+  ListEvents(id, 0) for EVERY session on EVERY boot = O(lifetime
+  chat_events), blocking server New() before /api/health ever answers
+  (the "degrades the longer it's downloaded" shape, paid even when
+  unused). Fix: store.TailPendingTurn — a DESC walk that stops at the
+  FIRST user-or-terminal event (the full-scan verdict depends only on
+  which comes last; common closed session = 1-2 index reads; a crashed
+  mid-mega-turn walks only that turn's tail; LIMIT 20001 covers any
+  realistic turn). PARITY-PROVEN against the old full-scan logic on 9
+  shapes incl. the 2k-delta mega-pending (events_tail_v1421_test.go).
+- H3 fix 2 (the OTA overlay): files only ever accumulate — a file
+  deleted from the web tree (the sandboxpicker.js v1.17.1 case) is
+  absent from every later manifest, never compared, never removed: it
+  resurrects on every load forever. otaOverlaySweep removes overlay
+  files absent from the CURRENT manifest (never on unreachable; never
+  .tmp in-flights; once per manifest version) — wired into
+  otaBackground + the post-apply path.
+- H2 verdicts: iconreg already hard-capped (2MB/16 sets — no fix);
+  modelcache has NO TTL (fix: 24h companion-stamp backstop in the
+  hygiene module); chatscroll/chatdraft/chatbundle/exportlatest grow
+  forever with dead-session entries (the four prune targets);
+  state.v2 is W2's migration target (THE LEDGER), untouched here.
+- H2 fix: web/storagehygiene.js — the daily sweep (once/24h, stamped):
+  prunes the four per-chat maps to LIVE ids (canvas state icons ∪
+  engine /api/chats; offline + nothing-live = skip, never a wrong
+  wipe), enforces chatpanel's 60-cap properly, drops the stale model
+  cache; + the Settings → Storage page (registerPage — the perfhud
+  precedent, zero new surfaces): engine usage rows, localStorage
+  footprint, Clean-stale-data + Maintain-now actions, theme vars only.
+- New surfaces: GET /api/storage/usage (honest counts+sizes, no
+  paths/payloads) + POST /api/storage/maintain {force} (busy engine =
+  409 honest); maintenanceLoop (30s after boot, then 6h; skipped while
+  turns stream — the busy-gate) — NEVER on the boot path.
+- THE RIG (scripts/v1421-aged-state-rig.mjs, joins the battery): seeds
+  a 90-day-equivalent DataDir (121 sessions via the REAL API · 46,531
+  events · 1,500 hub rows · ghost freelist · stray overlay files)
+  through a live booted engine: 24/24 — aged boot→health 853ms (budget
+  4s), the heal closes exactly the 9 pending (incl. mega) + touches
+  nothing closed, usage counts exact, forced maintain truncates the WAL
+  on disk + reclaims the freelist + stamps, the overlay sweep kills
+  the strays + keeps manifest files. Phase B node-requires the pure
+  prune/collect core (12 more).
+- CONVICTIONS DURING THE RIG (fixed): (1) the post-VACUUM checkpoint
+  used bare db.Query — an unclosed *sql.Rows pins the ONE connection
+  (MaxOpenConns=1) and everything after deadlocks (the maintain test
+  caught it; QueryRow+Scan now). (2) The first seeder wrote raw session
+  rows with NULL columns — ListSessions' scan rightly refuses NULL→
+  string; the rig now creates sessions through the real API (and the
+  prewarm log error is what convicted it).
+- THE BROWSER WALK (agent-browser, the real app, zero page errors):
+  aged localStorage seeded (3 dead scroll entries, dead draft/bundle/
+  export, 48h-stale model cache) → sweep keeps exactly the live chat's
+  entries + drops the rest + the stale cache; Settings → Storage
+  renders every row with real data (88KB db, rows, vacuum age), both
+  buttons act honestly ("removed 0 stale entries" post-sweep; "checkpoint
+  ✓ · vacuum ran · wal 0B → 0B" + the stamp flips to "just now");
+  computed styles resolve from the theme's OKLCH vars (the theme law).
+- Battery: go 13/13 (14 new tests: maintain 10 · server 4) · v1421 rig
+  24/24 · v1400 uninterrupted 58/58 (the turn lifecycle is untouched
+  and proves it) · theme source-pin PASS (0 violations; the census gains
+  storagehygiene's var-compositions) · v1390 30/30 · v1391 10/10 ·
+  discipline audit 7 PASS + the documented pre-existing B1 · node
+  --check clean · vet clean.
+
+Stage Summary:
+- The install-age ledger closes its first three hypotheses with fixes
+  + receipts: boot is O(sessions) not O(lifetime events); the WAL is
+  bounded + drained + vacuumed on an idle cadence; the overlay can't
+  resurrect deleted files; WebView storage prunes to live chats daily;
+  the user can SEE it all (Settings → Storage) and act (Clean +
+  Maintain). H4/H5 (world-size creep, the cull-less DOM path) are
+  measured next by v1.42.2 THE FIELD's frame-budget rig — the aged
+  harness is in the battery to keep every later phase honest.
+
 
 ---
 Task ID: v0700

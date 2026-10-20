@@ -771,6 +771,8 @@ settings.js,41,hex,"#0a0a0b",canon-marker,"bg: '#0a0a0b',          // CANON-TWIN
 settings.js,42,hex,"#131318",canon-marker,"lineColor: '#131318',   // CANON-TWIN: LEGACY_GRID.line"
 settings.js,43,hex,"#2e2e3a",canon-marker,"dotColor: '#2e2e3a',    // CANON-TWIN: LEGACY_GRID.dot"
 settings.js,44,hex,"#4a4a5e",canon-marker,"originColor: '#4a4a5e', // CANON-TWIN: LEGACY_GRID.origin"
+storagehygiene.js,215,rgb,"rgba(var(--accent-rgb)",var-composition,"'<button id=""st-clean"" data-action=""storage-clean"" style=""background:rgba(var(--accent-rgb),0.14);color:var(--accent);border:1px solid rgba(var(--accent-rgb),0."
+storagehygiene.js,215,rgb,"rgba(var(--accent-rgb)",var-composition,"'<button id=""st-clean"" data-action=""storage-clean"" style=""background:rgba(var(--accent-rgb),0.14);color:var(--accent);border:1px solid rgba(var(--accent-rgb),0."
 termuxsetup.js,778,rgb,"rgba(var(--accent-rgb)",var-composition,"'.tsx-row.now{border-color:rgba(var(--accent-rgb),0.55)}' +"
 termuxsetup.js,787,rgb,"rgba(var(--accent-rgb)",var-composition,"'.tsx-num.now{color:var(--accent);background:rgba(var(--accent-rgb),0.12);' +"
 termuxsetup.js,815,rgb,"rgba(var(--accent-rgb)",var-composition,"'.tsx-chip.done{color:var(--accent);border-color:rgba(var(--accent-rgb),0.45);' +"

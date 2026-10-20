@@ -3,6 +3,7 @@ package store
 import (
         "database/sql"
         "encoding/json"
+        "strings"
         "time"
 )
 
@@ -219,4 +220,57 @@ func (e *Event) ToJSON() ([]byte, error) {
                 }
         }
         return json.Marshal(w)
+}
+
+// TailPendingTurn answers "does this session's log end with an UNCLOSED
+// turn?" WITHOUT scanning the whole log — v1.42.1 THE LONG HAUL (PLAN-V142
+// §3.0, hypothesis H3: the boot heal's O(lifetime-events) scan was the
+// install-age boot storm; a 90-day install paid a full read of every
+// chat_event ever written on EVERY engine start).
+//
+// The verdict only depends on the LAST 'user' vs terminal-'status' event
+// (the full-scan heal's final pending flag flips true on user, false on
+// terminal, in order — so its end state is decided by whichever of the
+// two comes last). Walking DESC from the newest event, the FIRST of
+// {user, terminal status} encountered IS that decider:
+//
+//   - 'user' seen first  → pending (the turn never closed)
+//   - terminal status    → closed
+//
+// Every other event type (assistant_delta ×N, thinking, tool_use, …) is
+// turn-middle noise: skipped. The common closed-session shape stops after
+// 1-2 rows; a session that died mid-mega-turn walks only that turn's tail
+// (tailLimit caps the walk). 'status' events that are NOT terminal
+// (state "running") also keep the walk going, exactly like the old scan.
+//
+// decided=false means the tail window exhausted with neither marker —
+// for any realistic turn (≤ a few thousand streamed events) this cannot
+// happen; the caller treats it as closed and logs it honestly.
+func (db *DB) TailPendingTurn(sessionID string, tailLimit int) (pending, decided bool) {
+        if tailLimit <= 0 {
+                tailLimit = 20001
+        }
+        rows, err := db.Query(`SELECT event_type, content FROM chat_events
+WHERE session_id=? ORDER BY seq DESC LIMIT ?`, sessionID, tailLimit)
+        if err != nil {
+                return false, false
+        }
+        defer rows.Close()
+        for rows.Next() {
+                var typ, content string
+                if err := rows.Scan(&typ, &content); err != nil {
+                        return false, false
+                }
+                switch typ {
+                case "user":
+                        return true, true
+                case "status":
+                        // the SAME terminal test the full-scan heal used — a
+                        // status{"running"} (turn start) does not close a turn.
+                        if strings.Contains(content, `"idle"`) || strings.Contains(content, `"error"`) {
+                                return false, true
+                        }
+                }
+        }
+        return false, false
 }

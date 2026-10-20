@@ -159,6 +159,9 @@ func New(cfg *config.Config, db *store.DB, br *brain.Brain) *Server {
         currentServer = s
         s.routes()
         s.healInterruptedTurns() // v0.39: boot heal — close out turns orphaned by a crash/restart
+        // v1.42.1 THE LONG HAUL: idle-time maintenance (checkpoint/vacuum
+        // cadence) — OFF the boot path by construction (first pass 30s in).
+        go s.maintenanceLoop()
         return s
 }
 
@@ -173,6 +176,15 @@ func New(cfg *config.Config, db *store.DB, br *brain.Brain) *Server {
 //   - the LLM history builder folds the turn correctly,
 //   - a later reconnect resume doesn't sit waiting for a stream that will
 //     never come (the resumed socket sees the terminal and stops waiting).
+//
+// v1.42.1 THE LONG HAUL (H3 — the install-age boot storm): the old heal
+// read EVERY event of EVERY session on EVERY boot (ListEvents(id, 0)) —
+// O(lifetime chat_events), so a 90-day install paid a full-table read
+// before the server ever answered /api/health. The verdict only depends
+// on the last 'user' vs terminal 'status' (see store.TailPendingTurn),
+// so the walk is now a bounded tail scan per session: the common closed
+// session costs 1-2 index reads; only sessions that genuinely died
+// mid-turn walk that turn's tail.
 func (s *Server) healInterruptedTurns() {
         if s.db == nil {
                 return
@@ -183,22 +195,14 @@ func (s *Server) healInterruptedTurns() {
         }
         healed := 0
         for _, sess := range sessions {
-                events, err := s.db.ListEvents(sess.ID, 0)
-                if err != nil {
+                pending, decided := s.db.TailPendingTurn(sess.ID, 20001)
+                if !decided {
+                        // A 20k-event tail with neither a user nor a terminal
+                        // status — no realistic turn shape does this. Treat as
+                        // closed (the frontend's own heal still flags the
+                        // interrupted reply honestly) and say so in the log.
+                        log.Printf("boot heal: session %s tail exhausted without a verdict — treating as closed", sess.ID)
                         continue
-                }
-                pending := false
-                for _, ev := range events {
-                        switch ev.EventType {
-                        case "user":
-                                pending = true
-                        case "status":
-                                // only TERMINAL states close the pending turn — a
-                                // status{"running"} (emitted at turn start) must not.
-                                if strings.Contains(ev.Content, `"idle"`) || strings.Contains(ev.Content, `"error"`) {
-                                        pending = false
-                                }
-                        }
                 }
                 if pending {
                         if _, err := s.db.AppendEvent(sess.ID, "status", `{"state":"error","healed":true,"message":"interrupted by engine restart"}`, ""); err == nil {
@@ -251,6 +255,10 @@ func (s *Server) routes() {
         }
         // API endpoints (one per resource).
         s.mux.HandleFunc("GET /api/health", s.handleHealth)
+        // v1.42.1 THE LONG HAUL: the aged-state dashboard + the on-demand
+        // maintenance pass (Settings → Storage renders it; the rig asserts it).
+        s.mux.HandleFunc("GET /api/storage/usage", s.handleStorageUsage)
+        s.mux.HandleFunc("POST /api/storage/maintain", s.handleStorageMaintain)
         // v1.39.2 THE AWAKE ENGINE: the busy gauge — Kotlin's 5s poll rides it
         // (PARTIAL_WAKE_LOCK acquire/release + the live notification text).
         s.mux.HandleFunc("GET /api/engine/busy", s.handleEngineBusy)

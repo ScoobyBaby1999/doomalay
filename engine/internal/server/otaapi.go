@@ -44,6 +44,7 @@ import (
         "context"
         "fmt"
         "io/fs"
+        "log"
         "net/http"
         "os"
         "path"
@@ -87,11 +88,12 @@ type otaManager struct {
         url  string // the manifest URL (config: default release URL / env / yaml)
         root string // <dataDir>/ota — where patches land and live
 
-        mu      sync.Mutex
-        man     *ota.Manifest
-        at      time.Time // when the last fetch attempt finished (success or not)
-        lastErr string    // "" when the last fetch succeeded
-        flight  chan struct{}
+        mu         sync.Mutex
+        man        *ota.Manifest
+        at         time.Time // when the last fetch attempt finished (success or not)
+        lastErr    string    // "" when the last fetch succeeded
+        lastSwept  string    // v1.42.1: the manifest version the overlay sweep last ran against
+        flight     chan struct{}
 }
 
 // newOtaManager builds the manager (nil = disabled: the kill switch, or
@@ -112,12 +114,16 @@ func newOtaManager(cfg *config.Config) *otaManager {
 // otaBackground runs on its own goroutine from New(): one check at boot
 // (never blocking — it is already off the boot path) then every 5 min.
 // Every failure lands in the cache as the honest unreachable state.
+// v1.42.1: a successful refresh also triggers the overlay sweep (once
+// per manifest version — deleted-file resurrection dies here).
 func (s *Server) otaBackground() {
         s.otaRefresh(false)
+        s.otaSweepOnManifest()
         t := time.NewTicker(otaCheckPeriod)
         defer t.Stop()
         for range t.C {
                 s.otaRefresh(false)
+                s.otaSweepOnManifest()
         }
 }
 
@@ -494,4 +500,74 @@ func otaCandidates(rel string) []string {
                 return []string{"index.html"}
         }
         return []string{rel, path.Join(rel, "index.html")}
+}
+
+// ── v1.42.1 THE LONG HAUL: the overlay sweep (H1/H3) ───────────────────
+//
+// The overlay only ever GROWS: each delta download writes files under
+// <dataDir>/ota/ and nothing ever removes them. A file DELETED from the
+// web tree (the sandboxpicker.js v1.17.1 deletion is the real case) is
+// absent from every later manifest — the plan never compares it, so its
+// overlay copy is served FOREVER: a deleted file resurrects on every
+// load, and the overlay accumulates one file per version ever patched.
+//
+// The sweep walks the overlay and removes every file whose repo path is
+// NOT in the current manifest's file set. It runs ONLY on a fresh,
+// verified manifest fetch (never on a cached/unreachable one — an
+// offline boot must never nuke the overlay) and at most once per
+// manifest version.
+func (s *Server) otaOverlaySweep(man *ota.Manifest) int {
+        if s.ota == nil || man == nil {
+                return 0
+        }
+        keep := map[string]bool{}
+        for _, f := range man.Files {
+                if rel, ok := otaPatchable(f.Path); ok {
+                        keep[rel] = true
+                }
+        }
+        removed := 0
+        _ = filepath.WalkDir(s.ota.root, func(p string, d fs.DirEntry, err error) error {
+                if err != nil || d.IsDir() {
+                        return nil
+                }
+                if strings.HasSuffix(p, ".tmp") {
+                        return nil // an in-flight download — never touch
+                }
+                rel, rerr := filepath.Rel(s.ota.root, p)
+                if rerr != nil {
+                        return nil
+                }
+                rel = filepath.ToSlash(rel)
+                if !keep[rel] {
+                        if os.Remove(p) == nil {
+                                removed++
+                        }
+                }
+                return nil
+        })
+        if removed > 0 {
+                log.Printf("ota: overlay sweep removed %d file(s) absent from manifest %s", removed, man.Version)
+        }
+        return removed
+}
+
+// otaSweepOnManifest runs the overlay sweep after a SUCCESSFUL manifest
+// fetch, once per manifest version (the stamp lives in-memory — a
+// restart re-sweeps once, which is cheap and self-healing).
+func (s *Server) otaSweepOnManifest() {
+        m := s.ota
+        if m == nil {
+                return
+        }
+        m.mu.Lock()
+        man, lastSwept := m.man, m.lastSwept
+        m.mu.Unlock()
+        if man == nil || man.Version == lastSwept || man.Version == "" {
+                return
+        }
+        s.otaOverlaySweep(man)
+        m.mu.Lock()
+        m.lastSwept = man.Version
+        m.mu.Unlock()
 }
