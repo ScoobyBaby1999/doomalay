@@ -494,6 +494,7 @@
     var ease = 1 - Math.pow(1 - tt, 3);   // ease-out cubic: quick, then settle
     offsetX = glide.fromX + (toOx - glide.fromX) * ease;
     offsetY = glide.fromY + (toOy - glide.fromY) * ease;
+    clampCamera();   // v1.42.3: the glide's whole flight stays inside the world
     if (tt >= 1) {
       glide.active = false;
       // arrived (≈ centered)? the flash marks the landing
@@ -909,6 +910,7 @@
     },
     resetView: function () {
       offsetX = 0; offsetY = 0; scale = 1; velX = 0; velY = 0;
+      clampCamera();   // v1.42.3: (0,0,1) is the world's center — always legal, clamp is the belt
       update(); scheduleSave();
     },
     // v0.90.1: the camera readback for the E2E rigs (the collision rigs
@@ -934,7 +936,14 @@
       if (typeof ox === 'number') offsetX = ox;
       if (typeof oy === 'number') offsetY = oy;
       if (typeof s === 'number') scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, s));
+      clampCamera();   // v1.42.3: no stale snapshot escapes the bounds (the plan's boot-heal law)
       update();
+    },
+    // v1.42.3 THE EDGE: the rig read-back (the arrowsProbe precedent —
+    // read-only camera + bounds truth for the E2E rigs; W2's per-canvas
+    // camera work builds on this).
+    cameraProbe: function () {
+      return { x: offsetX, y: offsetY, scale: scale, worldSize: WORLD_SIZE, w: W, h: H };
     },
     // v0.90.1: THE SIM STEPPER for the E2E rigs — advances physics + the
     // orbit steering TOGETHER at the tick's own 60Hz pairing with a
@@ -1153,6 +1162,7 @@
     // main-thread paint)
     renderGrid();
     renderIconsCulled();   // v1.42.2 THE FIELD: O(visible) render, not O(world)
+    updateEdgeAffordance(); // v1.42.3: the edge lines track every full render
     // v0.88: the world layer's on-demand driver — a full-frame funnel
     // (a pan, a drag, a repaint) means the camera or the icons moved; one
     // poke re-lights its rAF driver (it self-stops when the world rests).
@@ -1231,6 +1241,92 @@
     }
   }
 
+  // ▀▀ v1.42.3 THE EDGE — the bounded world (PLAN-V142 §3.1) ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+  // The 7-second metric, formalized: at max zoom-out (0.125) a steady
+  // drag moves ~8k-12k world px/s; 7s of full traverse ≈ 56k-84k px.
+  // Default 65,536 (2^16 — power-of-two tile math, float32-safe by
+  // 256x per the plan's R1 verdict), centered on the origin
+  // (±32,768). The user's dial, not a wall: Settings → Sizing
+  // (16k / 32k / 64k / 128k / ∞-off). 0 = the legacy infinite world.
+  var WORLD_SIZE = 65536;
+  function applyWorldSize(sz) {
+    var n = Number(sz);
+    if (!isFinite(n) || n < 0) n = 65536;
+    var sizes = [16384, 32768, 65536, 131072, 0];
+    // snap to the sanctioned ladder (settings carry the exact values;
+    // a stray value falls to the default)
+    if (sizes.indexOf(n) < 0) n = 65536;
+    var changed = n !== WORLD_SIZE;
+    WORLD_SIZE = n;
+    if (world && world.setBounds) world.setBounds(n ? n / 2 : 0);
+    if (changed && world && world.conform) world.conform(n ? n / 2 : 0);  // a shrink pulls stranded icons home
+    clampCamera();
+    updateEdgeAffordance();
+  }
+  // clampCamera — the viewport never leaves the world. screen =
+  // (world − offset) × scale, so the viewport spans world-x
+  // [offsetX, offsetX + W/scale]. Both axes clamp independently (the
+  // plan's corner law); a viewport WIDER than the world (deep zoom-out
+  // on a small world) degenerates gracefully to centering.
+  function clampCamera() {
+    if (!WORLD_SIZE) return;
+    var half = WORLD_SIZE / 2;
+    var vw = W / scale, vh = H / scale;
+    if (vw >= WORLD_SIZE) offsetX = -vw / 2;
+    else {
+      var maxX = half - vw / 2;
+      if (offsetX < -maxX) offsetX = -maxX;
+      if (offsetX > maxX) offsetX = maxX;
+    }
+    if (vh >= WORLD_SIZE) offsetY = -vh / 2;
+    else {
+      var maxY = half - vh / 2;
+      if (offsetY < -maxY) offsetY = -maxY;
+      if (offsetY > maxY) offsetY = maxY;
+    }
+  }
+  // ▀▀ the edge affordance: a 2px theme-native line on each world
+  // edge when in view — rgba(var(--border-strong-rgb), .35), the
+  // theme-card border's own ink (zero literals; the pin holds). Four
+  // fixed-position divs, skip-if-identical writes, O(1) per frame.
+  var edgeEls = null;
+  function ensureEdgeEls() {
+    if (edgeEls) return edgeEls;
+    function mk() {
+      var d = document.createElement('div');
+      d.style.cssText = 'position:fixed;pointer-events:none;z-index:90;' +
+        'background:rgba(var(--border-strong-rgb),0.35);display:none;';
+      document.body.appendChild(d);
+      return d;
+    }
+    edgeEls = { left: mk(), right: mk(), top: mk(), bottom: mk() };
+    return edgeEls;
+  }
+  function placeEdge(el, on, x, y, w, h) {
+    var tf = on ? (x + 'px,' + y + 'px,' + w + 'px,' + h + 'px') : '';
+    if (el.__lastEdge === tf) return;
+    el.__lastEdge = tf;
+    if (!on) { el.style.display = 'none'; return; }
+    el.style.display = 'block';
+    el.style.left = x + 'px'; el.style.top = y + 'px';
+    el.style.width = w + 'px'; el.style.height = h + 'px';
+  }
+  function updateEdgeAffordance() {
+    var els = ensureEdgeEls();
+    if (!WORLD_SIZE) {
+      placeEdge(els.left, false); placeEdge(els.right, false);
+      placeEdge(els.top, false); placeEdge(els.bottom, false);
+      return;
+    }
+    var half = WORLD_SIZE / 2;
+    var L = (-half - offsetX) * scale, R = (half - offsetX) * scale;
+    var T = (-half - offsetY) * scale, B = (half - offsetY) * scale;
+    placeEdge(els.left, L > -2 && L < W + 2, Math.round(L), 0, 2, H);
+    placeEdge(els.right, R > -2 && R < W + 2, Math.round(R - 2), 0, 2, H);
+    placeEdge(els.top, T > -2 && T < H + 2, 0, Math.round(T), W, 2);
+    placeEdge(els.bottom, B > -2 && B < H + 2, 0, Math.round(B - 2), W, 2);
+  }
+
   // one rAF, latest-wins. (Chrome's aligned-input guidance — the same
   // discipline the browser applies to pointermove.)
   var updateQueued = false;
@@ -1266,6 +1362,7 @@
       // scheduleUpdate() owns the frame). Momentum takes over at release.
     } else if (Math.abs(velX) >= 0.15 || Math.abs(velY) >= 0.15) {
       offsetX += velX; offsetY += velY;
+      clampCamera();   // v1.42.3: momentum dies AT the edge, never past it
       velX *= PAN_FRICTION; velY *= PAN_FRICTION;
       moving = true;
     } else if (velX !== 0 || velY !== 0) {
@@ -1334,6 +1431,7 @@
           renderGrid();
           lastAmbientFull = now;
           renderIconsCulled();   // v1.42.2 THE FIELD: O(visible), not O(world)
+          updateEdgeAffordance(); // v1.42.3: the edge lines track the camera (O(1), skip-if-identical)
         } else if (atomsLive) {
           paintGridFrame(true);
         }
@@ -1781,6 +1879,7 @@
       // INVERTED: content follows the finger.
       const ddx = -dx, ddy = -dy;
       offsetX += ddx; offsetY += ddy;
+      clampCamera();   // v1.42.3: the finger's camera never leaves the world
       const dt = now - lastTime;
       if (dt > 0) {
         velX = Math.max(-MAX_PAN_VELOCITY, Math.min(MAX_PAN_VELOCITY, (ddx / dt) * 16));
@@ -1892,6 +1991,7 @@
     offsetX = offsetX + cx * f;
     offsetY = offsetY + cy * f;
     scale = newScale;
+    clampCamera();   // v1.42.3: the zoomed viewport span re-enters the world
     scheduleUpdate();   // v0.94.1: wheel bursts coalesce to one frame
   }
 
@@ -2001,6 +2101,7 @@
       offsetX = worldX - pinchCenter.x / newScale;
       offsetY = worldY - pinchCenter.y / newScale;
       scale = newScale;
+      clampCamera();   // v1.42.3: the pinch's viewport span re-enters the world
       scheduleUpdate();   // v0.94.1: pinch moves coalesce to one frame too
     } else if (e.touches.length === 1 && !pinching) {
       e.preventDefault();
@@ -2463,8 +2564,8 @@
     }
   });
 
-  window.addEventListener('resize', resize);
-  window.addEventListener('orientationchange', function () { setTimeout(resize, 100); });
+  window.addEventListener('resize', function () { resize(); clampCamera(); updateEdgeAffordance(); });
+  window.addEventListener('orientationchange', function () { setTimeout(function () { resize(); clampCamera(); updateEdgeAffordance(); }, 100); });
 
   // ── Persistence ──────────────────────────────────────────────
   const STORAGE_KEY = 'doomalay.state.v2';
@@ -2524,6 +2625,18 @@
 
     currentFamily = config.defaultFamily;
 
+    // v1.42.3 THE EDGE: the world bounds ride the settings — applied
+    // BEFORE the camera restore so the boot-heal clamp sees the real
+    // bounds (the plan's law: no stale snapshot escapes).
+    try { applyWorldSize(window.Settings.getState().worldSize); } catch (e) { applyWorldSize(65536); }
+    // v1.42.3: a live worldSize change re-applies (clamp + conform +
+    // the edge affordance) — the value-change gate pattern.
+    window.Settings.onChange(function (st) {
+      // the select stores a string — coerce (the ladder snaps strays)
+      var sz = Number(st && st.worldSize !== undefined ? st.worldSize : 65536);
+      if (!isFinite(sz) || sz < 0) sz = 65536;
+      if (sz !== WORLD_SIZE) applyWorldSize(sz);
+    });
     // Settings names override config names if the user has edited them.
     const settingsNames = window.Settings.getState().names;
     if (Array.isArray(settingsNames) && settingsNames.length > 0) {
@@ -2539,6 +2652,8 @@
       if (typeof saved.scale === 'number') {
         scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, saved.scale));
       }
+      clampCamera();   // v1.42.3: no stale snapshot escapes the bounds (the boot-heal law)
+      updateEdgeAffordance();   // the edge line reflects the restored camera immediately (tick may not run at rest)
       if (saved.currentFamily && config.families[saved.currentFamily]) {
         currentFamily = saved.currentFamily;
       }

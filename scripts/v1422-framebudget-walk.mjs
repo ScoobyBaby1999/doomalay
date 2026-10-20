@@ -79,7 +79,8 @@ async function pan(dx, dy, steps) {
     var t0 = performance.now();
     var rec = function(t){ window.__v1422frames.push(t); if (t - t0 < 2600) requestAnimationFrame(rec); };
     requestAnimationFrame(rec);
-    var fire = function(t, x, y){ document.dispatchEvent(new MouseEvent(t, {bubbles:true, clientX:x, clientY:y, button:0})); };
+    var surf = document.getElementById('chatbots') || document;
+    var fire = function(t, x, y){ surf.dispatchEvent(new MouseEvent(t, {bubbles:true, clientX:x, clientY:y, button:0})); };
     fire('mousedown', 400, 350);
     for (var i = 1; i <= ${steps}; i++) fire('mousemove', 400 - Math.round(${dx} * i / ${steps}), 350 - Math.round(${dy} * i / ${steps}));
     fire('mouseup', 400 - ${dx}, 350 - ${dy});

@@ -80,6 +80,10 @@
     // layer (deactivate + the gate pass re-boots, ~100ms).
     worldAA: 'auto',           // 'auto' = hardware gl only (the verdict) | 'on' | 'off'
     worldDpr: 0,               // 0 = the legacy 2× cap | 1 / 1.5 / 2 / 3 explicit
+    // ── v1.42.3 THE EDGE (PLAN-V142 §3.1): the bounded world —
+    // 65,536 px default (2^16, float32-safe by 256×, the 7-second
+    // metric's mid-band). The Sizing page dials 16k/32k/64k/128k/0-off.
+    worldSize: 65536,
     // ── Text ──────────────────────────────────────────────────
     fontFamily: 'system',
     // ── Default chatbot names (editable) ───────────────────────

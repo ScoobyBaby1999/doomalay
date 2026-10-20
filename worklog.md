@@ -1,4 +1,80 @@
 ---
+Task ID: v1.42.3
+Agent: Main orchestrator (Z.ai Code sandbox — THE MANY WORLDS wave)
+Task: PLAN-V142 §3.1 W1 — THE EDGE: the bounded world. The 7-second
+metric formalized as the user's dial (65,536 default, 2^16,
+float32-safe by 256x per R1), the camera can never leave, physics
+walls settle flings at the edge, the edge line is theme-native.
+
+Work Log:
+- app.js: applyWorldSize (the sanctioned ladder 16k/32k/64k/128k/off,
+  snap-to-ladder for strays) + clampCamera (both axes independent per
+  the plan's corner law; a viewport wider than the world degenerates
+  to centering) + conform-on-shrink (stranded icons pulled home) +
+  the settings wiring (applied BEFORE the camera restore at boot so
+  no stale snapshot escapes — the boot law; onChange coerces the
+  select's string + gates on change).
+- ALL NINE camera write sites clamped: finger pan, momentum, compass
+  glide (every flight frame), setView, reset view, zoomAt, pinch, the
+  boot restore, resize/orientationchange.
+- physics.js: setBounds(half) + the soft damped walls inside the
+  integration's full path (restitution 0.4 + tangential drag 0.9 — a
+  fling reflects ONCE and settles; orbits exempt, the steering owns
+  them; sleepers never reach the pass — conform owns them) + conform
+  (the shrink migration: pulls asleep strays inside + dirties the
+  static grid, honoring the v1.42.2 sleep law).
+- The edge affordance: four fixed-position 2px lines,
+  rgba(var(--border-strong-rgb), 0.35) — the theme-card border's own
+  ink, ZERO literals (the pin holds). Skip-if-identical writes, O(1)
+  per frame, refreshed on the latticeDue cadence + every full render
+  + boot restore + resize + applyWorldSize.
+- The World Size dial: Settings → Sizing (selectRow, five options).
+- cameraProbe exported (the arrowsProbe read-back precedent — the
+  rigs read the camera truth; W2's per-canvas camera builds on it).
+- THE RIG (scripts/v1423-edge-rig.mjs, joins the battery) 33/33:
+  source pins (all nine clamp sites, the ladder, the wall constants,
+  the theme-var edge line, the boot-law ordering) + behavioral vm
+  physics: the fling reflects + settles INSIDE + comes to rest, the
+  corner law, conform snaps a stranded sleeper + dirties the grid,
+  the differential twin (bounded stops at its wall / unbounded flies
+  past the same point — the legacy law), the edge-settled entity
+  sleeps + the resting edge world stays O(1).
+- THE WALK (scripts/v1423-edge-walk.mjs — the real app, real UI)
+  14/14: the dial renders + applies LIVE through the real select; six
+  hard flings per direction MOVE the camera and NEVER exceed the
+  bound (non-vacuous: movement asserted); the stale 50000-offset
+  snapshot clamps at boot; a flung icon settles inside via stepSim;
+  the edge line renders at the bound + fades when centered + dies
+  when OFF; OFF keeps the legacy infinite world (14 flings past the
+  old bound); zero page errors.
+- CONVICTIONS DURING THE WALK (fixed): (1) the synthetic mouse
+  gestures dispatched on document — the canvas-surface gate
+  (onCanvasSurface) rightly rejects non-canvas targets; both walks
+  now dispatch on #chatbots (the v1422 walk's pan ledger re-validated
+  with REAL pans — still 24/24, still the 16.7ms vsync floor at
+  100/250/500). (2) The first S2 assertions were VACUOUS (a covered
+  canvas never moved the camera; x=0 passed ≤ bound trivially) —
+  caught, fixed with movement assertions. (3) An external settings
+  storage write is clobbered by the pagehide trailing-flush (the
+  page's in-memory state outlives it) — a rig artifact, not an app
+  bug (the UI's setState is the one true path); the walk rides the
+  real select instead.
+- Battery: v1423 rig 33/33 · v1423 walk 14/14 · v1422 rig 26/26 ·
+  v1422 walk 24/24 (re-validated) · v1310 58/58 · v1400 58/58 · theme
+  source-pin PASS · v1390 30/30 · v1391 10/10 · discipline 7 PASS +
+  the documented pre-existing B1 · node --check clean · go build
+  green.
+
+Stage Summary:
+- The world has edges and they are the user's dial. The camera cannot
+  leave (nine clamped sites + the boot law), flung icons settle at
+  the wall (soft damped, never bouncing forever), the edge is
+  theme-native ink when visible, and OFF restores the infinite
+  legacy. W1 done at the plan's S cost estimate (~180 LOC across 4
+  files). Next: v1.42.4 THE LEDGER (engine canvases table + Worlds
+  registry + the state.v2 migration).
+
+---
 Task ID: v1.42.2
 Agent: Main orchestrator (Z.ai Code sandbox — THE MANY WORLDS wave)
 Task: PLAN-V142 §3.0 W0 phase 2 — THE FIELD: the visibility law (DOM

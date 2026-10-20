@@ -135,6 +135,36 @@
       this._staticGrid = new Map();
       this._staticDirty = true;   // first step builds it
       this._staticCell = 0;
+      // v1.42.3 THE EDGE (PLAN-V142 §3.1): the world bounds. 0 = the
+      // legacy infinite world (physics.js:55's old law). When set, the
+      // integration pass applies SOFT DAMPED WALLS — a flung icon
+      // reflects with restitution 0.4 + a tangential drag, so it
+      // SETTLES at the edge instead of bouncing forever. Orbit members
+      // are exempt (their position is the steering's, app.js:conform
+      // owns group centers).
+      this._half = 0;
+    }
+
+    // setBounds declares the world's half-extent (the engine of the
+    // Settings → Sizing worldSize dial). 0 = unbounded.
+    setBounds(half) {
+      this._half = (isFinite(half) && half > 0) ? half : 0;
+    }
+
+    // conform pulls EVERY entity (asleep ones included — the sleeper
+    // fast path would otherwise never revisit them) inside the bounds:
+    // a world SHRINK snaps stranded icons to the new edge and dirties
+    // the static grid. One-time migration cost, paid on the change.
+    conform(half) {
+      if (!isFinite(half) || half <= 0) return;
+      for (const e of this.entities) {
+        if (e._orbit) continue;   // the steering owns these
+        const m = half - e.radius;
+        if (e.x > m) { e.x = m; this._staticDirty = true; }
+        else if (e.x < -m) { e.x = -m; this._staticDirty = true; }
+        if (e.y > m) { e.y = m; this._staticDirty = true; }
+        else if (e.y < -m) { e.y = -m; this._staticDirty = true; }
+      }
     }
 
     add(e) { this.entities.push(e); }
@@ -200,6 +230,15 @@
           if (Math.abs(e.vx) < MIN_VEL && Math.abs(e.vy) < MIN_VEL) {
             e.vx = 0; e.vy = 0;
           }
+        }
+        // v1.42.3 THE EDGE: the soft damped wall (only awake entities
+        // reach here — the fast path + conform own the sleepers).
+        if (this._half && !e._orbit) {
+          const m = this._half - e.radius;
+          if (e.x > m) { e.x = m; if (e.vx > 0) e.vx = -e.vx * 0.4; e.vy *= 0.9; }
+          else if (e.x < -m) { e.x = -m; if (e.vx < 0) e.vx = -e.vx * 0.4; e.vy *= 0.9; }
+          if (e.y > m) { e.y = m; if (e.vy > 0) e.vy = -e.vy * 0.4; e.vx *= 0.9; }
+          else if (e.y < -m) { e.y = -m; if (e.vy < 0) e.vy = -e.vy * 0.4; e.vx *= 0.9; }
         }
         const asleep = !e._orbit && e.vx === 0 && e.vy === 0;
         if (asleep !== e._asleep) {

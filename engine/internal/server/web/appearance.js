@@ -1260,6 +1260,18 @@
         section('Grid Size', '' +
           rangeRow('gridSize', 'Grid Spacing', getState().gridSize || 1, 1, 5, 0.5, '')
         ) +
+        // v1.42.3 THE EDGE: the bounded world — the 7-second metric as
+        // the user's dial (16k/32k/64k/128k/off). app.js's onChange
+        // listener re-applies live (clamp + conform + the edge line).
+        section('World Size', '' +
+          selectRow('worldSize', 'Bounded world', (typeof s.worldSize === 'number' ? s.worldSize : 65536), [
+            { value: 16384, label: '16k — quick' },
+            { value: 32768, label: '32k — roomy' },
+            { value: 65536, label: '64k — default (7s traverse)' },
+            { value: 131072, label: '128k — vast' },
+            { value: 0, label: 'Off — infinite' }
+          ])
+        ) +
         // v0.45 ITEM 6: grid quick options — hide / scatter / size / rotate
         // v0.75 THE TWO COLUMNS: every effect is per-side now (dots/lines).
         // Amplify parallax rides full-width above the columns (it deepens
