@@ -283,6 +283,18 @@ func (s *Server) routes() {
         // maintenance pass (Settings → Storage renders it; the rig asserts it).
         s.mux.HandleFunc("GET /api/storage/usage", s.handleStorageUsage)
         s.mux.HandleFunc("POST /api/storage/maintain", s.handleStorageMaintain)
+        // v1.42.4 THE LEDGER (PLAN-V142 §3.2 W2): the multi-canvas home —
+        // engine-side rows replace the WebView-localStorage-only world
+        // (R3: WebView storage is evictable + 5-10MB-capped; the engine
+        // dir is durable). The web layer's Worlds registry (worlds.js)
+        // is the only client; the digest variant feeds the hygiene sweep.
+        s.mux.HandleFunc("GET /api/canvases", s.handleCanvasesList)
+        s.mux.HandleFunc("POST /api/canvases", s.handleCanvasesCreate)
+        s.mux.HandleFunc("GET /api/canvases/{id}", s.handleCanvasGet)
+        s.mux.HandleFunc("PUT /api/canvases/{id}", s.handleCanvasUpdate)
+        s.mux.HandleFunc("DELETE /api/canvases/{id}", s.handleCanvasDelete)
+        s.mux.HandleFunc("PUT /api/canvases/{id}/thumb", s.handleCanvasThumbPut)
+        s.mux.HandleFunc("GET /api/canvases/{id}/thumb", s.handleCanvasThumbGet)
         // v1.39.2 THE AWAKE ENGINE: the busy gauge — Kotlin's 5s poll rides it
         // (PARTIAL_WAKE_LOCK acquire/release + the live notification text).
         s.mux.HandleFunc("GET /api/engine/busy", s.handleEngineBusy)

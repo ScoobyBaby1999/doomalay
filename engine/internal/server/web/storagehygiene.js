@@ -113,20 +113,54 @@
     });
   }
 
+  // v1.42.4 THE LEDGER: the engine's canvas digest — every icon id +
+  // bound session id across ALL canvases (an icon on ANY canvas is
+  // live; post-migration the state.v2 scratch only knows the ACTIVE
+  // world, so the sweep joins the engine's full ledger).
+  function fetchEngineCanvasIds() {
+    return fetch('/api/canvases?digest=1').then(function (r) {
+      return r.ok ? r.json() : null;
+    }).catch(function () { return null; }).then(function (d) {
+      var out = { icons: [], sessions: [] };
+      if (d && Array.isArray(d.canvases)) {
+        for (var i = 0; i < d.canvases.length; i++) {
+          var cv = d.canvases[i];
+          var ii = (cv && Array.isArray(cv.icon_ids)) ? cv.icon_ids : [];
+          var si = (cv && Array.isArray(cv.session_ids)) ? cv.session_ids : [];
+          for (var a = 0; a < ii.length; a++) out.icons.push(String(ii[a]));
+          for (var b = 0; b < si.length; b++) out.sessions.push(String(si[b]));
+        }
+      }
+      return out;
+    });
+  }
+
   // sweep(now) — the full pass. Returns a report (the settings page and
   // the rig read it). Offline-safe: no engine answer = canvas ids only.
   function sweep(now) {
     now = now || Date.now();
     var report = { ranAt: now, maps: {}, modelCacheDropped: false, skipped: false };
     var live = collectLiveIds(lsGet('doomalay.state.v2'));
-    return fetchEngineSessionIds().then(function (engineIds) {
-      if (engineIds.length) {
+    return Promise.all([fetchEngineSessionIds(), fetchEngineCanvasIds()]).then(function (both) {
+      var engineIds = both[0];
+      var canvasIds = both[1];
+      if (engineIds && engineIds.length) {
         // engine ids JOIN the canvas ids (a chat can live engine-side
         // without an icon on the canvas today — its draft survives).
         for (var i = 0; i < engineIds.length; i++) {
           if (live.sessions.indexOf(engineIds[i]) < 0) live.sessions.push(engineIds[i]);
         }
-      } else if (!live.icons.length && !live.sessions.length) {
+      }
+      // v1.42.4: the canvas ledger joins too (every world's icons)
+      if (canvasIds) {
+        for (var c = 0; c < canvasIds.icons.length; c++) {
+          if (live.icons.indexOf(canvasIds.icons[c]) < 0) live.icons.push(canvasIds.icons[c]);
+        }
+        for (var s = 0; s < canvasIds.sessions.length; s++) {
+          if (live.sessions.indexOf(canvasIds.sessions[s]) < 0) live.sessions.push(canvasIds.sessions[s]);
+        }
+      }
+      if ((!engineIds || !engineIds.length) && (!canvasIds || (!canvasIds.icons.length && !canvasIds.sessions.length)) && !live.icons.length && !live.sessions.length) {
         // Nothing live known AND the engine is unreachable — do NOT
         // prune (a wrong wipe is worse than a day's wait).
         report.skipped = true;
@@ -207,7 +241,7 @@
       '</div>' +
       row('st-db', 'Engine database', 'sessions · events · hub rows') +
       row('st-wal', 'Write-ahead log', 'drains on idle maintenance') +
-      row('st-rows', 'Rows', 'chats / events / hub items') +
+      row('st-rows', 'Rows', 'chats / events / hub / canvases') +
       row('st-vac', 'Last vacuum', 'the 7-day reclaim cadence') +
       row('st-ls', 'This device\'s storage', 'all localStorage keys') +
       '<div id="st-lskeys" style="padding:4px 2px 2px"></div>' +
@@ -243,7 +277,7 @@
       var e = d.engine;
       setTxt('st-db', fmtBytes(e.db_bytes || 0));
       setTxt('st-wal', fmtBytes(e.wal_bytes || 0));
-      setTxt('st-rows', (e.sessions || 0) + ' / ' + (e.chat_events || 0) + ' / ' + (e.hub_items || 0));
+      setTxt('st-rows', (e.sessions || 0) + ' / ' + (e.chat_events || 0) + ' / ' + (e.hub_items || 0) + ' / ' + (e.canvases || 0));
       if (e.last_vacuum_at) {
         var hrs = Math.round((Date.now() / 1000 - e.last_vacuum_at) / 3600);
         setTxt('st-vac', hrs <= 1 ? 'just now' : (hrs < 48 ? hrs + 'h ago' : Math.round(hrs / 24) + 'd ago'));

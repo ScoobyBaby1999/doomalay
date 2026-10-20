@@ -179,6 +179,27 @@ CREATE TABLE IF NOT EXISTS hub_items (
   downloaded_at TEXT,
   PRIMARY KEY (type, id)
 );
+
+-- v1.42.4 THE LEDGER (PLAN-V142 §3.2): the multi-canvas home. One row
+-- per canvas/world. "state" is the WorldState JSON the web layer owns
+-- (offset, scale, currentFamily, icons[], dots[], savedAt) — OPAQUE
+-- to the engine except the JSON1 probes (icon_count via
+-- json_array_length, savedAt via json_extract, the id digest via
+-- json_each); the json_valid CHECK makes corrupt writes die at the DB
+-- boundary (R-L1, live-probed against modernc.org/sqlite v1.34.4).
+-- "thumb" is the ≤64KB PNG/JPEG card image (R-L2: rows ≤~100KB stay
+-- inline per SQLite's intern-v-extern-blob guidance). NO parent_id —
+-- REV 2 retired the tree for a flat portal-ref graph (v1.42.6's
+-- portals hold canvas refs; cycles fine, no caps).
+CREATE TABLE IF NOT EXISTS canvases (
+  id         TEXT PRIMARY KEY,
+  name       TEXT NOT NULL DEFAULT 'Canvas',
+  sort       INTEGER NOT NULL DEFAULT 0,
+  state      TEXT CHECK (state IS NULL OR json_valid(state)),
+  thumb      BLOB,
+  created_at REAL NOT NULL,
+  updated_at REAL NOT NULL
+);
 `
         _, err := db.Exec(schema)
         if err != nil {

@@ -172,6 +172,7 @@ type StorageUsage struct {
         Sessions  int64 `json:"sessions"`
         Events    int64 `json:"chat_events"`
         HubItems  int64 `json:"hub_items"`
+        Canvases  int64 `json:"canvases"` // v1.42.4 THE LEDGER: the multi-canvas home joins the honest dashboard
         FreePages int64 `json:"freelist_pages"`
         PageCount int64 `json:"page_count"`
         PageBytes int64 `json:"page_bytes"`
@@ -190,6 +191,7 @@ func (db *DB) Usage() *StorageUsage {
         _ = db.QueryRow("SELECT COUNT(*) FROM chat_sessions").Scan(&u.Sessions)
         _ = db.QueryRow("SELECT COUNT(*) FROM chat_events").Scan(&u.Events)
         _ = db.QueryRow("SELECT COUNT(*) FROM hub_items").Scan(&u.HubItems)
+        u.Canvases = db.CountCanvases() // v1.42.4: the ledger rows join the dashboard
         _ = db.QueryRow("PRAGMA freelist_count").Scan(&u.FreePages)
         _ = db.QueryRow("PRAGMA page_count").Scan(&u.PageCount)
         _ = db.QueryRow("PRAGMA page_size").Scan(&u.PageBytes)

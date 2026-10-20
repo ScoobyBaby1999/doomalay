@@ -2566,10 +2566,45 @@
 
   window.addEventListener('resize', function () { resize(); clampCamera(); updateEdgeAffordance(); });
   window.addEventListener('orientationchange', function () { setTimeout(function () { resize(); clampCamera(); updateEdgeAffordance(); }, 100); });
+  // v1.42.4 THE LEDGER: the teardown flush — the scratch write + the
+  // engine sync fire one last time before the window goes away
+  // (Android backgrounds fire visibilitychange→hidden; kills fire
+  // pagehide; the flush is idempotent and cheap).
+  // THE NULL GUARD (the walk's second conviction): a session that
+  // NEVER saved (lastSavedBody null — nothing changed, nothing even
+  // booted a save) must not write at teardown — its in-memory world
+  // is exactly what it restored, which the engine row already holds;
+  // writing would stamp a fresh empty world over anything another
+  // surface (a rig seed, a concurrent tab) placed there. Only sessions
+  // that SAVED may flush their ≤200ms debounce tail.
+  window.addEventListener('pagehide', function () {
+    if (lastSavedBody !== null) saveNow();
+    if (window.Worlds && typeof window.Worlds.flushNow === 'function') window.Worlds.flushNow();
+  });
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'hidden') {
+      if (lastSavedBody !== null) saveNow();
+      if (window.Worlds && typeof window.Worlds.flushNow === 'function') window.Worlds.flushNow();
+    }
+  });
 
   // ── Persistence ──────────────────────────────────────────────
   const STORAGE_KEY = 'doomalay.state.v2';
   let saveScheduled = false;
+  // v1.42.4: the content memo — the body (everything but savedAt) of
+  // the last write. A save whose body is identical is a NO-OP: the
+  // teardown flush must never clobber an unchanged world back over
+  // itself (the walk's conviction: pagehide fired on a session that
+  // never changed anything used to rewrite the scratch with a fresh
+  // savedAt — stomping a pre-boot seed and pointless-re syncing the
+  // engine). Redundant saves (resize storms, idle teardowns) die here.
+  let lastSavedBody = null;
+
+  function stateBody(state) {
+    var c = Object.assign({}, state);
+    delete c.savedAt;
+    return JSON.stringify(c);
+  }
 
   function scheduleSave() {
     if (saveScheduled) return;
@@ -2583,10 +2618,25 @@
       currentFamily: currentFamily,
       icons: world.entities.map(function (c) { return c.serialize(); }),
       dots: (window.TabGroups) ? window.TabGroups.serialize() : [],
-      savedAt: Date.now()
+      savedAt: Date.now(),
+      // v1.42.4 THE LEDGER: the scratch carries its canvas id — the
+      // boot heal's ownership check (a fresher scratch only wins for
+      // the row it belongs to).
+      canvas: (window.Worlds && window.Worlds.activeId) ? window.Worlds.activeId() : 'default'
     };
+    // the no-op guard: identical body → the last write already holds
+    // this exact world (its savedAt stands — the save clock is the
+    // content's epoch, not the session's).
+    const body = stateBody(state);
+    if (body === lastSavedBody) return;
+    lastSavedBody = body;
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
     catch (e) { console.warn('doomalay: save failed', e); }
+    // v1.42.4 THE LEDGER: the calm engine sync — the localStorage write
+    // above keeps its 200ms shape (the drag law: scheduleSave fires per
+    // tick mid-drag, and a PUT per tick would hammer SQLite); Worlds.save
+    // debounces the engine side to ≥2s + trailing + the teardown flush.
+    if (window.Worlds && typeof window.Worlds.save === 'function') window.Worlds.save(state);
   }
   function loadState() {
     try {
@@ -2645,7 +2695,28 @@
     namePicker.names = [...config.names];
 
     // Restore saved state.
-    const saved = loadState();
+    // v1.42.4 THE LEDGER: the Worlds boot decides the restore source —
+    // engine rows are the durable home (R3: WebView localStorage is
+    // evictable + capped); the state.v2 scratch is the crash-heal
+    // backup and the offline fallback. The restore path below runs
+    // IDENTICALLY whatever the source (the heals all apply).
+    let saved = null;
+    let ledgerDecision = { source: 'tombstone' };
+    try {
+      ledgerDecision = (window.Worlds) ? await window.Worlds.boot() : { source: 'tombstone' };
+    } catch (e) { ledgerDecision = { source: 'tombstone' }; }
+    if (ledgerDecision.source === 'engine' && window.Worlds) {
+      try {
+        const row = await window.Worlds.CanvasStore.get(ledgerDecision.id);
+        if (row && row.canvas && row.canvas.state && typeof row.canvas.state === 'object') {
+          saved = row.canvas.state;
+        }
+      } catch (e) { /* the row vanished mid-boot — the scratch catches */ }
+      if (!saved) saved = loadState();
+    } else if (ledgerDecision.source === 'tombstone') {
+      saved = loadState();
+    }
+    // 'fresh' → saved stays null → the first-run empty-state path
     if (saved) {
       offsetX = (saved.offset && saved.offset.x) || 0;
       offsetY = (saved.offset && saved.offset.y) || 0;
