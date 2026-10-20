@@ -19,12 +19,19 @@ import (
 
 // withNetClocks swaps the ladder's clocks for the test (the ENV knobs are
 // the rig-subprocess path; in-process tests swap the vars directly).
+// v1.45.2: it ALSO resets the provider-health table — RecordProviderSuccess
+// is package-global state seeded by ANY earlier test's successful round,
+// and the ladder's mode (patient vs provider-scoped hold) must be HERMETIC
+// per test (the v1400 battery pins the device-offline law; a stray success
+// from an unrelated test would flip it to the bounded hold).
 func withNetClocks(t *testing.T, waits []time.Duration, base, cap, hb time.Duration) {
 	t.Helper()
 	oldW, oldB, oldC, oldH := netPauseWaits, netSuspendBase, netSuspendCap, netHeartbeatEvery
 	netPauseWaits, netSuspendBase, netSuspendCap, netHeartbeatEvery = waits, base, cap, hb
+	resetProviderHealth()
 	t.Cleanup(func() {
 		netPauseWaits, netSuspendBase, netSuspendCap, netHeartbeatEvery = oldW, oldB, oldC, oldH
+		resetProviderHealth()
 	})
 }
 

@@ -67,6 +67,12 @@ type slotState struct {
         Blacklisted   bool
         LastErr       string
         UpdatedAt     time.Time
+        // LastSuccessAt — v1.45.2 THE HONEST NET: a success on provider P is
+        // POSITIVE EVIDENCE the device's network works (P's endpoint was just
+        // reachable). The net-pause ladder consults it via
+        // anyOtherProviderHealthy to separate "this provider is down" from
+        // "the network is down" — the two need opposite honesty.
+        LastSuccessAt time.Time
 }
 
 var (
@@ -142,6 +148,8 @@ func RecordProviderFailure(provider, class, reason string) {
 // RecordProviderSuccess clears a cooldown ONLY if it already expired — the
 // socreate race guard (scheduler.py:254-272): an in-flight success must never
 // erase an ACTIVE 429 cooldown recorded by a sibling request.
+// v1.45.2: the success TIME always lands (LastSuccessAt) even when an active
+// cooldown survives — the timestamp is network evidence, not cooldown state.
 func RecordProviderSuccess(provider string) {
         if provider == "" {
                 return
@@ -150,8 +158,10 @@ func RecordProviderSuccess(provider string) {
         defer cooldownMu.Unlock()
         st := cooldowns[provider]
         if st == nil {
-                return
+                st = &slotState{}
+                cooldowns[provider] = st
         }
+        st.LastSuccessAt = time.Now()
         if st.CooldownUntil.After(time.Now()) {
                 return // active cooldown survives
         }
@@ -199,6 +209,44 @@ func ProviderState(provider string) (cooling bool, blacklisted bool, lastErr str
                 return false, false, ""
         }
         return st.CooldownUntil.After(time.Now()), st.Blacklisted, st.LastErr
+}
+
+// ── v1.45.2 THE HONEST NET (PLAN-V145 §2) ──────────────────────────
+// providerHealthWindow: how recent another provider's success stays
+// "positive evidence the network works". DOOMALAY_PROVIDER_HEALTH_WINDOW_MS
+// is the rig-only compression knob (production: 10 minutes).
+var providerHealthWindow = envDur("DOOMALAY_PROVIDER_HEALTH_WINDOW_MS", 10*time.Minute)
+
+// resetProviderHealth is the test/rig seam: empties the cooldown + success
+// tables (the rigs seed their own evidence).
+func resetProviderHealth() {
+        cooldownMu.Lock()
+        cooldowns = map[string]*slotState{}
+        cooldownMu.Unlock()
+}
+
+// anyOtherProviderHealthy reports whether some OTHER provider succeeded
+// recently — POSITIVE evidence the device's network path works, so a
+// failure on `provider` is PROVIDER-SCOPED, not a network outage. The
+// success timestamp is the evidence; cooldowns are orthogonal (a provider
+// in a 429 cooldown still proves the network path; a later single net
+// blip on it is likelier its own endpoint than the whole device). A fresh
+// engine (no successes anywhere) reports false: the safe default keeps
+// the patient engine.
+func anyOtherProviderHealthy(provider string) bool {
+        cooldownMu.Lock()
+        defer cooldownMu.Unlock()
+        now := time.Now()
+        for p, st := range cooldowns {
+                if p == provider || st == nil {
+                        continue
+                }
+                if st.LastSuccessAt.IsZero() || now.Sub(st.LastSuccessAt) > providerHealthWindow {
+                        continue
+                }
+                return true
+        }
+        return false
 }
 
 // pacing state: per-provider nextAllowed reservation (reserve-under-lock,

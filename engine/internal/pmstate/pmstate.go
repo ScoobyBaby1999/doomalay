@@ -307,7 +307,14 @@ func (m *Manager) clientLocked(ctx context.Context) (*privatemode.Client, error)
 		}
 		c := privatemode.New(auth.APIKey(key)).WithAPIBaseURL(m.apiBase).WithLogger(m.log).WithHTTPClient(m.httpClient)
 		if err := c.InitializeWithPinnedCA(ctx, []byte(m.state.MeshCAPEM)); err != nil {
-			return nil, fmt.Errorf("pm init with pinned CA: %w", err)
+			// v1.45.2 THE HONEST NET: a pinned-CA init failure is the
+			// deployment-rotation shape — drift-check it like the
+			// exchange path does. A CHANGED mesh CA is the honest
+			// ErrPMDeploymentChanged (the re-verify flow owns it);
+			// the SAME CA means the failure was transient (the net
+			// ladder owns retries). Before this, a rotated CA looped
+			// forever as a transport-class "network" error.
+			return nil, m.driftCheckLocked(ctx, key, fmt.Errorf("pm init with pinned CA: %w", err))
 		}
 		c.SetCredential(auth.APIKey(key))
 		if sec, ok := m.state.secret(); ok {

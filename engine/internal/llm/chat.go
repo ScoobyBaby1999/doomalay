@@ -2161,20 +2161,53 @@ func durHuman(d time.Duration) string {
 // ~110s ceiling was the exact "network issues pause the bots / me having to
 // manually have it continue" report: an outage longer than the ladder
 // ended the turn terminally. Now the outage is a pause, not a verdict.
+//
+// v1.45.2 THE HONEST NET (PLAN-V145 §2): the two outage SHAPES get opposite
+// honesty. If another provider succeeded recently (anyOtherProviderHealthy —
+// positive evidence the device's network is fine), the failure is
+// PROVIDER-SCOPED: the texts NEVER blame "the network" (the user's live
+// report — PM dead on their device while Nvidia/OpenRouter streamed, and
+// the pill kept saying "network unreachable"), and the hold is BOUNDED
+// (netProviderHoldLoop — after DOOMALAY_PROVIDER_HOLD_MS the turn ends with
+// the honest provider-down verdict, the lock releases, the chat stays
+// usable; the user's Stop always works too). With NO such evidence (a
+// fresh engine, or every provider failing together — the device-offline
+// shape) the patient engine is byte-for-byte what it was: the infinite
+// suspension, the wake channel, the "network" texts — THE UNBROKEN TURN
+// law untouched.
 func netPauseLadder(ctx context.Context, ch chan<- ChatChunk, provider string, fn func() (bool, error)) error {
         emitted, err := fn()
         if err == nil || !isTransientNetErr(err) || emitted {
                 return err
         }
+        providerScoped := anyOtherProviderHealthy(provider)
+        label := providerLabel(provider)
+        // v1.45.2: the hiccup counter tells the truth — the old text
+        // hardcoded "/2" while the loop counts every rung (the compressed
+        // rig waits exposed "retry 5/2" live).
+        quick := 0
+        for _, w := range netPauseWaits {
+                if w < 15*time.Second {
+                        quick++
+                }
+        }
         for i, w := range netPauseWaits {
                 RecordProviderFailure(provider, "net", err.Error())
                 if w >= 15*time.Second {
+                        text := fmt.Sprintf("network paused — %s unreachable, retrying in %ds (your turn is safe)", label, int(w.Seconds()))
+                        if providerScoped {
+                                text = fmt.Sprintf("%s is unreachable — retrying in %ds (your connection is fine)", label, int(w.Seconds()))
+                        }
                         select {
-                        case ch <- ChatChunk{Type: "progress", Text: fmt.Sprintf("network paused — %s unreachable, retrying in %ds (your turn is safe)", providerLabel(provider), int(w.Seconds()))}:
+                        case ch <- ChatChunk{Type: "progress", Text: text}:
                         default:
                         }
                 } else {
-                        ch <- ChatChunk{Type: "status", State: "running", Message: fmt.Sprintf("network hiccup — retry %d/2", i+1)}
+                        msg := fmt.Sprintf("network hiccup — retry %d/%d", i+1, quick)
+                        if providerScoped {
+                                msg = fmt.Sprintf("%s connection hiccup — retry %d/%d", label, i+1, quick)
+                        }
+                        ch <- ChatChunk{Type: "status", State: "running", Message: msg}
                 }
                 select {
                 case <-time.After(w):
@@ -2188,10 +2221,107 @@ func netPauseLadder(ctx context.Context, ch chan<- ChatChunk, provider string, f
         }
         // v1.39.3: the rungs are spent and the network is STILL down — the
         // old ladder returned the error here and the turn died. Now: the
-        // suspension.
+        // suspension (device-offline) or the bounded hold (provider-scoped).
+        if providerScoped {
+                return netProviderHoldLoop(ctx, ch, provider,
+                        fmt.Sprintf("connection to %s keeps failing — holding the turn a little longer (Stop always works)", label),
+                        fn)
+        }
         return netSuspendedLoop(ctx, ch, provider,
                 fmt.Sprintf("connection to %s lost — the turn holds and keeps retrying (Stop always works)", providerLabel(provider)),
                 fn)
+}
+
+// netProviderHoldTotal — v1.45.2: how long the provider-scoped hold lasts
+// before the honest terminal verdict. DOOMALAY_PROVIDER_HOLD_MS is the
+// rig-only compression knob (production: 2 minutes — long enough to ride
+// a blip, short enough that a dead provider never takes the chat hostage
+// with a busy lock the user cannot escape except by Stop).
+var netProviderHoldTotal = envDur("DOOMALAY_PROVIDER_HOLD_MS", 2*time.Minute)
+
+// netProviderHoldLoop — THE BOUNDED HOLD (v1.45.2 THE HONEST NET). The
+// provider-scoped twin of netSuspendedLoop: same jittered waits, same
+// ≤45s heartbeat slices (live truth + the turn-pulse refresh), same wake
+// selection (if the network REALLY was the problem and comes back, the
+// retry fires in ~1s). The differences are the honesty laws:
+//   · the texts NEVER say "network" — the provider is unreachable, the
+//     user's connection is fine (another provider proved it);
+//   · the hold is BOUNDED by netProviderHoldTotal: when the clock runs
+//     out, ONE final attempt, and if it still fails the turn ends with
+//     the honest provider-down verdict — the session lock releases, the
+//     partial work + the error persist, the standard retry affordances
+//     own the next move. The infinite-patient law stays reserved for the
+//     device-offline shape (netSuspendedLoop), where waiting IS the only
+//     honest move.
+func netProviderHoldLoop(ctx context.Context, ch chan<- ChatChunk, provider, enterText string, fn func() (bool, error)) error {
+        label := providerLabel(provider)
+        if enterText != "" {
+                ch <- ChatChunk{Type: "notice", Text: enterText}
+        }
+        entered := time.Now()
+        next := netSuspendBase
+        for {
+                // THE WAIT — full jitter on the growing next (AWS's law), capped
+                // by the remaining hold budget.
+                remaining := netProviderHoldTotal - time.Since(entered)
+                if remaining <= 0 {
+                        // The hold is spent — ONE last attempt, then the honest verdict.
+                        RecordProviderFailure(provider, "net", "provider hold expired")
+                        emitted, err := fn()
+                        if err == nil {
+                                ch <- ChatChunk{Type: "notice", Text: fmt.Sprintf("%s is back — continuing", label)}
+                                return nil
+                        }
+                        if !isTransientNetErr(err) || emitted {
+                                return err // the class changed mid-hold — the caller's verdict
+                        }
+                        return fmt.Errorf("%s is unreachable right now — this looks like a problem on their side (your connection is fine). Tap Retry when you want to try again", label)
+                }
+                if next > remaining {
+                        next = remaining
+                }
+                wait := time.Duration(rand.Int63n(int64(next) + 1))
+                if wait <= 0 {
+                        wait = time.Millisecond // a zero-jitter edge still attempts
+                }
+                deadline := time.Now().Add(wait)
+        waitLoop:
+                for time.Now().Before(deadline) {
+                        slice := netHeartbeatEvery
+                        if d := time.Until(deadline); d < slice {
+                                slice = d
+                        }
+                        select {
+                        case <-time.After(slice):
+                                select {
+                                case ch <- ChatChunk{Type: "progress", Text: fmt.Sprintf("%s still unreachable — next attempt in %ds", label, int(time.Until(deadline).Seconds()+0.5))}:
+                                default:
+                                }
+                        case <-netWakeChan():
+                                select {
+                                case ch <- ChatChunk{Type: "progress", Text: fmt.Sprintf("%s retrying now", label)}:
+                                default:
+                                }
+                                break waitLoop
+                        case <-ctx.Done():
+                                return ctx.Err()
+                        }
+                }
+                RecordProviderFailure(provider, "net", "provider hold retry")
+                emitted, err := fn()
+                if err == nil {
+                        // The provider came back — persisted, the resolution of the
+                        // enter notice.
+                        ch <- ChatChunk{Type: "notice", Text: fmt.Sprintf("%s is back after %s — continuing", label, durHuman(time.Since(entered)))}
+                        return nil
+                }
+                if !isTransientNetErr(err) || emitted {
+                        // The failure class changed (auth/protocol) or the round
+                        // streamed visible content — the caller's verdict, never a
+                        // fabricated one.
+                        return err
+                }
+        }
 }
 
 // netSuspendedLoop — THE SUSPENDED MODE (v1.39.3 THE PATIENT ENGINE).

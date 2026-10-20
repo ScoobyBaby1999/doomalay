@@ -454,3 +454,29 @@ func TestManagerDialsViaNetx(t *testing.T) {
 		t.Fatalf("HTTP2.SendPingTimeout = %v — want 0 (no health-check ping; the engine's transports ride without one)", tr.HTTP2.SendPingTimeout)
 	}
 }
+
+// TestDrift_InitFailure_ConvictsNotNetLoops — v1.45.2 THE HONEST NET: a
+// pinned-CA INIT failure (the corrupt-pin class) must hit the drift check —
+// the honest ErrPMDeploymentChanged when the pin can't match the
+// deployment — never a transport-class error the net ladder would loop
+// on forever as a fake "network" outage.
+func TestDrift_InitFailure_ConvictsNotNetLoops(t *testing.T) {
+	f := newFakePM(t)
+	m, vault := manager(t, f)
+	setPMKey(t, vault)
+
+	if _, err := m.Bootstrap(context.Background(), OracleResult{Verified: true}); err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+	// Corrupt the pinned CA in memory (the vault-corruption shape): the
+	// PEM block decodes but the certificate does not parse, so
+	// InitializeWithPinnedCA fails BEFORE any dial.
+	m.mu.Lock()
+	m.state.MeshCAPEM = "-----BEGIN CERTIFICATE-----\nAAABBBCCCnotacert\n-----END CERTIFICATE-----\n"
+	m.mu.Unlock()
+
+	_, err := m.Client(context.Background())
+	if !errors.Is(err, ErrPMDeploymentChanged) {
+		t.Fatalf("an init failure on an unusable pin must convict honestly (ErrPMDeploymentChanged), got: %v", err)
+	}
+}
