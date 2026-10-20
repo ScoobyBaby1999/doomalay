@@ -27,8 +27,9 @@ if not NVKEY:
 if os.path.exists(DATA): shutil.rmtree(DATA)
 os.makedirs(DATA)
 _englog = open("/tmp/doomalay-v38-eng.log", "w")
+env = dict(os.environ); env["DOOMALAY_OTA_DISABLE"] = "1"  # v1.45.3 rig hygiene: the OTA banner must not intercept rig clicks
 proc = subprocess.Popen([ENG, "-open=false", f"-port={PORT}", f"-data-dir={DATA}"],
-    stdout=_englog, stderr=_englog)
+    stdout=_englog, stderr=_englog, env=env)
 for _ in range(60):
     try:
         urllib.request.urlopen(BASE + "/api/health", timeout=1); break

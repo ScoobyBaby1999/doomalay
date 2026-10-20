@@ -407,6 +407,8 @@
       if (chatStates[chatId].sessionId) healDuplicateSessionBinds(chatStates[chatId], chatStates[chatId].sessionId);
       if (icon) icon._sessionData = sessionData || null;
     }
+    // v1.45.3 THE PILL OBJECT: one pill instance per chat state, forever.
+    if (!chatStates[chatId]._pill) chatStates[chatId]._pill = new ActivityPill(chatStates[chatId]);
     return chatStates[chatId];
   }
 
@@ -477,6 +479,11 @@
     var ctx = buildCtx(bodyEl, icon, state, panel, type);
     currentCtx.ctx = ctx;
     if (scrollEl) ctx.scrollEl = scrollEl;
+
+    // v1.45.3: the stashed tree is re-attached — this chat's pill adopts
+    // the row that rode its own stash and RE-PAINTS the current phase text
+    // (the stash's baked text can never flash).
+    if (state._pill) state._pill.bind(msgContainer);
 
     // the delta: messages that landed while the chat was closed ran in
     // data-only mode (no DOM) — append them now, in order, onto the
@@ -1356,6 +1363,11 @@
     var msgContainer = bodyEl.querySelector('#chat-messages');
     var input = bodyEl.querySelector('#chat-input');
     var sendBtn = bodyEl.querySelector('#chat-send');
+
+    // v1.45.3 THE PILL OBJECT: this chat's OWN pill binds to its fresh
+    // container and paints the CURRENT phase immediately (a mid-stream
+    // reopen shows the live pill with the live text — no 500ms blank).
+    if (state._pill) state._pill.bind(msgContainer);
 
     // mount formatting into every rendered bubble (renderMessages emits
     // empty shells; the Formatter fills user/assistant/thinking)
@@ -4913,7 +4925,7 @@
     }
   }
 
-  // ── v0.23 THE ACTIVITY INDICATOR (the no-silence guarantee) ──────
+  // ── v0.23 THE ACTIVITY INDICATOR (the no-silence guarantee) ──>
   //
   // User spec: "whenever we can, let's have building file.. a loading
   // bar.. or a message five dots ..... that keep animating — ideally NO
@@ -4922,33 +4934,87 @@
   // pulsing dots + the live phase text ("building bundle.zip · 12.4 KB")
   // + elapsed seconds + a sweeping progress line. Fed by:
   //   · engine 'progress' events (ACTION-composition, delegate, tools)
-  //   · PM onProgress callbacks (the same phases, client-side)
-  //   · a silence watchdog — streaming + 1.5s without any visible
+  //   · the silence watchdog — streaming + 1.5s without any visible
   //     event → "thinking…" fallback (covers round gaps + first token)
-  function bumpActivity(state) {
-    state._lastActAt = Date.now();
-    state._actText = null; // visible movement — drop the stale phase text
+  //
+  // v1.45.3 THE PILL OBJECT (PLAN-V145 §3 — the user's law: "each chat
+  // should be isolated and have its own instance completely"): ONE
+  // ActivityPill INSTANCE PER CHAT STATE. The pill OWNS its row, binds to
+  // ITS OWN chat's #chat-messages at render/restore, and paints ONLY into
+  // that container — it NEVER queries the shared panel body. The v0.35
+  // isOwner guards lived scattered across closures over ONE shared DOM
+  // (the historical leak classes: v0.35 cross-chat paints, the stash
+  // baking stale rows, the row-move flash on switches); the object makes
+  // the isolation structural: a pill physically cannot reach another
+  // chat's DOM, a background chat's row only ever exists inside its own
+  // (detached/stashed) tree, and bind() re-paints the CURRENT phase text
+  // the instant its chat re-attaches — no stale flash, no 500ms blank.
+  function ActivityPill(state) {
+    this.state = state;
+    this.container = null; // THIS chat's own #chat-messages (re-bound at every render)
+    this.row = null;       // the .chat-working row THIS pill owns (inside its own container only)
   }
 
-  function setActivity(bodyEl, state, text) {
-    state._actText = String(text || 'working…');
-    state._actAt = Date.now();
-    renderActivity(bodyEl, state, true);
-  }
+  // bind — (re)attach to this chat's OWN fresh container (renderHost's
+  // rebuild or the stash restore). Adopts a row that rode the chat's own
+  // stashed DOM, drops it if the turn ended while closed, then paints the
+  // CURRENT phase text immediately (the stash's baked text never shows).
+  ActivityPill.prototype.bind = function (container) {
+    this.container = container || null;
+    this.row = container ? container.querySelector('.chat-working') : null;
+    if (this.row && !this.state.isStreaming) this.removeRow(); // the turn ended while the DOM was stashed — the pill dies with it
+    this.paint(true);
+  };
 
-  function renderActivity(bodyEl, state, scrollTo) {
-    // v0.35: only the chat that OWNS the live DOM may render its activity
-    // row. Previously a background chat's closures wrote "waiting for
-    // kimi-k3…" into whichever chat was on screen (the leak).
-    if (!isOwner(state)) return;
-    var container = currentCtx.bodyEl.querySelector('#chat-messages');
-    if (!container) return;
-    var row = container.querySelector('.chat-working');
+  // isLive — my chat owns the visible panel AND my container is attached
+  // to it. Everything else (background chat, stashed tree, closed panel)
+  // paints nothing: state updates still land on state._actText (data-only
+  // mode), and the next bind() paints them.
+  ActivityPill.prototype.isLive = function () {
+    return !!(currentCtx && currentCtx.state === this.state &&
+      this.container && this.container.isConnected);
+  };
+
+  ActivityPill.prototype.removeRow = function () {
+    if (this.row && this.row.parentNode) this.row.parentNode.removeChild(this.row);
+    this.row = null;
+  };
+
+  ActivityPill.prototype.set = function (text) {
+    this.state._actText = String(text || 'working…');
+    this.state._actAt = Date.now();
+    this.paint(true);
+  };
+
+  ActivityPill.prototype.bump = function () {
+    this.state._lastActAt = Date.now();
+    this.state._actText = null; // visible movement — drop the stale phase text
+  };
+
+  // hide — the turn ended. Removing MY OWN row is always safe (it lives
+  // only in my own tree) — the v0.35 owner-check existed because the old
+  // code removed the FOREGROUND's shared row; the object makes the guard
+  // structural.
+  ActivityPill.prototype.hide = function () {
+    this.state._actText = null;
+    this.removeRow();
+  };
+
+  // paint — the v0.23/v0.35/v0.36 laws, scoped to the object: the phase
+  // text (explicit > wait-phase > silence fallback naming THIS chat's
+  // provider), the elapsed clock, the 120s stall escalation + the ⇄ chip,
+  // keep-it-last, the smart scroll freeze.
+  ActivityPill.prototype.paint = function (scrollTo) {
+    if (!this.isLive()) return;
+    var state = this.state;
+    var container = this.container;
+    var row = this.row;
     var text = state._actText;
     var silent = Date.now() - (state._lastActAt || 0);
     var show = state.isStreaming;
     if (!show) {
       if (row && row.parentNode) row.parentNode.removeChild(row);
+      this.row = null;
       return;
     }
     // v0.35 (user spec #9): the engine's wait-notices ("waiting on Nvidia · Ns",
@@ -4963,15 +5029,10 @@
       fallback = 'waiting on ' + (PROVIDER_LABELS[state.provider] || state.provider) + '…';
     }
     var phase = text || (silent > 1500 ? (state._waitPhase || fallback) : 'working…');
-    // v0.36 STALL ESCALATION (user spec: "the app should constantly check
-    // if the stream/connection broke … surface errors"): after 120s of
-    // TOTAL silence (no token, no progress event — covers both the
-    // pre-first-token queue AND a mid-stream drop), the indicator
+    // v0.36 STALL ESCALATION: after 120s of TOTAL silence the indicator
     // escalates: warn styling + an honest "may be stuck" line + a ⇄
-    // switch-model chip so the user can act without losing the turn.
-    // The silence clock starts at the LAST relevant activity OR the turn
-    // start, whichever is later — a stale _lastActAt from a PREVIOUS turn
-    // must not make a brand-new turn look stalled from its first second.
+    // switch-model chip. The silence clock starts at the LAST relevant
+    // activity OR the turn start, whichever is later.
     var lastRelevant = Math.max(state._lastActAt || 0, state._turnStartAt || 0);
     var stallMs = Date.now() - lastRelevant;
     var stalled = state.isStreaming && stallMs >= 120000;
@@ -4987,33 +5048,30 @@
       row.innerHTML = '<span class="cwd"><i></i><i></i><i></i><i></i><i></i></span>' +
         '<span class="cwt"></span><span class="cwe"></span><i class="cwk-bar"></i>';
       container.appendChild(row);
+      this.row = row;
       scrollTo = true;
     } else if (row.nextSibling) {
       container.appendChild(row); // keep it the LAST row
     }
-    // v0.36: the stalled look + the ⇄ chip manage the SAME row element —
-    // after the create/ensure block above (row can be null before it).
     if (row.classList.contains('chat-working-stalled') !== stalled) {
       row.classList.toggle('chat-working-stalled', stalled);
       scrollTo = true;
     }
     var chip = row.querySelector('.cw-switch');
     if (stalled && !chip) {
-      // v0.36: the suggestion chip — opens the model browser bound to THIS
-      // chat's pick handler; picking swaps the model for the NEXT turn
-      // while the stuck one keeps its timeout backstop.
       chip = document.createElement('button');
       chip.className = 'cw-switch';
       chip.type = 'button';
       chip.textContent = '⇄ switch model';
       chip.setAttribute('aria-label', 'Switch to a different model');
+      var self = this;
       chip.addEventListener('click', function (e) {
         e.stopPropagation();
         e.preventDefault();
         if (!currentCtx || !currentCtx.ctx || !window.ModelBrowser) return;
         window.ModelBrowser.open(function (provider, modelId) {
           if (currentCtx && currentCtx.ctx) currentCtx.ctx.applyModel(provider, modelId);
-        }, { current: { provider: state.provider, modelId: state.model } });
+        }, { current: { provider: self.state.provider, modelId: self.state.model } });
       });
       row.appendChild(chip);
       scrollTo = true;
@@ -5030,26 +5088,23 @@
       row.querySelector('.cwe').textContent = elapsed + 's';
     }
     if (scrollTo) {
-      var sc = bodyEl.querySelector('#chat-scroll');
+      var sc = container.parentNode && container.parentNode.querySelector('#chat-scroll');
+      if (!sc && currentCtx && currentCtx.bodyEl) sc = currentCtx.bodyEl.querySelector('#chat-scroll');
       // v0.28 SMART SCROLL FREEZE: the working indicator is exactly the
       // auto-scroll the reader must be protected from while frozen.
       if (sc && !(state.isStreaming && state._scrollFrozen)) sc.scrollTop = sc.scrollHeight;
     }
-  }
+  };
 
-  function hideActivity(bodyEl, state) {
-    state._actText = null;
-    // v0.35: a background chat finishing its turn must not remove the
-    // FOREGROUND chat's activity row (the old code did — that removal was
-    // also why the leaked indicator "healed itself" when the old chat's
-    // reply finally completed).
-    if (!isOwner(state)) return;
-    var container = currentCtx.bodyEl.querySelector('#chat-messages');
-    if (container) {
-      var row = container.querySelector('.chat-working');
-      if (row && row.parentNode) row.parentNode.removeChild(row);
-    }
-  }
+  // ── the per-state delegates (every historical call site keeps its
+  // signature; the bodyEl argument is VESTIGIAL — the pill knows its own)
+  function bumpActivity(state) { state._pill.bump(); }
+
+  function setActivity(bodyEl, state, text) { state._pill.set(text); }
+
+  function renderActivity(bodyEl, state, scrollTo) { state._pill.paint(scrollTo); }
+
+  function hideActivity(bodyEl, state) { state._pill.hide(); }
 
   // silence watchdog: while a turn runs, keep the indicator honest.
   function ensureActivityWatch(bodyEl, state) {
