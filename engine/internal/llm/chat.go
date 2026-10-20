@@ -1465,6 +1465,14 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
 // pattern terminalized the UI on recoverable blips: the frontend treats
 // an error event as end-of-turn).
 func doPostSSE(ctx context.Context, req ChatRequest, url string, bodyBytes []byte, ch chan<- ChatChunk) (*http.Response, error) {
+        // v1.44.3 THE WIRE: PM rides the engine's pinned client — the body
+        // encrypts into OAE frames upstream and the decrypted SSE comes back
+        // as a synthetic response the standard parser consumes. NEVER the
+        // plaintext path: even unwired, a PM request must not hit the plain
+        // HTTPS arm (the gateway only speaks the encrypted protocol).
+        if req.Provider == pmProvider {
+                return pmDoPostSSE(ctx, req, bodyBytes, ch)
+        }
         httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(bodyBytes))
         if err != nil {
                 return nil, fmt.Errorf("new request: %w", err)
@@ -1569,6 +1577,28 @@ func CompleteSync(ctx context.Context, req ChatRequest, extraBody map[string]any
 // completeSync performs ONE non-streaming completion (ReAct rounds + research
 // steps need the full text before deciding the next move).
 func completeSync(ctx context.Context, req ChatRequest, extraBody map[string]any) (string, error) {
+        // v1.44.3 THE WIRE: PM's non-streaming completions ride the pinned
+        // client too (same body, stream:false — the encrypted round-trip).
+        if req.Provider == pmProvider {
+                messages := make([]Message, 0, len(req.Messages)+1)
+                if req.SystemPrompt != "" {
+                        messages = append(messages, Message{Role: "system", Content: req.SystemPrompt})
+                }
+                messages = append(messages, req.Messages...)
+                body := map[string]any{
+                        "model":    req.Model,
+                        "messages": messages,
+                }
+                if extra := BuildEffortBodyFor(req.Provider, req.Model, req.Effort); extra != nil {
+                        for k, v := range extra {
+                                body[k] = v
+                        }
+                }
+                for k, v := range extraBody {
+                        body[k] = v
+                }
+                return pmCompleteSync(ctx, req, body)
+        }
         messages := make([]Message, 0, len(req.Messages)+1)
         if req.SystemPrompt != "" {
                 messages = append(messages, Message{Role: "system", Content: req.SystemPrompt})

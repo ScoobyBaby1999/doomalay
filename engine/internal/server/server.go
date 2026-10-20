@@ -122,6 +122,12 @@ type Server struct {
         // pmsdk.js); honestly surfaced (/api/pm/state). nil only when the
         // vault itself failed to initialize.
         pm *pmstate.Manager
+
+        // v1.44.3 THE WIRE: the scoped single-use handshake tickets gating
+        // /api/keys/value for PM (the standing plaintext hole is dead) —
+        // ticket hex → expiry; minted by handlePMHandshakeTicket, consumed
+        // once by handleKeysValue.
+        pmTickets sync.Map
 }
 
 // New constructs the server and registers all routes.
@@ -145,6 +151,9 @@ func New(cfg *config.Config, db *store.DB, br *brain.Brain) *Server {
         // vault failed — the pm endpoints then answer 500 honestly).
         if vault != nil {
                 s.pm = pmstate.NewManager(vault)
+                // v1.44.3 THE WIRE: llm.Chat speaks PM natively through the
+                // pinned client — the adapter carries the invariance fix.
+                llm.SetPMTransport(pmTransportAdapter{s.pm})
         }
         // v1.17.2 THE BRIDGE: the Termux bridge client (nil = not configured;
         // /api/termux/status answers {"available":false}).
@@ -324,6 +333,9 @@ func (s *Server) routes() {
         s.mux.HandleFunc("GET /api/pm/state", s.handlePMState)
         s.mux.HandleFunc("POST /api/pm/bootstrap", s.handlePMBootstrap)
         s.mux.HandleFunc("POST /api/pm/reverify", s.handlePMReverify)
+        // v1.44.3 THE WIRE: the scoped one-shot ticket the SDK bridge
+        // redeems at /api/keys/value (the standing plaintext hole is dead).
+        s.mux.HandleFunc("POST /api/pm/handshake-ticket", s.handlePMHandshakeTicket)
         s.mux.HandleFunc("GET /api/probe-embed", s.handleProbeEmbed)
         s.mux.HandleFunc("GET /api/preview", s.handleLinkPreview)                  // v0.62.1: the universal link verdict
         s.mux.HandleFunc("GET /api/preview/screenshot", s.handlePreviewScreenshot) // v0.62.4: the T3 tier (501 when no chromium)

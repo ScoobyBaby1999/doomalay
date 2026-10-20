@@ -46,7 +46,19 @@ function friendlyPMError(raw) {
 }
 
 async function getCore() {
-  var res = await fetch('/api/keys/value?env_var=PRIVATEMODEAI_API_KEY');
+  // v1.44.3 THE WIRE: the standing key endpoint is DEAD — mint the
+  // scoped single-use handshake ticket first (60s TTL, one redemption;
+  // the engine serves the raw key ONLY against it). The turn path no
+  // longer needs the key anywhere: the engine speaks PM's protocol
+  // natively; this bridge is the connect-time oracle + the (dying at
+  // v1.44.4) WebView turn path.
+  var tRes = await fetch('/api/pm/handshake-ticket', { method: 'POST' });
+  if (!tRes.ok) {
+    if (tRes.status === 400) throw pmError('No PrivateMode API key saved yet — connect the provider first (+ Model → Connect Cloud Provider).');
+    throw pmError('PM handshake ticket failed (' + tRes.status + ')');
+  }
+  var t = await tRes.json();
+  var res = await fetch('/api/keys/value?env_var=PRIVATEMODEAI_API_KEY&ticket=' + encodeURIComponent(t.ticket || ''));
   if (!res.ok) throw pmError('engine key endpoint failed (' + res.status + ')');
   var data = await res.json();
   if (!data || !data.has_key) {

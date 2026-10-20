@@ -400,6 +400,26 @@ func (m *Manager) Reverify() error {
 	return nil
 }
 
+// DropSecret clears the cached secret and drops the live client (the
+// "no secret for ID" recovery — the wire retries exactly once after a
+// server-side secret revocation; the next Client() rebuilds and
+// exchanges fresh against the pinned CA). The pin itself survives.
+func (m *Manager) DropSecret() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.state != nil {
+		m.state.SecretID = ""
+		m.state.SecretDataB64 = ""
+		m.state.SecretExpUnix = 0
+		if err := m.persistLocked(); err != nil {
+			m.log.Warn("PM secret clear persist failed", "error", err)
+		}
+	}
+	m.client = nil
+	m.clientKey = ""
+	m.log.Info("PM cached secret dropped — fresh exchange on the next turn")
+}
+
 // fetchDoc fetches the deployment's attest doc (mesh CA + active
 // manifest) — the TOFU getter performs NO attestation verification
 // (see the trust contract).
