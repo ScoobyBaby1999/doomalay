@@ -97,3 +97,20 @@ native); running GOOS=js WASM in-engine needs a full JS object model
 at connect time + pure-Go turns is the strongest legal, portable and
 native shape. The WASM artifact ships in the npm `privatemode-ai`
 package under MIT — the same artifact the app has always vendored.
+
+### Delta 8 — v1.45.1 THE ANDROID WIRE: the manager's transport is the engine's, not the vendor's
+
+`pmstate.NewManager` (the engine's PM client factory, outside the vendored
+tree) no longer uses vendored `httputil.NewClient()`. The engine wires
+`&http.Client{Transport: netx.Transport()}` instead — the engine's outbound
+law (netx.go: "the Android DNS fix applies everywhere. Every engine client
+that talks to the outside world … should use this"). The vendored client's
+transport had two device-hostile properties the engine's own providers never
+carried: Go's default dialer (broken DNS on Android — no `/etc/resolv.conf`;
+PM died on real devices while every netx-dialing provider worked — the
+user's live v1.44.0 report) and `HTTP2.SendPingTimeout: 5s` (a ReadIdleTimeout
+health-check that kills mid-request connections after a 15s unanswered PING —
+a hazard on lossy mobile links). The vendored `httputil` package itself is
+untouched (upstream headers verbatim); the engine simply does not route
+through it. Pinned by `TestManagerDialsViaNetx` (the DialContext pointer IS
+netx.DialContext; no HTTP/2 health ping).

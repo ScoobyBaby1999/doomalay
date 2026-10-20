@@ -33,11 +33,13 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/ScoobyBaby1999/doomalay/engine/internal/netx"
 	"github.com/ScoobyBaby1999/doomalay/engine/internal/secrets"
 )
 
@@ -422,5 +424,33 @@ func TestPinEncryptedAtRest(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), "__STATE__PM_PIN") {
 		t.Fatalf("the pin entry vanished from the keystore — persistence broken")
+	}
+}
+
+// TestManagerDialsViaNetx — v1.45.1 THE ANDROID WIRE: the manager's
+// production client MUST dial through netx.DialContext (the engine's
+// outbound law — the Android DNS fix). The vendored httputil.NewClient
+// (Go's default dialer) left PM dead on Android while every netx-dialing
+// provider worked — the user's live "network unreachable" report.
+func TestManagerDialsViaNetx(t *testing.T) {
+	vault, err := secrets.New(t.TempDir())
+	if err != nil {
+		t.Fatalf("vault: %v", err)
+	}
+	m := NewManager(vault)
+	tr, ok := m.httpClient.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("manager transport = %T — want *http.Transport (netx)", m.httpClient.Transport)
+	}
+	// netx.Transport() installs its own DialContext — the same function
+	// pointer the engine's shared outbound transport uses.
+	if tr.DialContext == nil || reflect.ValueOf(tr.DialContext).Pointer() != reflect.ValueOf(netx.DialContext).Pointer() {
+		t.Fatalf("manager DialContext is not netx.DialContext — PM would die on Android (no /etc/resolv.conf)")
+	}
+	// v1.45.1: no 5s HTTP/2 health-check ping — the vendored transport's
+	// ReadIdleTimeout killed mid-request connections on lossy mobile links;
+	// the engine's own transports carry no health pings.
+	if tr.HTTP2 != nil && tr.HTTP2.SendPingTimeout != 0 {
+		t.Fatalf("HTTP2.SendPingTimeout = %v — want 0 (no health-check ping; the engine's transports ride without one)", tr.HTTP2.SendPingTimeout)
 	}
 }

@@ -33,12 +33,13 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"os"
 	"sync"
 	"time"
 
+	"github.com/ScoobyBaby1999/doomalay/engine/internal/netx"
 	"github.com/ScoobyBaby1999/doomalay/engine/internal/pm/attest"
 	"github.com/ScoobyBaby1999/doomalay/engine/internal/pm/auth"
-	"github.com/ScoobyBaby1999/doomalay/engine/internal/pm/httputil"
 	"github.com/ScoobyBaby1999/doomalay/engine/internal/pm/privatemode"
 	"github.com/ScoobyBaby1999/doomalay/engine/internal/pm/secretmanager"
 	"github.com/ScoobyBaby1999/doomalay/engine/internal/secrets"
@@ -125,19 +126,44 @@ type Manager struct {
 	clientKey  string
 	log        *slog.Logger
 	apiBase    string       // tests override; APIBaseURL in production
-	httpClient *http.Client // tests inject the fake-server client; httputil.NewClient() in production
+	httpClient *http.Client // tests inject the fake-server client; netx.Transport() in production (v1.45.1)
 }
 
 // NewManager loads (or starts without) the persisted pin.
 func NewManager(vault *secrets.Vault) *Manager {
 	m := &Manager{
-		vault:      vault,
-		log:        slog.New(slog.DiscardHandler),
-		apiBase:    APIBaseURL,
-		httpClient: httputil.NewClient(),
+		vault:   vault,
+		log:     slog.New(slog.DiscardHandler),
+		apiBase: rigAPIBase(),
+		// v1.45.1 THE ANDROID WIRE (PLAN-V145 §1): the manager's client
+		// dials through netx — the engine's outbound law ("the Android
+		// DNS fix applies everywhere. Every engine client that talks to
+		// the outside world should use this"). The vendored
+		// httputil.NewClient() (Go's default dialer + a 5s HTTP/2
+		// health-check ping) left PM as the ONE engine client that died
+		// on Android — no /etc/resolv.conf means Go's pure resolver is
+		// unreliable there, so PM's dials failed on real devices while
+		// every netx-dialing provider worked (the user's live report:
+		// "network unreachable… even tho I was connected to the
+		// internet"). The 5s ReadIdleTimeout ping also killed mid-request
+		// connections on lossy mobile links the engine's own transports
+		// (no health pings) ride through. netx.Transport() fixes both.
+		httpClient: &http.Client{Transport: netx.Transport()},
 	}
 	m.state = m.loadState()
 	return m
+}
+
+// rigAPIBase is the rig/diagnostic knob for the PM gateway base URL
+// (DOOMALAY_PM_API_BASE) — same family as DOOMALAY_NET_LADDER_WAITS: the
+// red-team rigs point the engine at a dead/local endpoint to exercise the
+// net-pause ladder + the honest error surfaces without touching the real
+// deployment. Empty (the production default) = APIBaseURL.
+func rigAPIBase() string {
+	if v := os.Getenv("DOOMALAY_PM_API_BASE"); v != "" {
+		return v
+	}
+	return APIBaseURL
 }
 
 // WithLogger wires the manager's logger (the server passes its own).
