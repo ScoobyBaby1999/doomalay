@@ -31,6 +31,7 @@ import (
         "encoding/json"
         "fmt"
         "net/url"
+        "os"
         "strings"
         "sync"
 )
@@ -39,7 +40,20 @@ import (
 // tests can point the whole github forge at a local httptest server,
 // the same override pattern the server package uses for its OAuth
 // endpoints. Production: https://api.github.com.
-var GitHubAPIBase = "https://api.github.com"
+//
+// v1.56.0: the DOOMALAY_GITHUB_API_BASE env override is the RIG seam —
+// the live whole-tools rig points the engine at a local fake GitHub so
+// the grep laws can be proven end-to-end without touching the real API.
+// Production never sets it.
+var GitHubAPIBase = githubAPIBase()
+
+// githubAPIBase reads the rig-only override.
+func githubAPIBase() string {
+        if v := strings.TrimSpace(os.Getenv("DOOMALAY_GITHUB_API_BASE")); v != "" {
+                return v
+        }
+        return "https://api.github.com"
+}
 
 // GitHubRawBase is the raw CDN root (v1.19.2: a test seam like GitHubAPIBase —
 // unit tests point it at the fake so no test touches the real network).
@@ -275,7 +289,7 @@ func (c *Client) ghCreateBranch(ctx context.Context, name, from, token string) (
 }
 
 func (c *Client) ghCommits(ctx context.Context, path, ref, token string, limit int) ([]Commit, error) {
-        limit = clampLimit(limit, 30)
+        limit = clampLimit(limit, listLimit) // v1.56.0: the page ceiling (was 30)
         var rows []struct {
                 SHA    string `json:"sha"`
                 Commit struct {
@@ -286,26 +300,41 @@ func (c *Client) ghCommits(ctx context.Context, path, ref, token string, limit i
                         } `json:"author"`
                 } `json:"commit"`
         }
-        p := "/repos/" + c.host.Owner + "/" + c.host.Repo + "/commits?per_page=" + fmt.Sprint(limit)
-        if path != "" {
-                p += "&path=" + url.QueryEscape(path)
-        }
-        if ref != "" {
-                p += "&sha=" + url.QueryEscape(ref)
-        }
-        if err := c.ghGetJSON(ctx, p, token, &rows, maxListBody); err != nil {
+        // v1.56.0 THE WHOLE LIST: the pages are walked (the old shape
+        // stopped at 30 commits).
+        all, err := ghPage(ctx, func(ctx context.Context, page int) ([]Commit, error) {
+                perPage := 100
+                if limit > 0 && limit < perPage {
+                        perPage = limit
+                }
+                p := "/repos/" + c.host.Owner + "/" + c.host.Repo + "/commits?per_page=" + fmt.Sprint(perPage) + "&page=" + fmt.Sprint(page)
+                if path != "" {
+                        p += "&path=" + url.QueryEscape(path)
+                }
+                if ref != "" {
+                        p += "&sha=" + url.QueryEscape(ref)
+                }
+                if err := c.ghGetJSON(ctx, p, token, &rows, maxListBody); err != nil {
+                        return nil, err
+                }
+                out := make([]Commit, 0, len(rows))
+                for _, r := range rows {
+                        out = append(out, Commit{SHA: r.SHA, Message: firstLine(r.Commit.Message),
+                                Author: r.Commit.Author.Name, Date: r.Commit.Author.Date})
+                }
+                return out, nil
+        })
+        if err != nil {
                 return nil, err
         }
-        out := make([]Commit, 0, len(rows))
-        for _, r := range rows {
-                out = append(out, Commit{SHA: r.SHA, Message: firstLine(r.Commit.Message),
-                        Author: r.Commit.Author.Name, Date: r.Commit.Author.Date})
+        if limit > 0 && len(all) > limit {
+                all = all[:limit]
         }
-        return out, nil
+        return all, nil
 }
 
 func (c *Client) ghIssues(ctx context.Context, state, token string, limit int) ([]Issue, error) {
-        limit = clampLimit(limit, 30)
+        limit = clampLimit(limit, listLimit) // v1.56.0: the page ceiling (was 30)
         if state == "" {
                 state = "all"
         }
@@ -323,22 +352,40 @@ func (c *Client) ghIssues(ctx context.Context, state, token string, limit int) (
                         URL string `json:"url"`
                 } `json:"pull_request"`
         }
-        p := "/repos/" + c.host.Owner + "/" + c.host.Repo + "/issues?state=" + url.QueryEscape(state) + "&per_page=" + fmt.Sprint(limit)
-        if err := c.ghGetJSON(ctx, p, token, &rows, maxListBody); err != nil {
+        // v1.56.0 THE WHOLE LIST: the engine PAGES until the forge says
+        // "no more" (the old shape asked for 30 and stopped — a 200-issue
+        // repo looked like it had 30). The limit is a CEILING on what
+        // the caller asked for; 0 = everything.
+        all, err := ghPage(ctx, func(ctx context.Context, page int) ([]Issue, error) {
+                perPage := 100
+                if limit > 0 && limit < perPage {
+                        perPage = limit
+                }
+                p := "/repos/" + c.host.Owner + "/" + c.host.Repo + "/issues?state=" + url.QueryEscape(state) +
+                        "&per_page=" + fmt.Sprint(perPage) + "&page=" + fmt.Sprint(page)
+                if err := c.ghGetJSON(ctx, p, token, &rows, maxListBody); err != nil {
+                        return nil, err
+                }
+                out := make([]Issue, 0, len(rows))
+                for _, r := range rows {
+                        out = append(out, Issue{Number: r.Number, Title: r.Title, State: r.State,
+                                Author: r.User.Login, UpdatedAt: r.UpdatedAt, IsPR: r.PullRequest != nil,
+                                Body: r.Body, URL: r.HTMLURL, // v1.19.1: full body
+                        })
+                }
+                return out, nil
+        })
+        if err != nil {
                 return nil, err
         }
-        out := make([]Issue, 0, len(rows))
-        for _, r := range rows {
-                out = append(out, Issue{Number: r.Number, Title: r.Title, State: r.State,
-                        Author: r.User.Login, UpdatedAt: r.UpdatedAt, IsPR: r.PullRequest != nil,
-                        Body: r.Body, URL: r.HTMLURL, // v1.19.1: full body
-                })
+        if limit > 0 && len(all) > limit {
+                all = all[:limit]
         }
-        return out, nil
+        return all, nil
 }
 
 func (c *Client) ghPulls(ctx context.Context, state, token string, limit int) ([]PullRequest, error) {
-        limit = clampLimit(limit, 30)
+        limit = clampLimit(limit, listLimit) // v1.56.0: the page ceiling (was 30)
         if state == "" {
                 state = "open"
         }
@@ -355,20 +402,36 @@ func (c *Client) ghPulls(ctx context.Context, state, token string, limit int) ([
                         Ref string `json:"ref"`
                 } `json:"head"`
         }
-        p := "/repos/" + c.host.Owner + "/" + c.host.Repo + "/pulls?state=" + url.QueryEscape(state) + "&per_page=" + fmt.Sprint(limit)
-        if err := c.ghGetJSON(ctx, p, token, &rows, maxListBody); err != nil {
+        // v1.56.0 THE WHOLE LIST: the pages are walked (the old shape
+        // stopped at 30).
+        all, err := ghPage(ctx, func(ctx context.Context, page int) ([]PullRequest, error) {
+                perPage := 100
+                if limit > 0 && limit < perPage {
+                        perPage = limit
+                }
+                p := "/repos/" + c.host.Owner + "/" + c.host.Repo + "/pulls?state=" + url.QueryEscape(state) +
+                        "&per_page=" + fmt.Sprint(perPage) + "&page=" + fmt.Sprint(page)
+                if err := c.ghGetJSON(ctx, p, token, &rows, maxListBody); err != nil {
+                        return nil, err
+                }
+                out := make([]PullRequest, 0, len(rows))
+                for _, r := range rows {
+                        out = append(out, PullRequest{Number: r.Number, Title: r.Title, State: r.State,
+                                Author: r.User.Login, Branch: r.Head.Ref, UpdatedAt: r.UpdatedAt, URL: r.HTMLURL})
+                }
+                return out, nil
+        })
+        if err != nil {
                 return nil, err
         }
-        out := make([]PullRequest, 0, len(rows))
-        for _, r := range rows {
-                out = append(out, PullRequest{Number: r.Number, Title: r.Title, State: r.State,
-                        Author: r.User.Login, Branch: r.Head.Ref, UpdatedAt: r.UpdatedAt, URL: r.HTMLURL})
+        if limit > 0 && len(all) > limit {
+                all = all[:limit]
         }
-        return out, nil
+        return all, nil
 }
 
 func (c *Client) ghReleases(ctx context.Context, token string, limit int) ([]Release, error) {
-        limit = clampLimit(limit, 20)
+        limit = clampLimit(limit, listLimit) // v1.56.0: the page ceiling (was 20)
         var rows []struct {
                 TagName     string `json:"tag_name"`
                 Name        string `json:"name"`
@@ -380,16 +443,32 @@ func (c *Client) ghReleases(ctx context.Context, token string, limit int) ([]Rel
                         Name string `json:"name"`
                 } `json:"assets"`
         }
-        if err := c.ghGetJSON(ctx, "/repos/"+c.host.Owner+"/"+c.host.Repo+"/releases?per_page="+fmt.Sprint(limit), token, &rows, maxListBody); err != nil {
+        // v1.56.0 THE WHOLE LIST: the pages are walked (the old shape
+        // stopped at 20).
+        all, err := ghPage(ctx, func(ctx context.Context, page int) ([]Release, error) {
+                perPage := 100
+                if limit > 0 && limit < perPage {
+                        perPage = limit
+                }
+                p := "/repos/" + c.host.Owner + "/" + c.host.Repo + "/releases?per_page=" + fmt.Sprint(perPage) + "&page=" + fmt.Sprint(page)
+                if err := c.ghGetJSON(ctx, p, token, &rows, maxListBody); err != nil {
+                        return nil, err
+                }
+                out := make([]Release, 0, len(rows))
+                for _, r := range rows {
+                        out = append(out, Release{Tag: r.TagName, Name: r.Name, PublishedAt: r.PublishedAt,
+                                Notes: r.Body, URL: r.HTMLURL, Assets: len(r.Assets), PreRelease: r.Prerelease, // v1.19.1: full notes
+                        })
+                }
+                return out, nil
+        })
+        if err != nil {
                 return nil, err
         }
-        out := make([]Release, 0, len(rows))
-        for _, r := range rows {
-                out = append(out, Release{Tag: r.TagName, Name: r.Name, PublishedAt: r.PublishedAt,
-                        Notes: r.Body, URL: r.HTMLURL, Assets: len(r.Assets), PreRelease: r.Prerelease, // v1.19.1: full notes
-                })
+        if limit > 0 && len(all) > limit {
+                all = all[:limit]
         }
-        return out, nil
+        return all, nil
 }
 
 func (c *Client) ghWorkflows(ctx context.Context, token string) ([]Workflow, error) {
@@ -412,7 +491,7 @@ func (c *Client) ghWorkflows(ctx context.Context, token string) ([]Workflow, err
 }
 
 func (c *Client) ghWorkflowRuns(ctx context.Context, token string, limit int) ([]WorkflowRun, error) {
-        limit = clampLimit(limit, 30)
+        limit = clampLimit(limit, listLimit) // v1.56.0: the page ceiling (was 30)
         var v struct {
                 WorkflowRuns []struct {
                         ID         int64  `json:"id"`
@@ -425,16 +504,32 @@ func (c *Client) ghWorkflowRuns(ctx context.Context, token string, limit int) ([
                         HTMLURL    string `json:"html_url"`
                 } `json:"workflow_runs"`
         }
-        if err := c.ghGetJSON(ctx, "/repos/"+c.host.Owner+"/"+c.host.Repo+"/actions/runs?per_page="+fmt.Sprint(limit), token, &v, maxListBody); err != nil {
+        // v1.56.0 THE WHOLE LIST: the pages are walked (the old shape
+        // stopped at 30).
+        all, err := ghPage(ctx, func(ctx context.Context, page int) ([]WorkflowRun, error) {
+                perPage := 100
+                if limit > 0 && limit < perPage {
+                        perPage = limit
+                }
+                p := "/repos/" + c.host.Owner + "/" + c.host.Repo + "/actions/runs?per_page=" + fmt.Sprint(perPage) + "&page=" + fmt.Sprint(page)
+                if err := c.ghGetJSON(ctx, p, token, &v, maxListBody); err != nil {
+                        return nil, err
+                }
+                out := make([]WorkflowRun, 0, len(v.WorkflowRuns))
+                for _, r := range v.WorkflowRuns {
+                        out = append(out, WorkflowRun{ID: r.ID, Name: r.Name, Status: r.Status,
+                                Conclusion: r.Conclusion, Event: r.Event, Branch: r.HeadBranch,
+                                StartedAt: r.CreatedAt, URL: r.HTMLURL})
+                }
+                return out, nil
+        })
+        if err != nil {
                 return nil, err
         }
-        out := make([]WorkflowRun, 0, len(v.WorkflowRuns))
-        for _, r := range v.WorkflowRuns {
-                out = append(out, WorkflowRun{ID: r.ID, Name: r.Name, Status: r.Status,
-                        Conclusion: r.Conclusion, Event: r.Event, Branch: r.HeadBranch,
-                        StartedAt: r.CreatedAt, URL: r.HTMLURL})
+        if limit > 0 && len(all) > limit {
+                all = all[:limit]
         }
-        return out, nil
+        return all, nil
 }
 
 // ghDiscussions — GraphQL (REST has no discussions endpoint).
@@ -442,7 +537,7 @@ func (c *Client) ghDiscussions(ctx context.Context, token string, limit int) ([]
         if token == "" {
                 return nil, fmt.Errorf("discussions need a GitHub token (GraphQL API)")
         }
-        limit = clampLimit(limit, 25)
+        limit = clampLimit(limit, listLimit) // v1.56.0: the GraphQL page ceiling (was 25)
         q := fmt.Sprintf(`query($owner:String!,$repo:String!,$n:Int!){` +
                 `repository(owner:$owner,name:$repo){` +
                 `discussions(first:$n,orderBy:{field:UPDATED_AT,direction:DESC}){` +
@@ -509,7 +604,7 @@ func (c *Client) ghSearch(ctx context.Context, query, ref, token string, limit i
                 // unauthenticated code search is a 401 — fall back to grep
                 return Grep(ctx, c, query, ref, token, limit)
         }
-        limit = clampLimit(limit, 30)
+        limit = clampLimit(limit, listLimit) // v1.56.0: the page ceiling (was 30)
         var v struct {
                 Items []struct {
                         Name        string `json:"name"`
@@ -700,7 +795,7 @@ func (c *Client) ghCreateRepo(ctx context.Context, name, desc, license, gitignor
 }
 
 func (c *Client) ghListUserRepos(ctx context.Context, token string, limit int) ([]RepoMeta, error) {
-        limit = clampLimit(limit, 50)
+        limit = clampLimit(limit, listLimit) // v1.56.0: the page ceiling (was 50)
         var rows []struct {
                 FullName      string `json:"full_name"`
                 Description   string `json:"description"`
@@ -719,16 +814,33 @@ func (c *Client) ghListUserRepos(ctx context.Context, token string, limit int) (
                         Pull  bool `json:"pull"`
                 } `json:"permissions"`
         }
-        if err := c.ghGetJSON(ctx, "/user/repos?sort=updated&per_page="+fmt.Sprint(limit), token, &rows, maxListBody); err != nil {
+        // v1.56.0 THE WHOLE LIST: the pages are walked (the old shape
+        // stopped at 50 repos).
+        all, err := ghPage(ctx, func(ctx context.Context, page int) ([]RepoMeta, error) {
+                perPage := 100
+                if limit > 0 && limit < perPage {
+                        perPage = limit
+                }
+                p := "/user/repos?sort=updated&per_page=" + fmt.Sprint(perPage) + "&page=" + fmt.Sprint(page)
+                if err := c.ghGetJSON(ctx, p, token, &rows, maxListBody); err != nil {
+                        return nil, err
+                }
+                out := make([]RepoMeta, 0, len(rows))
+                for _, r := range rows {
+                        out = append(out, RepoMeta{FullName: r.FullName, Description: r.Description,
+                                DefaultBranch: r.DefaultBranch, Private: r.Private,
+                                CloneURL: r.CloneURL, WebURL: r.HTMLURL, UpdatedAt: r.UpdatedAt,
+                                Stars: r.Stars, Language: r.Language,
+                                Admin: r.Permissions.Admin, Push: r.Permissions.Push, Pull: r.Permissions.Pull})
+                }
+                return out, nil
+        })
+        if err != nil {
                 return nil, err
         }
-        out := make([]RepoMeta, 0, len(rows))
-        for _, r := range rows {
-                out = append(out, RepoMeta{FullName: r.FullName, Description: r.Description,
-                        DefaultBranch: r.DefaultBranch, Private: r.Private,
-                        CloneURL: r.CloneURL, WebURL: r.HTMLURL, UpdatedAt: r.UpdatedAt,
-                        Stars: r.Stars, Language: r.Language,
-                        Admin: r.Permissions.Admin, Push: r.Permissions.Push, Pull: r.Permissions.Pull})
+        out := all
+        if limit > 0 && len(out) > limit {
+                out = out[:limit]
         }
         return out, nil
 }
@@ -1317,4 +1429,38 @@ func (c *Client) ghCompare(ctx context.Context, base, head, token string) (Compa
 		}
 	}
 	return cmp, nil
+}
+
+// ── v1.56.0 THE WHOLE LIST: pagination, not a silent cap ────────────────
+//
+// The old list verbs asked the forge for per_page=30 and STOPPED — a
+// repo with 200 open issues showed 30 and the model believed that was
+// all of them. The v1.19.1 whole-truth law, extended from content to
+// LISTS: the engine pages until the forge says "no more", and the
+// result carries the truth.
+//
+// The ceilings that remain are the forge's own rate/abuse limits
+// (GitHub's search is 10 req/min; the list endpoints are 100/page) —
+// physics, not a local choice.
+
+// ghPageLimit: how many pages a list verb walks. 100 per page × 20
+// pages = 2,000 rows — past any realistic repo, and the walk stops
+// early when a page comes back short.
+const ghPageLimit = 20
+
+// ghPage is the generic page-walker: it calls fetch(page) until the
+// page comes back short or the page ceiling is reached.
+func ghPage[T any](ctx context.Context, fetch func(ctx context.Context, page int) ([]T, error)) ([]T, error) {
+	var all []T
+	for page := 1; page <= ghPageLimit; page++ {
+		rows, err := fetch(ctx, page)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, rows...)
+		if len(rows) < 100 {
+			break // a short page = the last page
+		}
+	}
+	return all, nil
 }

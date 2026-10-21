@@ -118,10 +118,11 @@ var defs = []Def{
 	{Name: "text_stats", Desc: "Statistics about text (words, chars, lines…).", Props: []PropDef{
 		str("text", "The input text.", true),
 	}},
-	{Name: "regex_extract", Desc: "Extract regex matches from text.", Props: []PropDef{
+	{Name: "regex_extract", Desc: "Extract regex matches from text — ALL matches by default (a limit is honest: the count says how many exist and how many were shown).", Props: []PropDef{
 		str("pattern", "The regular expression.", true),
 		str("text", "The text to search.", true),
 		prop("group", "Capture group to return (0 = whole match).", PropNumber, false),
+		prop("limit", "Max matches to show (0 = ALL — the default).", PropNumber, false),
 	}},
 	// ── file tools (the artifact producers) ─────────────────────────
 	{Name: "docx_create", Desc: "Create a .docx document from structured blocks and save it as a downloadable artifact.", Props: []PropDef{
@@ -205,14 +206,28 @@ var defs = []Def{
 		}},
 	// ── the workspace hand (gated on the Workspace closure) ─────────
 	{Name: "workspace", Gate: GateWorkspace,
-		Desc: "Act on this chat's CONNECTED cloud repos (the CONNECTED CLOUD WORKSPACES block lists them): browse (tree/ls/read/grep/readme), inspect history/issues/PRs/discussions/releases/Tags/Actions (view), WRITE (put = an API commit, full access; pr opens a pull request; tag_create cuts a tag; fork), create a repo, or discover the account's repos. Use it whenever the user asks about their connected repo — its code, history, issues, PRs, or wants a change pushed.",
+		Desc: "Act on this chat's CONNECTED cloud repos (the CONNECTED CLOUD WORKSPACES block lists them): browse (tree/ls/read/grep/readme), inspect history/issues/PRs/discussions/releases/Tags/Actions (view), WRITE (put = an API commit, full access; pr opens a pull request; tag_create cuts a tag; fork), create a repo, or discover the account's repos. Use it whenever the user asks about their connected repo — its code, history, issues, PRs, or wants a change pushed. THE GREP IS A REAL GREP: the pattern is a REGEX by default ('foo|bar', 'func\\(\\w+'), EVERY hit in every file is reported (not one per file), and it takes include/exclude globs, context lines (context/before/after), case_sensitive, word, invert, count and files_only. Nothing is truncated silently — when a ceiling bites, the result says so.",
 		Props: []PropDef{
 			prop("action", "'list' (the connected repos), 'info', 'tree', 'ls', 'read', 'readme', 'grep', 'view', 'put', 'pr', 'tag_create', 'fork', 'create' or 'discover'.", PropString, true, "list", "info", "tree", "ls", "read", "readme", "grep", "view", "put", "pr", "tag_create", "fork", "create", "discover"),
 			str("ws", "The repo: id, owner/repo or the bare repo name (from the CONNECTED block or list).", false),
 			str("path", "File/subdirectory path (tree/ls/read/put).", false),
 			str("ref", "Branch/tag/sha override (defaults to the repo branch).", false),
 			str("range", "Read slice: head:80 | tail:40 | lines:10-60.", false),
-			str("query", "Grep search text.", false),
+			str("query", "Grep PATTERN (a REGEX by default — 'foo|bar', 'func\\(\\w+', 'TODO:').", false),
+			prop("fixed", "Treat the grep pattern as a LITERAL (no regex).", PropBoolean, false),
+			prop("case_sensitive", "Case-sensitive matching (default: case-insensitive).", PropBoolean, false),
+			prop("word", "Whole-word match (\\b).", PropBoolean, false),
+			prop("invert", "Report the NON-matching lines (grep -v).", PropBoolean, false),
+			str("include", "Glob filter: '*.go', 'docs/**' (a JSON array or a comma-separated list).", false),
+			str("exclude", "Glob to exclude: 'vendor/**', '*.lock'.", false),
+			prop("context", "Context lines around each hit (-C).", PropNumber, false),
+			prop("before", "Context lines before each hit (-B).", PropNumber, false),
+			prop("after", "Context lines after each hit (-A).", PropNumber, false),
+			prop("limit", "Max hits (0 = ALL hits — the default; no silent cap).", PropNumber, false),
+			prop("max_per_file", "Max hits per file (0 = all).", PropNumber, false),
+			prop("count", "Report the hit COUNT per file instead of the lines (grep -c).", PropBoolean, false),
+			prop("files_only", "Report only the FILES that contain a hit (grep -l).", PropBoolean, false),
+			prop("summary", "Tree only: the directory-summary shape instead of the full listing.", PropBoolean, false),
 			prop("what", "View subject (view only).", PropString, false, "issues", "pulls", "commits", "branches", "releases", "tags", "workflows", "runs", "discussions"),
 			prop("state", "Filter state for issues/pulls (view only).", PropString, false, "open", "closed", "all"),
 			str("content", "Full new file text (put only).", false),

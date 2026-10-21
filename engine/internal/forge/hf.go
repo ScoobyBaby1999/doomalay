@@ -232,7 +232,7 @@ func (c *Client) hfCommits(ctx context.Context, path, ref, token string, limit i
         if ref == "" {
                 ref = "main"
         }
-        limit = clampLimit(limit, 30)
+        limit = clampLimit(limit, listLimit) // v1.56.0: 0 = the full page (the default 30/20/50 is DEAD)
         body, err := c.do(ctx, "GET", c.hfPath("/commits/"+url.PathEscape(ref)+"?limit="+strconv.Itoa(limit)), token, nil, "", maxListBody)
         if err != nil {
                 return nil, err
@@ -271,7 +271,7 @@ func (c *Client) hfCommits(ctx context.Context, path, ref, token string, limit i
 // ── discussions (HF unifies issues / pull requests / discussions) ──────────
 
 func (c *Client) hfDiscussions(ctx context.Context, token string, want string, limit int) ([]map[string]any, error) {
-        limit = clampLimit(limit, 30)
+        limit = clampLimit(limit, listLimit) // v1.56.0: 0 = the full page (the default 30/20/50 is DEAD)
         body, err := c.do(ctx, "GET", c.hfPath("/discussions?limit="+strconv.Itoa(limit)), token, nil, "", maxListBody)
         if err != nil {
                 return nil, err
@@ -576,7 +576,7 @@ func (c *Client) hfBucketList(ctx context.Context, token string, limit int) ([]R
         if user == "" {
                 return nil, fmt.Errorf("hf: no signed-in token — sign in to Hugging Face first to list your buckets")
         }
-        limit = clampLimit(limit, 50)
+        limit = clampLimit(limit, listLimit) // v1.56.0: 0 = the full page (the default 30/20/50 is DEAD)
         body, err := c.do(ctx, "GET", hfBase+"/api/buckets/"+url.PathEscape(user), token, nil, "", maxListBody)
         if err != nil {
                 return nil, err
@@ -668,7 +668,7 @@ func (c *Client) hfListUserRepos(ctx context.Context, token string, limit int) (
         if user == "" {
                 return nil, fmt.Errorf("hf: no signed-in token — sign in to Hugging Face first to list your repos")
         }
-        limit = clampLimit(limit, 50)
+        limit = clampLimit(limit, listLimit) // v1.56.0: 0 = the full page (the default 30/20/50 is DEAD)
         out := []RepoMeta{}
         for _, typ := range []string{"models", "datasets", "spaces"} {
                 if len(out) >= limit {

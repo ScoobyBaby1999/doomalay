@@ -540,6 +540,11 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
                         } else if bus != nil && !busDegraded {
                                 var degraded bool
                                 observation, degraded = busExecute(ctx, bus, turn, ch, c.Function.Name, c.Function.Arguments, &allSources)
+                                // v1.56.0 THE HICCUP FLAG: every hiccup a tool
+                                // reports (a truncated result, a skipped file,
+                                // a refusal) is SPOKEN — the user sees it and
+                                // the model knows its observation was partial.
+                                FlagToolFault(ctx, ch, c.Function.Name, observation)
                                 // v1.14.4 THE TRACE: bus calls trace through the
                                 // bus Observer (spans + events, obs.AttachBus);
                                 // only the DEGRADE verdict is unique to this site.
@@ -556,6 +561,9 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
                                 obs.EmitS(ctx, obs.ToolStart, "round", round, "name", c.Function.Name, "summary", "(direct dispatch — bus unavailable)")
                                 observation = executeAction(ctx, req, ch, c.Function.Name, c.Function.Arguments, &allSources)
                                 obs.EmitS(ctx, obs.ToolEnd, "round", round, "name", c.Function.Name, "direct", true, "obs_bytes", len(observation))
+                                // v1.56.0 THE HICCUP FLAG (the direct dispatch
+                                // twin — the same law, the same notice).
+                                FlagToolFault(ctx, ch, c.Function.Name, observation)
                                 if hasSpan {
                                         tsp.End(strings.HasPrefix(observation, "OBSERVATION:\n(error"), len(observation))
                                 }

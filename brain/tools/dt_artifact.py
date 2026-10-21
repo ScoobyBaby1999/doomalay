@@ -196,8 +196,7 @@ def _diff_summary(old: str, new: str, name: str = "") -> str:
         tofile=("b/" + name) if name else "new",
         lineterm=""))
     body = "\n".join(diff)
-    if len(body) > _BODY_CAP:
-        body = body[:_BODY_CAP] + f"\n… (diff truncated, {len(diff)} lines total)"
+    # v1.56.0 THE WHOLE TOOL: the diff rides WHOLE.
     return body or "(no changes)"
 
 
@@ -592,9 +591,9 @@ def _preview_summary(pv: dict, client: ArtifactClient, aid: str) -> str:
     size = _human_size(pv.get("size"))
     if kind == "text":
         t = str(pv.get("text") or "")
-        body = t[:_BODY_CAP] + (f"\n… (truncated, {len(t)} chars total)"
-                                if len(t) > _BODY_CAP else "")
-        return f"{name} ({size}) — text preview:\n{body}"
+        # v1.56.0 THE WHOLE TOOL: the preview rides WHOLE (the old
+        # 5,500-char cut amputated the artifact the model was reading).
+        return f"{name} ({size}) — text preview:\n{t}"
     if kind == "archive":
         ents = pv.get("entries") or []
         rows = [str(e.get("name") if isinstance(e, dict) else e) for e in ents][:30]
@@ -664,9 +663,9 @@ def _dispatch(client: ArtifactClient, action: str, name: str, content,
                     f'artifact(action="create", name="report.md", content="…")')
         out = (f"{len(arts)} artifact(s){where} in this chat:\n"
                + "\n".join(_tree_lines(arts)))
-        # huge trees stay under the 6000-char return cap (dt_spec rule 9)
-        return out[:_READ_CAP] + "\n… (tree truncated — narrow with path=)" \
-            if len(out) > _READ_CAP else out
+        # v1.56.0 THE WHOLE TOOL: the tree rides WHOLE (the old 6,000-char
+        # cut hid artifacts the model needed to see).
+        return out
 
     if action == "create":
         nm = (name or path or "").strip()
@@ -700,10 +699,8 @@ def _dispatch(client: ArtifactClient, action: str, name: str, content,
                     f'viewer: artifact(action="preview", name="{got.get("name")}")')
         head = (f"{got.get('name')} ({got.get('mime')}, {got.get('size')} B, "
                 f"id {got.get('id')}):\n")
-        if len(text) <= _BODY_CAP:
-            return head + text
-        return head + text[:_BODY_CAP] + \
-            f"\n… (truncated: {len(text)} chars total — download or fetch in parts)"
+        # v1.56.0 THE WHOLE TOOL: the read rides WHOLE.
+        return head + text
 
     if action == "write":
         if not (name or aid):
@@ -933,9 +930,8 @@ def _dispatch(client: ArtifactClient, action: str, name: str, content,
                     f"{client.download_url(rr['aid'])}")
         t = str(e.get("text") or "")
         flag = " (engine-truncated at 256 KB)" if e.get("truncated") else ""
-        body = t[:_BODY_CAP] + (f"\n… (truncated, {len(t)} chars)"
-                                if len(t) > _BODY_CAP else "")
-        return f"{e.get('name')} ({e.get('size')} B){flag}:\n{body}"
+        # v1.56.0 THE WHOLE TOOL: the member rides WHOLE.
+        return f"{e.get('name')} ({e.get('size')} B){flag}:\n{t}"
 
     if action == "extract":
         rr = _resolve_ref(client, name, aid)

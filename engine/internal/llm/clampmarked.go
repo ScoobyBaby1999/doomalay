@@ -40,8 +40,15 @@ func messagesTokens(msgs []Message) int {
 // chars/token — EstimateTokensN's own ratio). Floor 24,000: a tiny-window
 // model is never worse off than the old fixed ceiling. A generous room on a
 // big-window model means the observation rides WHOLE — the whole-return law.
+//
+// v1.56.0 THE WHOLE TOOL: the floor rises from 24,000 to 256,000 bytes
+// (a 256KB tool result now rides WHOLE on any model). The budget is
+// still the WINDOW's physics — a 300MB file on a 32K-context model is
+// still physics, and the marker says so (ClampMarked carries the
+// totals). The floor is what was amputating results on big-context
+// models for no reason.
 func turnObsBudget(model string, usedTokens int) int {
-        const floorBytes = 24000
+        const floorBytes = 256 << 10 // 256 KB
         limit := ContextLimitFor(model)
         roomTokens := limit*90/100 - usedTokens
         if roomTokens < 0 {

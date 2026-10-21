@@ -2608,6 +2608,14 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, pipe *chatPipe, sess
                         if chunk.Type == "status" && chunk.Message != "" {
                                 ev["message"] = chunk.Message
                         }
+                        // v1.56.0 THE HICCUP FLAG: a tool hiccup arrives as
+                        // a notice; the wire shape carries the CODE so the
+                        // UI can render it as a warning (the plain text
+                        // alone renders as an ordinary notice).
+                        if chunk.Type == "notice" {
+                                ev["code"] = "tool-hiccup"
+                                ev["message"] = chunk.Text
+                        }
                         if chunk.Sources != nil {
                                 srcs := make([]map[string]any, 0, len(chunk.Sources))
                                 for _, sr := range chunk.Sources {
@@ -2938,10 +2946,14 @@ func (s *Server) forwardEvents(ctx context.Context, pipe *chatPipe, sessionID st
                                         nEv[k] = v
                                 }
                         }
+                        // v1.56.0 THE HICCUP FLAG: the tool-hiccup notice
+                        // carries its text + the code, so the replay lifts
+                        // both back out (the bubble keeps its warning tone).
+                        if t, ok := ev["text"].(string); ok && t != "" {
+                                nEv["message"] = t
+                        }
                         if len(nEv) == 0 {
-                                if t, ok := ev["text"].(string); ok {
-                                        content = t
-                                }
+                                content = ""
                         } else if b, err := json.Marshal(nEv); err == nil {
                                 content = string(b)
                         }

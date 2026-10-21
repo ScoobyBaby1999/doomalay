@@ -833,9 +833,14 @@ func (s *Server) handleExploreFiles(w http.ResponseWriter, r *http.Request) {
                 writeError(w, 400, "max 200 paths per batch — split the request")
                 return
         }
-        head := atoiDefault(r.URL.Query().Get("head_lines"), 40)
-        if head < 1 || head > 400 {
-                head = 40
+        // v1.56.0 THE WHOLE TOOL: the batch read rides WHOLE by default
+        // (the old shape silently cut every file at 40 lines and the
+        // model read a fragment of what it asked for). head_lines is
+        // still there for a caller who wants a slice — 0 = the whole
+        // file.
+        head := atoiDefault(r.URL.Query().Get("head_lines"), 0)
+        if head < 0 || head > 4000 {
+                head = 0
         }
         hi, err := forge.Recognize(raw)
         if err != nil {
@@ -860,7 +865,10 @@ func (s *Server) handleExploreFiles(w http.ResponseWriter, r *http.Request) {
         c := forge.NewClient(hi)
         tok := s.globalToken(hi.Kind)
         ref := r.URL.Query().Get("ref")
-        rng := fmt.Sprintf("head:%d", head)
+        rng := ""
+        if head > 0 {
+                rng = fmt.Sprintf("head:%d", head)
+        }
 
         type res struct {
                 FC  *forge.FileContent
@@ -928,16 +936,30 @@ func (s *Server) handleWorkspaceGrep(w http.ResponseWriter, r *http.Request) {
                 res *forge.GrepResult
                 err error
         )
+        // v1.56.0 THE SOPHISTICATED GREP: the full option set is
+        // available over REST too (the brain twin + the PWA read the
+        // same surface). The old default (limit=50) is DEAD — 0 = ALL.
+        opt := forge.SearchOptions{
+                Query:         query,
+                Fixed:         q.Get("fixed") == "1" || q.Get("fixed") == "true",
+                CaseSensitive: q.Get("case_sensitive") == "1" || q.Get("case_sensitive") == "true",
+                Word:          q.Get("word") == "1" || q.Get("word") == "true",
+                Invert:        q.Get("invert") == "1" || q.Get("invert") == "true",
+                IncludeGlobs:  q["include"],
+                ExcludeGlobs:  q["exclude"],
+                Context:       atoiDefault(q.Get("context"), 0),
+                Before:        atoiDefault(q.Get("before"), 0),
+                After:         atoiDefault(q.Get("after"), 0),
+                Limit:         atoiDefault(q.Get("limit"), 0),
+                MaxPerFile:    atoiDefault(q.Get("max_per_file"), 0),
+                CountOnly:     q.Get("count") == "1" || q.Get("count") == "true",
+                FilesOnly:     q.Get("files_only") == "1" || q.Get("files_only") == "true",
+        }
         if rem := q.Get("resume"); rem != "" {
                 res, err = forge.GrepResume(r.Context(), c, query,
-                        refOrWS(q.Get("ref"), ws), tok, atoiDefault(q.Get("limit"), 50), rem)
+                        refOrWS(q.Get("ref"), ws), tok, opt.Limit, rem)
         } else {
-                var hits []forge.SearchHit
-                hits, err = forge.Grep(r.Context(), c, query,
-                        refOrWS(q.Get("ref"), ws), tok, atoiDefault(q.Get("limit"), 50))
-                if err == nil {
-                        res = &forge.GrepResult{Hits: hits, Complete: true, Scanned: len(hits)}
-                }
+                res, err = forge.GrepOpts(r.Context(), c, opt, refOrWS(q.Get("ref"), ws), tok)
         }
         if err != nil {
                 s.wsErr(w, err)
@@ -957,7 +979,10 @@ func (s *Server) handleWorkspaceView(w http.ResponseWriter, r *http.Request) {
         q := r.URL.Query()
         what := r.PathValue("what")
         state := q.Get("state")
-        limit := atoiDefault(q.Get("limit"), 30)
+        // v1.56.0 THE WHOLE LIST: 0 = ALL the rows (the old default 30
+        // made a 200-issue repo look like it had 30 — the list verbs PAGE
+        // past the forge's per_page ceiling now).
+        limit := atoiDefault(q.Get("limit"), 0)
         tok := s.tokenForTarget(ws, c)
         ref := refOrWS(q.Get("ref"), ws)
 
@@ -1393,7 +1418,8 @@ func (s *Server) handleWorkspaceDiscover(w http.ResponseWriter, r *http.Request)
         }
         c := forge.NewClient(forge.HostInfo{Kind: kind, Host: host,
                 WebBase: "https://" + host, APIBase: apiBaseFor(kind, host)})
-        repos, err := c.ListUserRepos(r.Context(), token, atoiDefault(q.Get("limit"), 50))
+        // v1.56.0 THE WHOLE LIST: 0 = ALL the account's repos.
+        repos, err := c.ListUserRepos(r.Context(), token, atoiDefault(q.Get("limit"), 0))
         if err != nil {
                 s.wsErr(w, err)
                 return

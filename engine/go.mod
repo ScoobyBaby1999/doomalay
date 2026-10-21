@@ -29,6 +29,7 @@ require (
 )
 
 require (
+	github.com/dlclark/regexp2 v1.11.0
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/mod v0.37.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
@@ -39,7 +40,6 @@ require (
 	github.com/bodgit/plumbing v1.3.0 // indirect
 	github.com/bodgit/windows v1.0.1 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
-	github.com/dlclark/regexp2 v1.11.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect

@@ -166,7 +166,7 @@ func (c *Client) glBranches(ctx context.Context, token string) ([]string, error)
 }
 
 func (c *Client) glCommits(ctx context.Context, path, ref, token string, limit int) ([]Commit, error) {
-        limit = clampLimit(limit, 30)
+        limit = clampLimit(limit, listLimit) // v1.56.0: 0 = the full page (the default 30/20/50 is DEAD)
         var rows []struct {
                 ID        string `json:"id"`
                 Title     string `json:"title"`
@@ -192,7 +192,7 @@ func (c *Client) glCommits(ctx context.Context, path, ref, token string, limit i
 }
 
 func (c *Client) glIssues(ctx context.Context, state, token string, limit int) ([]Issue, error) {
-        limit = clampLimit(limit, 30)
+        limit = clampLimit(limit, listLimit) // v1.56.0: 0 = the full page (the default 30/20/50 is DEAD)
         if state == "" {
                 state = "all"
         }
@@ -222,7 +222,7 @@ func (c *Client) glIssues(ctx context.Context, state, token string, limit int) (
 }
 
 func (c *Client) glPulls(ctx context.Context, state, token string, limit int) ([]PullRequest, error) {
-        limit = clampLimit(limit, 30)
+        limit = clampLimit(limit, listLimit) // v1.56.0: 0 = the full page (the default 30/20/50 is DEAD)
         if state == "" {
                 state = "opened"
         }
@@ -251,7 +251,7 @@ func (c *Client) glPulls(ctx context.Context, state, token string, limit int) ([
 }
 
 func (c *Client) glReleases(ctx context.Context, token string, limit int) ([]Release, error) {
-        limit = clampLimit(limit, 20)
+        limit = clampLimit(limit, listLimit) // v1.56.0: 0 = the full page (the default 30/20/50 is DEAD)
         var rows []struct {
                 TagName     string `json:"tag_name"`
                 Name        string `json:"name"`
@@ -389,7 +389,7 @@ func (c *Client) glCreatePull(ctx context.Context, title, body, head, base, toke
 }
 
 func (c *Client) glListUserRepos(ctx context.Context, token string, limit int) ([]RepoMeta, error) {
-        limit = clampLimit(limit, 50)
+        limit = clampLimit(limit, listLimit) // v1.56.0: 0 = the full page (the default 30/20/50 is DEAD)
         var rows []struct {
                 PathWithNamespace string `json:"path_with_namespace"`
                 Description       string `json:"description"`

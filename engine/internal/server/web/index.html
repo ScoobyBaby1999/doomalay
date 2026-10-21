@@ -2251,6 +2251,19 @@
     content: 'ⓘ '; opacity: 0.8; font-weight: 600;
     -webkit-user-select: none; user-select: none;
   }
+  /* v1.56.0 THE HICCUP FLAG: a tool hiccup (a truncated result, a
+     refused call, a failed tool) wears the WARNING tone and a ⚠ glyph —
+     the user's law: "every single hiccup you encounter while running
+     tool calls flag and tell me". Theme tokens only (--err-rgb). */
+  .msg-notice[data-code="tool-hiccup"] {
+    color: var(--err, #e5484d);
+    background: rgba(var(--err-rgb, 229, 72, 77), 0.12);
+    border-color: rgba(var(--err-rgb, 229, 72, 77), 0.32);
+    font-weight: 600;
+  }
+  .msg-notice[data-code="tool-hiccup"]::before {
+    content: '⚠ '; opacity: 1;
+  }
 
   /* ── v0.37 MESSAGE PRESENCE — rows, time chips, day dividers ──
      User/assistant bubbles ride inside a .msg-row (flex column) so the

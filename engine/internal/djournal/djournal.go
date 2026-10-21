@@ -50,9 +50,18 @@ const StateFile = "entries.jsonl"
 // in `read`; per-line cap in `search` context output; `moods` timeline
 // day cap.
 const (
-        MaxOut      = 6000
-        textSnip    = 700
-        lineSnip    = 160
+        // v1.56.0 THE WHOLE TOOL: the reply ceiling rises from 6,000 to
+        // 64,000 characters (the honest pointer still rides when it
+        // bites — the data's on-disk source of truth is named). The
+        // 6,000-char cut amputated whole journal reviews (a week of
+        // entries is more than that) and the model read the fragment as
+        // the answer.
+        MaxOut      = 64000
+        // v1.56.0 THE WHOLE TOOL: the per-entry + per-line snips are GONE
+        // (0 = the text rides whole) — the entry lives in the file and
+        // the model must see what it wrote.
+        textSnip    = 0
+        lineSnip    = 0
         timelineCap = 60
 )
 
@@ -646,7 +655,7 @@ func fmtEntry(e Entry) string {
         }
         b.WriteString(fmt.Sprintf("mood %s · energy %s · %d words\n", moodStr(e.Mood), en, wc))
         text := e.Text
-        if len(text) > textSnip {
+        if textSnip > 0 && len(text) > textSnip {
                 text = text[:textSnip] + " …(snipped — full text in entries.jsonl)"
         }
         b.WriteString(text)
@@ -763,8 +772,10 @@ func splitLines(s string) []string {
         return strings.Split(strings.TrimSuffix(s, "\n"), "\n")
 }
 
+// snip trims a string to n bytes — 0 means NO trim (the v1.56.0
+// whole-tool law: the text rides whole).
 func snip(s string, n int) string {
-        if len(s) <= n {
+        if n <= 0 || len(s) <= n {
                 return s
         }
         return s[:n]

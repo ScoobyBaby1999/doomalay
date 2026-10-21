@@ -355,9 +355,12 @@ func TestLoadAppendRoundTrip(t *testing.T) {
         }
 }
 
+// TestReplayCapAndFilePointer — v1.56.0 THE WHOLE TOOL: the entry
+// rides WHOLE (the per-entry snip is GONE — the model must see what it
+// wrote), and the reply cap still holds with its honest file pointer.
 func TestReplayCapAndFilePointer(t *testing.T) {
         path := tmpJournal(t)
-        long := strings.Repeat("word ", 4000) // ~20KB > MaxOut
+        long := strings.Repeat("word ", 4000) // ~20KB
         out := RunAction(path, Args{Action: "write", Text: long, Now: testNow()})
         if !strings.Contains(out.Text, "Saved journal entry") {
                 t.Fatalf("the long write must save: %s", out.Text[:100])
@@ -366,8 +369,13 @@ func TestReplayCapAndFilePointer(t *testing.T) {
         if len(out.Text) > MaxOut {
                 t.Errorf("read must cap at MaxOut: %d", len(out.Text))
         }
-        if !strings.Contains(out.Text, "(snipped — full text in entries.jsonl)") {
-                t.Errorf("the snip must point at the file: %s", out.Text[:200])
+        // v1.56.0: the entry rides WHOLE — the old per-entry snip
+        // (700 chars) is DEAD (the model must see what it wrote).
+        if !strings.Contains(out.Text, "word word word word") {
+                t.Errorf("the entry must ride whole: %s", out.Text[:200])
+        }
+        if strings.Contains(out.Text, "(snipped — full text in entries.jsonl)") {
+                t.Errorf("the per-entry snip is DEAD (v1.56.0): %s", out.Text[:200])
         }
 }
 

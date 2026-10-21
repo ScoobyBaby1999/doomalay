@@ -62,7 +62,8 @@ HELP = """explore — the UNBOUNDED read-only repo explorer (ANY repo URL, no co
   ls url [path] [ref]           one directory level (d/- rows, sizes)
   read url path [range] [ref]   one file; range: head:80 | tail:40 | lines:10-60
   files url paths [head_lines]  BATCH READ: comma-separated paths (50+ fine) —
-                                each file trimmed to head_lines (default 40);
+                                each file rides WHOLE (head_lines=0 = the whole
+                                file; pass head_lines=N to trim);
                                 the breadth engine for "read these 60 files"
   grep url query [ref] [limit]  case-insensitive literal search across the
                                 repo's text files; INCREMENTAL — the result
@@ -237,7 +238,12 @@ class ExploreClient:
             p["ref"] = ref
         return self._get("/api/explore/readme", p)
 
-    def grep(self, url: str, q: str, ref: str, limit: int, resume: str):
+    def grep(self, url: str, q: str, ref: str, limit: int, resume: str,
+             include: str = "", exclude: str = "", context: int = 0,
+             before: int = 0, after: int = 0, fixed: bool = False,
+             case_sensitive: bool = False, word: bool = False,
+             invert: bool = False, count: bool = False,
+             files_only: bool = False):
         p = {"url": url, "q": q}
         if ref:
             p["ref"] = ref
@@ -245,6 +251,21 @@ class ExploreClient:
             p["limit"] = str(limit)
         if resume:
             p["resume"] = resume
+        if include:
+            p["include"] = include
+        if exclude:
+            p["exclude"] = exclude
+        if context:
+            p["context"] = str(context)
+        if before:
+            p["before"] = str(before)
+        if after:
+            p["after"] = str(after)
+        for k, v in (("fixed", fixed), ("case_sensitive", case_sensitive),
+                     ("word", word), ("invert", invert),
+                     ("count", count), ("files_only", files_only)):
+            if v:
+                p[k] = "1"
         return self._get("/api/explore/grep", p)
 
     def files(self, url: str, paths: list, ref: str, head_lines: int):
@@ -268,7 +289,7 @@ class ExploreClient:
 def run_action(client: ExploreClient, action: str, url: str = "",
                path: str = "", paths: str = "", ref: str = "",
                range_: str = "", query: str = "", what: str = "",
-               state: str = "", limit: int = 0, head_lines: int = 40,
+               state: str = "", limit: int = 0, head_lines: int = 0,
                log=None) -> str:
     try:
         return _dispatch(client, action, url=url, path=path, paths=paths,
@@ -374,11 +395,15 @@ def _dispatch(client: ExploreClient, action: str, **kw) -> str:
         # The model digs deeper per-file with read when a file matters.
         if not url or not kw.get("paths"):
             return ("files needs url= and paths= (comma-separated; 50+ fine). "
-                    "head_lines= trims each file (default 40)")
+                    "head_lines= trims each file (default 0 = the whole file)")
         plist = _parse_paths(kw["paths"])
         if not plist:
             return "paths= had no usable entries"
-        hl = int(kw.get("head_lines") or 40)
+        # v1.56.0 THE WHOLE TOOL: the batch read rides WHOLE by default
+        # (the old shape trimmed every file to 40 lines and the model
+        # read a fragment of what it asked for). head_lines is still
+        # available for a caller who wants a slice.
+        hl = int(kw.get("head_lines") or 0)
         hl = max(1, min(hl, 400))
         br = client.files(url, plist, kw.get("ref", ""), hl)
         if "error" in br:
@@ -398,34 +423,52 @@ def _dispatch(client: ExploreClient, action: str, **kw) -> str:
             body = str(fr.get("content") or "")
             more = "" if fr.get("size", 0) <= len(body) else \
                 f" …[file is {fr.get('size')} B, showed head:{hl}]"
-            lines.append(f"── {p}  ({fr.get('size')} B){more}\n{_clip(body, 900)}")
+            # v1.56.0 THE WHOLE TOOL: the per-file 900-char cut and the
+            # 24,000-char batch cut are DEAD — a batch read rides WHOLE
+            # (the caller asked for these files; cutting their contents
+            # made the model re-read them forever). The engine's own
+            # per-file budget already bounds the physics.
+            lines.append(f"── {p}  ({fr.get('size')} B){more}\n{body}")
         head = f"{ok}/{len(plist)} file(s) read"
         body = "\n\n".join(lines)
-        # keep the total return bounded by DT spec while showing the truth
-        if len(body) > 24000:
-            body = body[:24000] + f"\n… (batch trimmed — {len(plist)} files; " \
-                                   "re-run smaller groups or read individuals)"
         _emit(kw.get("log"), "explore_batch_read", asked=len(plist), ok=ok)
         return head + "\n" + body
 
     if action in ("grep", "search"):
         if not url or not kw.get("query"):
             return "grep needs url= and query= [ref=] [limit=] (resume=<token>)"
+        # v1.56.0 THE SOPHISTICATED GREP: the option set rides the call
+        # (the engine's grep takes the pattern as a REGEX, globs, context
+        # lines, case/word/invert, count/files-only).
         gr = client.grep(url, kw["query"], kw.get("ref", ""),
-                         int(kw.get("limit") or 0), kw.get("resume", ""))
+                         int(kw.get("limit") or 0), kw.get("resume", ""),
+                         include=kw.get("include", ""), exclude=kw.get("exclude", ""),
+                         context=int(kw.get("context") or 0),
+                         before=int(kw.get("before") or 0),
+                         after=int(kw.get("after") or 0),
+                         fixed=bool(kw.get("fixed")),
+                         case_sensitive=bool(kw.get("case_sensitive")),
+                         word=bool(kw.get("word")),
+                         invert=bool(kw.get("invert")),
+                         count=bool(kw.get("count")),
+                         files_only=bool(kw.get("files_only")))
         if "error" in gr:
             return gr["error"]
         hits = gr.get("hits") or []
         if not hits:
             return (f"no matches for {kw['query']!r}"
                     + (f" (scanned {gr.get('scanned')})" if gr.get("scanned") else ""))
+        # v1.56.0 THE SOPHISTICATED GREP (the brain twin): EVERY hit is
+        # reported and the snippet rides WHOLE — the old fold (80 rows)
+        # + the 120-char cut amputated what the model needed.
         lines = [f"{len(hits)} match(es) for {kw['query']!r}"
-                 + (f" · scanned {gr.get('scanned')}" if gr.get("scanned") else "")]
-        for h in hits[:_LIST_CAP]:
+                 + (f" · scanned {gr.get('scanned')}" if gr.get("scanned") else "")
+                 + (f" · engine={gr.get('engine')}" if gr.get("engine") else "")]
+        for h in hits:
             ln = f":{h.get('line')}" if h.get("line") else ""
-            lines.append(f"  {h.get('path')}{ln}  {str(h.get('snippet') or '')[:120]}")
-        if len(hits) > _LIST_CAP:
-            lines.append(f"  … (+{len(hits) - _LIST_CAP} more — raise limit=)")
+            lines.append(f"  {h.get('path')}{ln}  {str(h.get('snippet') or '')}")
+        if gr.get("reason"):
+            lines.append(f"  NOTE: {gr.get('reason')}")
         if not gr.get("complete") and gr.get("remaining"):
             lines.append("MORE TO SCAN (no cap — continue with): "
                          f"resume='{str(gr.get('remaining'))[:1500]}'")
@@ -522,7 +565,7 @@ def build(ctx) -> list:
                 merge_logs=pulls)
             state: view filter (issues: open|closed|all; pulls: open|closed)
             limit: max rows for grep/view (0 = default; pagination continues)
-            head_lines: per-file trim for the files batch action (default 40)
+            head_lines: per-file trim for the files batch action (default 0 = the whole file)
             """
             return run_action(client, action, url=url, path=path, paths=paths,
                               ref=ref, range_=range, query=query, what=what,

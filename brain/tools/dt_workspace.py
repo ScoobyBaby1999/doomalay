@@ -250,7 +250,12 @@ class WorkspaceClient:
             p["ref"] = ref
         return self._req("GET", f"/api/workspaces/{wid}/readme", params=p)
 
-    def grep(self, wid: str, q: str, ref: str, limit: int, resume: str):
+    def grep(self, wid: str, q: str, ref: str, limit: int, resume: str,
+             include: str = "", exclude: str = "", context: int = 0,
+             before: int = 0, after: int = 0, fixed: bool = False,
+             case_sensitive: bool = False, word: bool = False,
+             invert: bool = False, count: bool = False,
+             files_only: bool = False):
         p = {"q": q}
         if ref:
             p["ref"] = ref
@@ -258,6 +263,21 @@ class WorkspaceClient:
             p["limit"] = str(limit)
         if resume:
             p["resume"] = resume
+        if include:
+            p["include"] = include
+        if exclude:
+            p["exclude"] = exclude
+        if context:
+            p["context"] = str(context)
+        if before:
+            p["before"] = str(before)
+        if after:
+            p["after"] = str(after)
+        for k, v in (("fixed", fixed), ("case_sensitive", case_sensitive),
+                     ("word", word), ("invert", invert),
+                     ("count", count), ("files_only", files_only)):
+            if v:
+                p[k] = "1"
         return self._req("GET", f"/api/workspaces/{wid}/grep", params=p)
 
     def view(self, wid: str, what: str, state: str, limit: int):
@@ -479,20 +499,36 @@ def _dispatch(ctx, client: WorkspaceClient, action: str, **kw) -> str:
         row = _resolve_ws(ctx, kw["ws"])
         gr = client.grep(row.get("id") or kw["ws"], kw["query"],
                          kw.get("ref", ""), int(kw.get("limit") or 0),
-                         kw.get("resume", ""))
+                         kw.get("resume", ""),
+                         include=kw.get("include", ""), exclude=kw.get("exclude", ""),
+                         context=int(kw.get("context") or 0),
+                         before=int(kw.get("before") or 0),
+                         after=int(kw.get("after") or 0),
+                         fixed=bool(kw.get("fixed")),
+                         case_sensitive=bool(kw.get("case_sensitive")),
+                         word=bool(kw.get("word")),
+                         invert=bool(kw.get("invert")),
+                         count=bool(kw.get("count")),
+                         files_only=bool(kw.get("files_only")))
         if "error" in gr:
             return gr["error"]
         hits = gr.get("hits") or []
         if not hits:
             return (f"no matches for {kw['query']!r}"
                     + (f" (scanned {gr.get('scanned')} files)" if gr.get("scanned") else ""))
+        # v1.56.0 THE SOPHISTICATED GREP (the brain twin): EVERY hit is
+        # reported (the old fold showed 60 and folded the rest) and the
+        # snippet rides WHOLE (the old [:120] cut amputated the line the
+        # model needed). The engine's own result already carries the
+        # honest count + the truncation note, so nothing is hidden here.
         lines = [f"{len(hits)} match(es) for {kw['query']!r}:"
-                 + (f" scanned {gr.get('scanned')}" if gr.get("scanned") else "")]
-        for h in hits[:_LIST_CAP]:
+                 + (f" scanned {gr.get('scanned')}" if gr.get("scanned") else "")
+                 + (f" engine={gr.get('engine')}" if gr.get("engine") else "")]
+        for h in hits:
             ln = f":{h.get('line')}" if h.get("line") else ""
-            lines.append(f"  {h.get('path')}{ln}  {h.get('snippet', '')[:120]}")
-        if len(hits) > _LIST_CAP:
-            lines.append(f"  … (+{len(hits) - _LIST_CAP} more — raise limit=)")
+            lines.append(f"  {h.get('path')}{ln}  {h.get('snippet', '')}")
+        if gr.get("reason"):
+            lines.append(f"  NOTE: {gr.get('reason')}")
         if not gr.get("complete") and gr.get("remaining"):
             lines.append("MORE TO SCAN — continue with resume="
                          f"'{str(gr.get('remaining'))[:2000]}'")

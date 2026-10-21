@@ -115,7 +115,7 @@ func (c *Client) shBranches(ctx context.Context, token string) ([]string, error)
 }
 
 func (c *Client) shCommits(ctx context.Context, path, ref, token string, limit int) ([]Commit, error) {
-        limit = clampLimit(limit, 30)
+        limit = clampLimit(limit, listLimit) // v1.56.0: 0 = the full page (the default 30/20/50 is DEAD)
         var v struct {
                 Results []struct {
                         ID      string `json:"id"`
@@ -281,7 +281,7 @@ func (c *Client) genBranches(ctx context.Context, _ string) ([]string, error) {
 }
 
 func (c *Client) genCommits(ctx context.Context, path, ref, _ string, limit int) ([]Commit, error) {
-        limit = clampLimit(limit, 30)
+        limit = clampLimit(limit, listLimit) // v1.56.0: 0 = the full page (the default 30/20/50 is DEAD)
         args := []string{"log", "-n", fmt.Sprint(limit), "--pretty=%H%x1f%s%x1f%an%x1f%aI"}
         if path != "" {
                 args = append(args, "--", path)

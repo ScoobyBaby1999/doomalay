@@ -233,6 +233,11 @@ type SearchHit struct {
         Path    string `json:"path"`
         Line    int    `json:"line"`
         Snippet string `json:"snippet"`
+        // v1.56.0 THE SOPHISTICATED GREP: the context lines (-A/-B/-C)
+        // and the per-file count (-c) ride the hit.
+        Before []string `json:"before,omitempty"`
+        After  []string `json:"after,omitempty"`
+        Count  int      `json:"count,omitempty"`
 }
 
 // ── URL recognition ───────────────────────────────────────────────────────

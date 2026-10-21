@@ -212,7 +212,7 @@ func (c *Client) gtBranches(ctx context.Context, token string) ([]string, error)
 }
 
 func (c *Client) gtCommits(ctx context.Context, path, ref, token string, limit int) ([]Commit, error) {
-        limit = clampLimit(limit, 30)
+        limit = clampLimit(limit, listLimit) // v1.56.0: 0 = the full page (the default 30/20/50 is DEAD)
         var v struct {
                 Commits []struct {
                         SHA    string `json:"sha"`
@@ -244,7 +244,7 @@ func (c *Client) gtCommits(ctx context.Context, path, ref, token string, limit i
 }
 
 func (c *Client) gtIssues(ctx context.Context, state, token string, limit int) ([]Issue, error) {
-        limit = clampLimit(limit, 30)
+        limit = clampLimit(limit, listLimit) // v1.56.0: 0 = the full page (the default 30/20/50 is DEAD)
         if state == "" {
                 state = "all"
         }
@@ -277,7 +277,7 @@ func (c *Client) gtIssues(ctx context.Context, state, token string, limit int) (
 }
 
 func (c *Client) gtPulls(ctx context.Context, state, token string, limit int) ([]PullRequest, error) {
-        limit = clampLimit(limit, 30)
+        limit = clampLimit(limit, listLimit) // v1.56.0: 0 = the full page (the default 30/20/50 is DEAD)
         if state == "" {
                 state = "open"
         }
@@ -307,7 +307,7 @@ func (c *Client) gtPulls(ctx context.Context, state, token string, limit int) ([
 }
 
 func (c *Client) gtReleases(ctx context.Context, token string, limit int) ([]Release, error) {
-        limit = clampLimit(limit, 20)
+        limit = clampLimit(limit, listLimit) // v1.56.0: 0 = the full page (the default 30/20/50 is DEAD)
         var rows []struct {
                 TagName     string `json:"tag_name"`
                 Name        string `json:"name"`
@@ -352,7 +352,7 @@ func (c *Client) gtWorkflows(ctx context.Context, token string) ([]Workflow, err
 }
 
 func (c *Client) gtWorkflowRuns(ctx context.Context, token string, limit int) ([]WorkflowRun, error) {
-        limit = clampLimit(limit, 30)
+        limit = clampLimit(limit, listLimit) // v1.56.0: 0 = the full page (the default 30/20/50 is DEAD)
         var v struct {
                 WorkflowRuns []struct {
                         ID         int64  `json:"id"`
@@ -497,7 +497,7 @@ func (c *Client) gtCreateRepo(ctx context.Context, name, desc, license, gitignor
 }
 
 func (c *Client) gtListUserRepos(ctx context.Context, token string, limit int) ([]RepoMeta, error) {
-        limit = clampLimit(limit, 50)
+        limit = clampLimit(limit, listLimit) // v1.56.0: 0 = the full page (the default 30/20/50 is DEAD)
         var rows []struct {
                 FullName      string `json:"full_name"`
                 Description   string `json:"description"`

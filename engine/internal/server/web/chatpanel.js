@@ -4878,6 +4878,9 @@
       var ntext = String(nsrc.message || nsrc.text || '');
       if (ntext) {
         var nmsg = { role: 'notice', text: ntext, ts: evTsMs(ev) };
+        // v1.56.0 THE HICCUP FLAG: the code rides the bubble so the CSS
+        // can wear the warning tone (a tool hiccup must LOOK like one).
+        if (nsrc.code) nmsg.code = String(nsrc.code);
         if (ev.i) nmsg.ei = ev.i;
         state.messages.push(nmsg);
         appendMessage(msgContainer, scrollEl, nmsg, bodyEl, state._icon, state);
@@ -5387,7 +5390,10 @@
       // v1.10.1: the persistent system-notice bubble (styled in index.html
       // via the themed --notice token). Plain text only — notices are
       // engine-written, never model markdown.
-      return '<div class="msg-bubble msg-notice" data-msg-role="notice"' + miAttr + '>' +
+      // v1.56.0: the code rides the data attribute (the tool-hiccup
+      // warning tone).
+      var nCode = msg.code ? ' data-code="' + esc(String(msg.code)) + '"' : '';
+      return '<div class="msg-bubble msg-notice" data-msg-role="notice"' + nCode + miAttr + '>' +
         '<div class="fmt fmt-plain">' + esc(msg.text) + '</div></div>';
     } else if (msg.role === 'thinking') {
       // v0.38: per-chat thinkOpen pref drives the default (msg.open wins

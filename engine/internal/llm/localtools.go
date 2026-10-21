@@ -200,7 +200,17 @@ func RunLocalTool(name, argJSON string, sink ArtifactSink) string {
                 if err != nil {
                         return "OBSERVATION:\nerror: bad pattern — " + err.Error()
                 }
-                idx := re.FindAllStringSubmatchIndex(in, 50)
+                // v1.56.0 THE WHOLE TRUTH: the old cap was 50 matches —
+                // SILENT (the count line said "50 matches" and the model
+                // believed it had them all). Now: 0 = ALL matches; a
+                // positive limit is HONEST — the result says how many
+                // exist and how many were shown.
+                limit := int(num("limit", 0))
+                if limit <= 0 {
+                        limit = -1 // unlimited (Go's -1 = all matches)
+                }
+                idx := re.FindAllStringSubmatchIndex(in, limit)
+                total := len(re.FindAllStringSubmatchIndex(in, -1))
                 if len(idx) == 0 {
                         return "OBSERVATION:\n(no matches)"
                 }
@@ -217,7 +227,14 @@ func RunLocalTool(name, argJSON string, sink ArtifactSink) string {
                         }
                         fmt.Fprintf(&b, "[%d] %s\n", i+1, in[lo:hi]) // v1.19.1: full matches — no 400-char cut
                 }
-                return "OBSERVATION:\n" + strings.TrimRight(b.String(), "\n") + fmt.Sprintf("\n(%d matches)", len(idx))
+                tail := fmt.Sprintf("\n(%d matches", total)
+                if total > len(idx) {
+                        // the honest overflow note — the model knows the
+                        // number it did NOT see.
+                        tail += fmt.Sprintf(", %d shown — raise the limit to see the rest", len(idx))
+                }
+                tail += ")"
+                return "OBSERVATION:\n" + strings.TrimRight(b.String(), "\n") + tail
         default:
                 // v0.22 FILE TOOLS (filetools.go) — real binaries via the sink.
                 // v0.23: archive_create/archive_extract = the multi-format

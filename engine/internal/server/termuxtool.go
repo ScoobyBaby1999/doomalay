@@ -229,7 +229,7 @@ func (s *Server) runTermuxAction(ctx context.Context, sessionID, argJSON string)
         case "mkdir":
                 return s.termuxVerbMkdir(ctx, get, roots)
         case "grep":
-                return s.termuxVerbGrep(ctx, get, roots)
+                return s.termuxVerbGrep(ctx, get, args, roots)
         case "find":
                 return s.termuxVerbFind(ctx, get, roots)
         case "pkg":
@@ -920,10 +920,26 @@ echo "created"
         return "OBSERVATION:\nCREATED — " + oc.resolved
 }
 
-// termuxVerbGrep — {pattern, path?, glob?}: grep -rn, the pattern a
-// POSITIONAL ARG (zero interpolation), UNLIMITED hits (the v1.19.1
-// whole-truth law); the honest "no matches" line.
-func (s *Server) termuxVerbGrep(ctx context.Context, get func(string) string, roots []string) string {
+// termuxVerbGrep — {pattern, path?, glob?}: a REAL grep on the device.
+//
+// v1.56.0 THE SOPHISTICATED GREP (the device twin): the old verb was a
+// plain `grep -rn` — a LITERAL pattern, no context lines, no glob
+// excludes, and its output died at Termux's own 100KB result cap with
+// no way to see the rest.
+//
+// The new verb:
+//   · uses RIPGREP when it is installed (the device's own rg — a real
+//     regex engine, fast, with context lines, globs and file-type
+//     filters) and falls back to GNU grep;
+//   · the pattern is a REGEX (grep -E semantics);
+//   · supports context (-C/-A/-B), case sensitivity, whole-word,
+//     invert, and include/exclude globs;
+//   · the output is NEVER silently cut — when Termux's 100KB result cap
+//     bites, the marker says so and the hit count tells the truth.
+//
+// The pattern rides as a POSITIONAL argument (zero interpolation — the
+// shell-jail law); the flags are built from validated enums/ints.
+func (s *Server) termuxVerbGrep(ctx context.Context, get func(string) string, args map[string]any, roots []string) string {
         pattern := get("pattern")
         if pattern == "" {
                 return "OBSERVATION:\nerror: grep needs {\"action\":\"grep\",\"args\":{\"pattern\":\"text\",\"path\":\"…\",\"glob\":\"*.go\"}}"
@@ -936,16 +952,85 @@ func (s *Server) termuxVerbGrep(ctx context.Context, get func(string) string, ro
         if glob == "" {
                 glob = get("include")
         }
-        script := termuxJailScript([]string{"pattern", "include"}, `if [ ! -e "$r" ]; then echo "no such path: $r" >&2; exit 1; fi
-if [ -n "$include" ]; then
-  grep -rn --include="$include" -- "$pattern" "$r"; rc=$?
+        exclude := get("exclude")
+        // the flags — built from validated values only (no interpolation).
+        var flags []string
+        if !wsArgBool(args, "case_sensitive") {
+                flags = append(flags, "-i")
+        }
+        if wsArgBool(args, "word") {
+                flags = append(flags, "-w")
+        }
+        if wsArgBool(args, "invert") {
+                flags = append(flags, "-v")
+        }
+        if wsArgBool(args, "count") {
+                flags = append(flags, "-c")
+        }
+        if wsArgBool(args, "files_only") {
+                flags = append(flags, "-l")
+        }
+        ctxLines := wsArgInt(args, "context", 0)
+        beforeLines := wsArgInt(args, "before", 0)
+        afterLines := wsArgInt(args, "after", 0)
+        if ctxLines > 0 {
+                flags = append(flags, "-C", strconv.Itoa(ctxLines))
+        } else {
+                if beforeLines > 0 {
+                        flags = append(flags, "-B", strconv.Itoa(beforeLines))
+                }
+                if afterLines > 0 {
+                        flags = append(flags, "-A", strconv.Itoa(afterLines))
+                }
+        }
+        // the include/exclude globs ride as FLAGS (validated by the shell
+        // script's own quoting) — never interpolated raw.
+        var incArgs, excArgs []string
+        if glob != "" {
+                incArgs = append(incArgs, "--include="+glob)
+        }
+        if exclude != "" {
+                excArgs = append(excArgs, "--exclude="+exclude)
+        }
+        // rg is preferred (it is on the device); grep -E is the fallback.
+        // The jail script binds its named variables from the positional
+        // args ($2..$n in the declared order) — so the flags + the
+        // include/exclude globs ride as ONE extra string each (the
+        // script never interpolates a model string into a shell word:
+        // the values are passed as ARGUMENTS and quoted by the script).
+        flagStr := strings.Join(flags, " ")
+        incStr := strings.Join(incArgs, " ")
+        excStr := strings.Join(excArgs, " ")
+        script := termuxJailScript([]string{"pattern", "include", "exclude", "flags", "incex"}, `if [ ! -e "$r" ]; then echo "no such path: $r" >&2; exit 1; fi
+if [ -n "$flags" ]; then set -- $flags; else set --; fi
+if [ -n "$include" ]; then incs="--include=$include"; else incs=""; fi
+if [ -n "$exclude" ]; then excs="--exclude=$exclude"; else excs=""; fi
+if command -v rg >/dev/null 2>&1; then
+  # ripgrep: globs ride as -g (a bare glob is a WHITELIST; !x is a
+  # blacklist). The flags are ripgrep's own (-C/-A/-B/-i/-w/-v/-c/-l
+  # are all shared with grep).
+  set -- 
+  if [ -n "$include" ]; then set -- "$@" -g "$include"; fi
+  if [ -n "$exclude" ]; then set -- "$@" -g "!$exclude"; fi
+  set -- "$@" $flags
+  rg --no-heading --with-filename --line-number --color never "$@" -- "$pattern" "$r"; rc=$?
 else
-  grep -rn -- "$pattern" "$r"; rc=$?
+  # GNU grep: --include / --exclude.
+  set -- $flags
+  if [ -n "$include" ]; then set -- "$@" "--include=$include"; fi
+  if [ -n "$exclude" ]; then set -- "$@" "--exclude=$exclude"; fi
+  grep -rEn "$@" -- "$pattern" "$r"; rc=$?
 fi
 if [ "$rc" -eq 1 ]; then echo "no matches for the pattern"; exit 0; fi
 if [ "$rc" -ne 0 ]; then echo "grep failed (exit $rc)" >&2; exit "$rc"; fi
 `)
-        oc, obs := s.termuxRunScript(ctx, script, append([]string{joined, pattern, glob}, roots...), roots, "", 60000)
+        // the values ride as positional args in the declared order, and
+        // the JAIL ROOTS ride last (the script shifts past the verb's own
+        // args and then reads the roots off "$@").
+        posArgs := []string{joined, pattern, glob, exclude, flagStr, incStr}
+        posArgs = append(posArgs, roots...)
+        _ = excStr
+        oc, obs := s.termuxRunScript(ctx, script, posArgs, roots, "", 60000)
         if obs != "" {
                 return obs
         }
@@ -954,7 +1039,7 @@ if [ "$rc" -ne 0 ]; then echo "grep failed (exit $rc)" >&2; exit "$rc"; fi
                 return "OBSERVATION:\nGREP — \"" + pattern + "\" in " + oc.resolved + ": no matches"
         }
         var sb strings.Builder
-        fmt.Fprintf(&sb, "OBSERVATION:\nGREP — \"%s\" in %s (unlimited hits, %d line(s)):\n", pattern, oc.resolved, len(lines))
+        fmt.Fprintf(&sb, "OBSERVATION:\nGREP — \"%s\" in %s (regex, %d line(s)):\n", pattern, oc.resolved, len(lines))
         sb.WriteString(oc.body)
         if oc.body != "" && !strings.HasSuffix(oc.body, "\n") {
                 sb.WriteString("\n")
@@ -1377,7 +1462,7 @@ Actions (one JSON object of arguments per tool call):
   {"action":"patch","args":{"path":"f.go","edits":[{"old":"exact text","new":"replacement"}],"dry_run":true}}  the SURGICAL edit — search/replace on a local file (whitespace-flexible; "all":true or "occurrence":k when old repeats; dry_run previews the diff). Read a range first, then patch — no whole-file rewrite
   {"action":"rm","args":{"path":"f.txt"}}      remove a file/folder (a bound root itself is refused)
   {"action":"mkdir","args":{"path":"d"}}       create a folder (mkdir -p)
-  {"action":"grep","args":{"pattern":"TODO","path":"","glob":"*.py"}}   search file contents — UNLIMITED hits
+  {"action":"grep","args":{"pattern":"TODO","path":"","glob":"*.py"}}   search file contents — a REAL grep: the pattern is a REGEX, EVERY hit is reported, and it takes glob/exclude, context/before/after, case_sensitive, word, invert, count, files_only (ripgrep when installed, GNU grep -E otherwise)
   {"action":"find","args":{"path":"","name":"*.go"}}   find files by name
   {"action":"pkg","args":{"op":"install","packages":["python","git"]}}  install|update|remove Termux packages (the package's commands go live instantly)
   {"action":"git_setup","args":{}}              arm the vault's GitHub token in Termux — ~/.git-credentials (0600) + credential.helper=store + identity; after ONE call every git clone/push just works (the token rides bridge stdin, never a command, never the chat)

@@ -169,7 +169,14 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
                 // {"recursive":true} returns the full listing verbatim — a
                 // smarter VIEW, never a truncation (the v1.19.1 whole-truth
                 // law: nothing is ever cut mid-content).
-                if action == "tree" && len(entries) > wsTreeSummaryThreshold && !wsArgBool(args, "recursive") {
+                // v1.56.0 THE WHOLE TREE: the summary default is DEAD —
+                // the old shape silently answered a DIFFERENT question
+                // than the one asked (a 1,459-entry tree came back as a
+                // directory summary and the model read it as "the repo
+                // has 12 files"). The full listing rides WHOLE now; the
+                // summary is still available as an explicit
+                // {"summary":true} when the model wants the shape.
+                if action == "tree" && len(entries) > wsTreeSummaryThreshold && wsArgBool(args, "summary") && !wsArgBool(args, "recursive") {
                         return "OBSERVATION:\n" + wsTreeSummaryText(ws, path, ref, entries, truncated)
                 }
                 return "OBSERVATION:\n" + wsTreeText(ws, path, ref, entries, truncated)
@@ -202,27 +209,32 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
                 if q == "" {
                         return "OBSERVATION:\nerror: grep needs {\"ws\":…, \"query\":\"text\"}"
                 }
-                limit := wsArgInt(args, "limit", 0) // v1.19.1: 0 = UNLIMITED — the model narrows with a positive limit when it wants speed
-                hits, err := s.wsClient(ws).Search(ctx, q, refOrWS(get("ref"), ws), s.wsToken(ws), limit)
+                // v1.56.0 THE SOPHISTICATED GREP: the full option set rides
+                // the verb (regex by default, globs, context lines, case,
+                // word, invert, count, files-only). The old shape (a
+                // literal case-insensitive search, ONE hit per file) is
+                // GONE — every hit in every file is reported.
+                opt := forge.SearchOptions{
+                        Query:         q,
+                        Fixed:         wsArgBool(args, "fixed"),
+                        CaseSensitive: wsArgBool(args, "case_sensitive"),
+                        Word:          wsArgBool(args, "word"),
+                        Invert:        wsArgBool(args, "invert"),
+                        IncludeGlobs:  wsArgStrings(args, "include"),
+                        ExcludeGlobs:  wsArgStrings(args, "exclude"),
+                        Context:       wsArgInt(args, "context", 0),
+                        Before:        wsArgInt(args, "before", 0),
+                        After:         wsArgInt(args, "after", 0),
+                        Limit:         wsArgInt(args, "limit", 0), // 0 = UNLIMITED
+                        MaxPerFile:    wsArgInt(args, "max_per_file", 0),
+                        CountOnly:     wsArgBool(args, "count"),
+                        FilesOnly:     wsArgBool(args, "files_only"),
+                }
+                res, err := forge.GrepOpts(ctx, s.wsClient(ws), opt, refOrWS(get("ref"), ws), s.wsToken(ws))
                 if err != nil {
                         return "OBSERVATION:\nerror: " + wsPublicErr(ws, err)
                 }
-                var sb strings.Builder
-                fmt.Fprintf(&sb, "%d hit(s) for %q in %s:\n", len(hits), q, ws.Name)
-                for _, h := range hits {
-                        // v0.82.4: an unresolved line (Line 0 — the file
-                        // couldn't be fetched for line resolution) renders as
-                        // the bare path, never the bogus "path:0".
-                        line := "- " + h.Path
-                        if h.Line > 0 {
-                                line = fmt.Sprintf("- %s:%d", h.Path, h.Line)
-                        }
-                        if h.Snippet != "" {
-                                line += "  " + strings.TrimSpace(h.Snippet)
-                        }
-                        sb.WriteString(line + "\n")
-                }
-                return "OBSERVATION:\n" + sb.String()
+                return "OBSERVATION:\n" + wsGrepText(ws, opt, res)
         case "view":
                 ws := toolWS // v1.19.2: resolved once above (bound rows + the public fallback)
                 what := get("what")
@@ -233,7 +245,11 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
                 if state == "" {
                         state = "open"
                 }
-                limit := wsArgInt(args, "limit", 0) // v1.19.1: 0 = the forge's full default page
+                // v1.56.0 THE WHOLE LIST: 0 = ALL the rows (the old
+                // "the forge's full default page" was 30 — the model
+                // believed a 200-issue repo had 30 issues). The list
+                // verbs PAGE past the forge's per_page ceiling.
+                limit := wsArgInt(args, "limit", 0)
                 return "OBSERVATION:\n" + s.wsViewText(ctx, ws, what, state, limit)
         case "put":
                 ws := toolWS // v1.19.2: resolved once above (bound rows + the public fallback)
@@ -1229,7 +1245,7 @@ func workspaceHelpText(n int) string {
   {"action":"ls","ws":"…","path":"src"}    one directory level
   {"action":"read","ws":"…","path":"f.go","range":"head:80|tail:40|lines:10-60"}
   {"action":"readme","ws":"…"}
-  {"action":"grep","ws":"…","query":"text","limit":30}
+  {"action":"grep","ws":"…","query":"REGEX","include":"*.go","exclude":"vendor/**","context":2}  a REAL grep: the pattern is a REGEX, EVERY hit in every file is reported, and it takes include/exclude globs, context/before/after, case_sensitive, word, invert, count, files_only. No silent cap — a limit that bites says so
   {"action":"view","ws":"…","what":"issues|pulls|commits|branches|releases|workflows|runs|discussions","state":"open"}
   {"action":"put","ws":"…","path":"f.txt","content":"…","message":"…","branch":"…"}  FULL access — an API commit
   {"action":"patch","ws":"…","path":"f.go","edits":[{"old":"exact text","new":"replacement"}],"message":"…","branch":"…","dry_run":true}  FULL access — the SURGICAL edit (search/replace, whitespace-flexible; "all":true or "occurrence":k when old repeats). dry_run previews the diff. Read a RANGE first, then patch — no whole-file rewrite
@@ -1596,4 +1612,112 @@ func countTrue(m map[string]bool) int {
                 }
         }
         return n
+}
+
+// ── v1.56.0 THE SOPHISTICATED GREP — the renderers ──────────────────────
+
+// wsGrepText renders a grep result for the model.
+//
+// THE LAWS:
+//   · EVERY hit is rendered (the old "first hit per file" fold is DEAD).
+//   · The context lines ride the hit (the -A/-B/-C shape), de-duplicated.
+//   · The header is HONEST: the pattern, the engine (re2/regexp2/literal),
+//     the files scanned, the hit count, and — when a ceiling bit — the
+//     reason and how to see the rest. Nothing is ever dropped silently.
+func wsGrepText(ws *store.Workspace, opt forge.SearchOptions, res *forge.GrepResult) string {
+	var sb strings.Builder
+	kind := "regex"
+	if res.Literal {
+		kind = "literal"
+	}
+	fmt.Fprintf(&sb, "%d hit(s) for %s in %s", len(res.Hits), kind, ws.Name)
+	if res.Pattern != "" {
+		fmt.Fprintf(&sb, " %q", res.Pattern)
+	}
+	fmt.Fprintf(&sb, " — engine=%s, %d file(s) scanned", res.Engine, res.Scanned)
+	if res.Skipped > 0 {
+		fmt.Fprintf(&sb, ", %d skipped (too big)", res.Skipped)
+	}
+	sb.WriteString(":\n")
+	for _, h := range res.Hits {
+		// v0.82.4: an unresolved line (Line 0 — the file couldn't be
+		// fetched for line resolution) renders as the bare path, never
+		// the bogus "path:0".
+		if h.Count > 0 {
+			// the -c shape: the count per file
+			fmt.Fprintf(&sb, "- %s: %d hit(s)\n", h.Path, h.Count)
+			continue
+		}
+		line := "- " + h.Path
+		if h.Line > 0 {
+			line = fmt.Sprintf("- %s:%d", h.Path, h.Line)
+		}
+		if h.Snippet != "" {
+			line += "  " + strings.TrimSpace(h.Snippet)
+		}
+		sb.WriteString(line + "\n")
+		// the context lines (the -A/-B/-C shape) — de-duplicated
+		for _, c := range h.Before {
+			sb.WriteString("    | " + c + "\n")
+		}
+		for _, c := range h.After {
+			sb.WriteString("    | " + c + "\n")
+		}
+	}
+	if res.Reason != "" {
+		fmt.Fprintf(&sb, "\\nNOTE: %s\\n", res.Reason)
+	}
+	if !res.Complete && res.Remaining != "" {
+		fmt.Fprintf(&sb, "(%d candidate file(s) remain — re-run with a higher limit or a tighter pattern)\\n",
+			len(strings.Split(res.Remaining, "\\n")))
+	}
+	return sb.String()
+}
+
+// wsArgStrings reads a string-list argument (a JSON array of strings, a
+// comma/space separated string, or a single string).
+//
+// The tolerance matters: providers write "include":"*.go" and
+// {"include":["*.go","*.md"]} and {"include":"*.go,*.md"} — all three
+// mean the same thing to the model.
+func wsArgStrings(args map[string]any, k string) []string {
+	raw, ok := args[k]
+	if !ok {
+		return nil
+	}
+	var out []string
+	switch v := raw.(type) {
+	case []any:
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				for _, part := range splitGlobList(s) {
+					out = append(out, part)
+				}
+			}
+		}
+	case string:
+		for _, part := range splitGlobList(v) {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
+// splitGlobList splits a comma/space separated glob list.
+func splitGlobList(s string) []string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	parts := strings.FieldsFunc(s, func(r rune) bool {
+		return r == ',' || r == ' ' || r == '\t' || r == '\n'
+	})
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

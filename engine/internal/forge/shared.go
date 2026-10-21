@@ -9,6 +9,13 @@ import (
 )
 
 // clampLimit bounds a per_page (models/users may pass 0 or 5000).
+//
+// v1.56.0 THE WHOLE LIST: a limit of 0 now means "ALL" — the old shape
+// silently substituted a default (30 issues, 20 releases, 50 repos) and
+// the model believed the repo had only that many. The forge's own
+// per_page ceiling (100) still applies to a SINGLE request; the LIST
+// verbs PAGE past it (github.go's ghPage) so the total is the whole
+// truth. A positive limit stays a narrowing hint — the caller's ceiling.
 func clampLimit(n, def int) int {
 	if n <= 0 {
 		return def
@@ -18,6 +25,10 @@ func clampLimit(n, def int) int {
 	}
 	return n
 }
+
+// listLimit is the per-request page size for the list verbs (the forge's
+// own ceiling) — the pagination walks the pages.
+const listLimit = 100
 
 // clip trims a string to n chars (list bodies stay readable).
 func clip(s string, n int) string {
