@@ -177,6 +177,7 @@ func TestV1491CommandShapes(t *testing.T) {
 	}
 	spawn := tmCmdSpawn(41234)
 	for _, must := range []string{
+		`cd "$HOME/.doomalay/opencode-serve" &&`, // THE RAW-WORKDIR LAW: the bridge passes workdir unexpanded — the command cd's itself
 		`termux-wake-lock`,
 		`. $HOME/.doomalay/opencode-serve/key.env`,
 		`nohup $HOME/.doomalay/opencode/opencode serve --port 41234 --hostname 127.0.0.1 > $HOME/.doomalay/opencode-serve/serve.log 2>&1 &`,

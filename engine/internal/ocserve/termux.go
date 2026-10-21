@@ -183,14 +183,18 @@ func tmCmdPortProbe() string {
 	return fmt.Sprintf("cat %s 2>/dev/null || true", tmPortFile)
 }
 
-// tmCmdSpawn: the wake-lock (Termux must outlive the Android phantom
-// killer while serving), the key rides key.env (NEVER the command line —
-// ps-safe, the RunWithStdin zero-escaping law wrote it 0600), nohup +
-// `&` detach the serve from the jailed session (the wrapper `exec`s
-// opencode.bin, so the captured $! stays the serve's real pid), and the
-// pid + port land in their files for reuse/kill.
+// tmCmdSpawn: the workdir stays EMPTY (the Kotlin bridge passes a RAW
+// workdir to Termux — a $HOME-prefixed string would land as a literal,
+// nonexistent dir; workdir "" defaults to the Termux home on the bridge
+// side), so the command cd's itself (bash expands $HOME in the COMMAND).
+// The wake-lock (Termux must outlive the Android phantom killer while
+// serving), the key rides key.env (NEVER the command line — ps-safe, the
+// RunWithStdin zero-escaping law wrote it 0600), nohup + `&` detach the
+// serve from the jailed session (the wrapper `exec`s opencode.bin, so
+// the captured $! stays the serve's real pid), and the pid + port land
+// in their files for reuse/kill.
 func tmCmdSpawn(port int) string {
-	return fmt.Sprintf("termux-wake-lock 2>/dev/null; . %s; ", tmKeyEnv) +
+	return fmt.Sprintf("cd \"%s\" && termux-wake-lock 2>/dev/null; . %s; ", tmServeDir, tmKeyEnv) +
 		fmt.Sprintf("nohup %s/opencode serve --port %d --hostname 127.0.0.1 > %s 2>&1 & ", tmBinDir, port, tmServeLog) +
 		fmt.Sprintf("echo $! > %s; echo %d > %s; echo __dm_spawned__", tmServePid, port, tmPortFile)
 }
@@ -337,7 +341,7 @@ func (p *termuxProvisioner) Launch(ctx context.Context, port int) (int, error) {
 	}
 	// stale (or none): kill the recorded pid so a fresh spawn never stacks
 	_, _ = p.run(ctx, tmCmdKill(), "", 15_000, "")
-	if _, err := p.run(ctx, tmCmdSpawn(port), tmServeDir, 30_000, ""); err != nil {
+	if _, err := p.run(ctx, tmCmdSpawn(port), "", 30_000, ""); err != nil {
 		// the honest detail: serve.log's tail says why it wouldn't start
 		if res, lerr := p.run(ctx, tmCmdServeLogTail(), "", 15_000, ""); lerr == nil && res != nil && strings.TrimSpace(res.Stdout) != "" {
 			return 0, fmt.Errorf("pocket bridge: spawn failed: %v — serve.log: %s", err, tmTail(res.Stdout))
