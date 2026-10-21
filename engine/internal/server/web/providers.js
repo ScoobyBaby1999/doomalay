@@ -43,6 +43,11 @@
   var GOLD = 'var(--accent-3)';
   var FREEC = 'var(--accent-2)';
   var EASE = 'cubic-bezier(0.32, 0.72, 0, 1)';
+  // v1.49.2 THE OPEN HANDSHAKE: the pocket bridge's latest state ladder —
+  // a module-level mirror open()'s fetch updates (reasonHTML lives at
+  // module scope and names the phone's own path from it; null = not
+  // fetched yet = the honest neutral copy).
+  var ocBridgeLatest = null;
 
   function open(onPick, opts) {
     opts = opts || {};
@@ -85,6 +90,47 @@
         pmPin = p;
         if (opened) render(); // never open the panel early on this fetch
       }).catch(function () {});
+    // v1.49.2 THE OPEN HANDSHAKE: the pocket bridge's honest state ladder
+    // (the opencode card renders on it; best-effort — a slow/failed fetch
+    // never blocks the panel). The install driver + the live poll live
+    // here too: the ONE-TAP gate (the engine drives Termux through the
+    // jailed exec — the user types nothing after the bootstrap).
+    var ocBridge = null;
+    var ocBridgePoll = null;
+    function fetchOcBridge(then) {
+      withTimeout(fetch('/api/opencode/bridge').then(function (r) { return r.json(); }), 4000, null)
+        .then(function (b) {
+          if (b) { ocBridge = b; ocBridgeLatest = b; if (then) then(); }
+        }).catch(function () {});
+    }
+    function ocBridgeInstall() {
+      fetch('/api/opencode/bridge/install', { method: 'POST' })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          if (d && d.state) {
+            ocBridge = Object.assign({}, ocBridge || {}, d);
+            render();
+            if (d.state === 'installing') ocBridgeStartPoll();
+          }
+        }).catch(function () {});
+    }
+    function ocBridgeStartPoll() {
+      if (ocBridgePoll) return;
+      ocBridgePoll = setInterval(function () {
+        if (!opened) { clearInterval(ocBridgePoll); ocBridgePoll = null; return; }
+        fetchOcBridge(function () {
+          render();
+          if (ocBridge && ocBridge.state !== 'installing') {
+            clearInterval(ocBridgePoll); ocBridgePoll = null;
+          }
+        });
+      }, 2000);
+    }
+    fetchOcBridge(function () {
+      if (!opened) return;
+      render();
+      if (ocBridge && ocBridge.state === 'installing') ocBridgeStartPoll();
+    });
     var gotLive = false;
     var isPartial = false;
     // v0.35: keysP gets a timeout too — a wedged /api/keys request used to
@@ -328,6 +374,40 @@
             '</div>';
         }
       }
+      // v1.49.2 THE OPEN HANDSHAKE: the opencode card's pocket-bridge
+      // block — the honest state ladder renders inline (theme tokens
+      // only; the two-surface law: it lives in THIS card, no new
+      // surfaces). The Termux gate steps hand off to the existing
+      // window.TermuxSetup flow (the full-screen ladder overlay owns the
+      // one-liner + copy + F-Droid + live progress — never duplicated
+      // here).
+      var bridgeHTML = '';
+      if (name === 'opencode' && ocBridge) {
+        var bs = String(ocBridge.state || '');
+        var bBox = function (inner) {
+          return '<div style="margin-top:8px;font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-2);line-height:1.5;background:rgba(var(--accent-rgb),0.06);border:1px solid rgba(var(--accent-rgb),0.22);border-radius:8px;padding:8px 10px;overflow-wrap:anywhere">' + inner + '</div>';
+        };
+        var bBtn = 'font-size: calc(var(--ui-small-fs) - 1px);color:var(--accent);background:rgba(var(--accent-rgb),0.12);border:1px solid rgba(var(--accent-rgb),0.4);padding:6px 10px;border-radius:8px;cursor:pointer;font-family:inherit;font-weight:600;margin-top:6px';
+        if (bs === 'desktop') {
+          bridgeHTML = bBox('✓ <b>Desktop</b> — the free models run automatically through the built-in OpenCode bridge when you pick one.');
+        } else if (bs === 'up') {
+          bridgeHTML = bBox('<span style="color:var(--accent-2);font-weight:600">✓ Pocket bridge live</span> — the free OpenCode models work through Termux' + (ocBridge.port ? ' (port ' + ocBridge.port + ')' : '') + '.');
+        } else if (bs === 'installing') {
+          bridgeHTML = bBox('⟳ <b>Installing the native OpenCode client</b> (one-time ' + (ocBridge.size_hint || '~52MB') + ' download through Termux)… this box updates itself live.');
+          ocBridgeStartPoll();
+        } else if (bs === 'install_failed') {
+          bridgeHTML = bBox('✕ Install failed — ' + escHTMLInline(ocBridge.last_error || 'see the engine log') + '<br><button data-oc-install="1" style="' + bBtn + '">retry install</button>');
+        } else if (bs === 'ready') {
+          bridgeHTML = bBox('<b>Free models on this phone</b> — one tap installs the native OpenCode client through Termux (one-time ' + (ocBridge.size_hint || '~52MB') + ') and starts it.<br><button data-oc-install="1" style="' + bBtn + '">Install OpenCode</button>');
+        } else if (bs === 'termux_missing' || bs === 'not_bootstrapped') {
+          bridgeHTML = bBox('<b>Free models need Termux</b> (one-time setup): ' + (bs === 'termux_missing' ? 'install Termux from F-Droid, ' : '') + 'paste the one setup line in it, come back and tap Install.<br><button data-oc-termux="1" style="' + bBtn + '">open the Termux setup</button>');
+        } else if (bs === 'walled') {
+          bridgeHTML = bBox('◦ Paste your OpenCode key above first — the free models need it.');
+        } else if (bs === 'unconfigured') {
+          bridgeHTML = bBox('◦ ' + escHTMLInline(ocBridge.detail || 'The Termux bridge is not configured on this engine.'));
+        }
+      }
+
       // Cloudflare also needs an Account ID (stored as its own vault entry).
       var needAccount = !!cfg.extra_env_var;
 
@@ -364,6 +444,7 @@
         '</div>' +
         valReasonBlock +
         pinHTML +
+        bridgeHTML +
         // Key input (disabled once a key is saved — paste new to replace).
         // v0.56: inputs paint SURFACE RAISED (the old --bg-app fill made
         // them the same color as the overlay panel behind — the 2-level
@@ -440,6 +521,23 @@
         });
       });
 
+      // v1.49.2 THE OPEN HANDSHAKE: the pocket bridge's two buttons —
+      // the one-tap engine-led install + the hand-off to the existing
+      // Termux setup flow (never duplicated here).
+      contentEl.querySelectorAll('[data-oc-install]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          btn.disabled = true;
+          btn.textContent = 'installing…';
+          ocBridgeInstall();
+        });
+      });
+      contentEl.querySelectorAll('[data-oc-termux]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          if (window.TermuxSetup && window.TermuxSetup.open) {
+            try { window.TermuxSetup.open(); } catch (e) { /* best-effort */ }
+          }
+        });
+      });
       // v1.44.2 THE PIN / v1.45.4 THE QUIET ORACLE: re-verify clears the
       // engine's PM pin and asks the oracle to RUN AGAIN NOW (the ONLY
       // wasm trigger — the explicit button; the connect-time auto-nudge
@@ -708,13 +806,19 @@
     // v0.35: OpenCode FreeTierError — the key is VALID; free models are just
     // walled to the OpenCode app (live-verified 2026-09). Say it plainly and
     // point at the fix (credits unlock the paid models from Doomalay).
-    // v1.48.5: the wall is below-HTTP — but the DESKTOP engine now runs the
-    // free models through the built-in OpenCode bridge (the genuine client);
-    // this copy is what shows where the bridge cannot run (Android etc.).
+    // v1.48.5: the wall is below-HTTP — but the DESKTOP engine runs the
+    // free models through the built-in OpenCode bridge (the genuine client).
+    // v1.49.2: on ANDROID the POCKET BRIDGE is the phone's own genuine
+    // client (the Install button in the opencode card below drives Termux);
+    // the copy names whichever path THIS device has.
     if (/freetier|free tier can only be used/i.test(r)) {
+      var ocPathHint = (ocBridgeLatest && ocBridgeLatest.state !== 'desktop')
+        ? 'On this phone the free models run through the <b>pocket bridge</b> — the <b>Install OpenCode</b> button in the card below drives Termux for you; '
+        : 'On the <b>desktop engine</b> the free models run through the built-in <b>OpenCode bridge</b>; ';
       return '<span style="display:block;font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-2);line-height:1.45;white-space:normal;overflow-wrap:anywhere;margin-top:3px;padding:6px 8px;background:rgba(var(--notice-rgb,var(--warn-rgb)),0.10);border:1px solid rgba(var(--notice-rgb,var(--warn-rgb)),0.3);border-radius:8px">' +
         '✓ Your key works — OpenCode reserves its <b>free models for its own client</b>. ' +
-        'On the <b>desktop engine</b> the free models run through the built-in <b>OpenCode bridge</b>; here, add credits at <b>opencode.ai/zen</b> for the paid models, or use NVIDIA / PrivateMode (both have free models that work right now).</span>';
+        ocPathHint +
+        'meanwhile add credits at <b>opencode.ai/zen</b> for the paid models, or use NVIDIA / PrivateMode (both have free models that work right now).</span>';
     }
     return '<span style="display:block;font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-2);line-height:1.45;white-space:normal;overflow-wrap:anywhere;margin-top:3px">' + escHTMLInline(r) + '</span>';
   }

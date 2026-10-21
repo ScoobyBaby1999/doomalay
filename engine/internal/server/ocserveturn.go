@@ -157,6 +157,26 @@ func (s *Server) ocServeOpeningText(sess *store.Session, userText string) string
 // the caller falls through to the normal direct path (whose 403 answers
 // with the honest walled-tier message).
 func (s *Server) runOcServeTurn(ctx context.Context, pipe *chatPipe, sessionID string, sess *store.Session, userText string, terminal *bool) bool {
+        // v1.49.2 THE OPEN HANDSHAKE: an in-flight install never blocks the
+        // turn on the manager mutex (a 52MB download is minutes on mobile) and
+        // never silently degrades to the walled 403 — the turn answers the
+        // honest in-progress terminal so the user knows exactly what's
+        // happening.
+        if running, _ := s.ocBridgeState(); running {
+                events := make(chan map[string]any, 8)
+                errs := make(chan error, 2)
+                go func() {
+                        defer close(events)
+                        defer close(errs)
+                        events <- map[string]any{"type": "progress", "session_id": sessionID,
+                                "message": "Setting up the OpenCode pocket bridge (one-time install through Termux)…"}
+                        events <- map[string]any{"type": "error", "session_id": sessionID,
+                                "error": "oc_bridge_installing", "message": "The OpenCode pocket bridge is still installing (one-time ~" + ocserve.AndroidZipSizeHint() + " download through Termux) — try again in a moment; the OpenCode provider card shows the live progress"}
+                        events <- map[string]any{"type": "status", "session_id": sessionID, "state": "error", "usage": nil}
+                }()
+                s.forwardEvents(ctx, pipe, sessionID, sess, userText, s.synthesizeRounds(sessionID, events), errs, terminal)
+                return true
+        }
         m := s.ocServeManager(ctx)
         if m == nil {
                 return false
