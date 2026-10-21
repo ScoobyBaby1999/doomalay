@@ -708,10 +708,13 @@
     // v0.35: OpenCode FreeTierError — the key is VALID; free models are just
     // walled to the OpenCode app (live-verified 2026-09). Say it plainly and
     // point at the fix (credits unlock the paid models from Doomalay).
+    // v1.48.5: the wall is below-HTTP — but the DESKTOP engine now runs the
+    // free models through the built-in OpenCode bridge (the genuine client);
+    // this copy is what shows where the bridge cannot run (Android etc.).
     if (/freetier|free tier can only be used/i.test(r)) {
       return '<span style="display:block;font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-2);line-height:1.45;white-space:normal;overflow-wrap:anywhere;margin-top:3px;padding:6px 8px;background:rgba(var(--notice-rgb,var(--warn-rgb)),0.10);border:1px solid rgba(var(--notice-rgb,var(--warn-rgb)),0.3);border-radius:8px">' +
-        '✓ Your key works — OpenCode reserves its <b>free models for the OpenCode app itself</b>. ' +
-        'Add credits at <b>opencode.ai/zen</b> to use the paid models here, or use NVIDIA / PrivateMode (both have free models that work right now).</span>';
+        '✓ Your key works — OpenCode reserves its <b>free models for its own client</b>. ' +
+        'On the <b>desktop engine</b> the free models run through the built-in <b>OpenCode bridge</b>; here, add credits at <b>opencode.ai/zen</b> for the paid models, or use NVIDIA / PrivateMode (both have free models that work right now).</span>';
     }
     return '<span style="display:block;font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-2);line-height:1.45;white-space:normal;overflow-wrap:anywhere;margin-top:3px">' + escHTMLInline(r) + '</span>';
   }

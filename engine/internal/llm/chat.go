@@ -14,164 +14,164 @@
 package llm
 
 import (
-        "bufio"
-        "bytes"
-        "context"
-        "encoding/json"
-        "errors"
-        "fmt"
-        "io"
-        "log"
-        "math/rand"
-        "net/http"
-        "os"
-        "regexp"
-        "strconv"
-        "strings"
-        "sync"
-        "sync/atomic"
-        "time"
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log"
+	"math/rand"
+	"net/http"
+	"os"
+	"regexp"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 
-        "github.com/ScoobyBaby1999/doomalay/engine/internal/mcpbus"
-        "github.com/ScoobyBaby1999/doomalay/engine/internal/obs"
+	"github.com/ScoobyBaby1999/doomalay/engine/internal/mcpbus"
+	"github.com/ScoobyBaby1999/doomalay/engine/internal/obs"
 )
 
 // ChatRequest is the input to a direct LLM call.
 type ChatRequest struct {
-        Model        string    `json:"model"`
-        Provider     string    `json:"-"` // provider id (effort + search dispatch)
-        Messages     []Message `json:"-"`
-        SystemPrompt string    `json:"-"`
-        Effort       string    `json:"-"`
-        WebSearch    bool      `json:"-"`
-        DeepResearch bool      `json:"-"`
-        TavilyKey    string    `json:"-"`
-        APIKey       string    `json:"-"`
-        BaseURL      string    `json:"-"`
-        AuthStyle    string    `json:"-"` // "" (bearer) or "anthropic"
-        // v1.13.2 THE BUS: the chat session id (observer trace
-        // attribution — every mcpbus event carries it) and the honest
-        // tools-off degrade flag (providers that 400 tools).
-        SessionID     string `json:"-"`
-        ToolsDisabled bool   `json:"-"`
-        // v0.21: SWARM FANOUT DELEGATE (the HF space's panel delegate, ported).
-        // Set by the server (it owns the vault); the ReAct loop exposes it to
-        // the model as the `delegate` ACTION — one prompt, up to 3 other
-        // models answer in parallel, replies return as the OBSERVATION.
-        DelegateFn func(ctx context.Context, prompt string, models []string) []map[string]any `json:"-"`
-        // v0.22: FILE TOOLS SINK — docx_create/xlsx_create/zip_create save the
-        // binaries they build here (the session's artifact drawer). Set by the
-        // server; nil = file tools still run but don't persist.
-        ArtifactSink ArtifactSink `json:"-"`
-        // v0.28: PERSONA TOOLS — the bot's hands for its own personality
-        // (persona_list/persona_set/persona_activate/placeholder_set). Set by
-        // the server (it owns the session store); nil = the tools report
-        // "need a session" instead of running.
-        PersonaToolFn func(ctx context.Context, name, argJSON string) string `json:"-"`
+	Model        string    `json:"model"`
+	Provider     string    `json:"-"` // provider id (effort + search dispatch)
+	Messages     []Message `json:"-"`
+	SystemPrompt string    `json:"-"`
+	Effort       string    `json:"-"`
+	WebSearch    bool      `json:"-"`
+	DeepResearch bool      `json:"-"`
+	TavilyKey    string    `json:"-"`
+	APIKey       string    `json:"-"`
+	BaseURL      string    `json:"-"`
+	AuthStyle    string    `json:"-"` // "" (bearer) or "anthropic"
+	// v1.13.2 THE BUS: the chat session id (observer trace
+	// attribution — every mcpbus event carries it) and the honest
+	// tools-off degrade flag (providers that 400 tools).
+	SessionID     string `json:"-"`
+	ToolsDisabled bool   `json:"-"`
+	// v0.21: SWARM FANOUT DELEGATE (the HF space's panel delegate, ported).
+	// Set by the server (it owns the vault); the ReAct loop exposes it to
+	// the model as the `delegate` ACTION — one prompt, up to 3 other
+	// models answer in parallel, replies return as the OBSERVATION.
+	DelegateFn func(ctx context.Context, prompt string, models []string) []map[string]any `json:"-"`
+	// v0.22: FILE TOOLS SINK — docx_create/xlsx_create/zip_create save the
+	// binaries they build here (the session's artifact drawer). Set by the
+	// server; nil = file tools still run but don't persist.
+	ArtifactSink ArtifactSink `json:"-"`
+	// v0.28: PERSONA TOOLS — the bot's hands for its own personality
+	// (persona_list/persona_set/persona_activate/placeholder_set). Set by
+	// the server (it owns the session store); nil = the tools report
+	// "need a session" instead of running.
+	PersonaToolFn func(ctx context.Context, name, argJSON string) string `json:"-"`
 
-        // v0.67.2: HUBLIB — the public-hub library ACTION tool for the
-        // direct path (the quick chats). Set by the server (it owns the
-        // hub service + the per-chat Bot Library switch). The runner
-        // enforces the switch per action: browse/get always answer;
-        // download refuses with the exact switch path when OFF.
-        HublibToolFn func(ctx context.Context, argJSON string) string `json:"-"`
-        // v0.72: the skills hand on the direct path — bootstrap/list/
-        // search/load a downloaded skill's methodology (the PM bridge's
-        // /api/tools/skills twin, riding the quick chats).
-        SkillsToolFn func(ctx context.Context, argJSON string) string `json:"-"`
-        // v0.76.5: THE WORKSPACE HAND on the direct path — the chat's
-        // connected cloud repos (tree/read/grep/view/put/fork/pr/create/
-        // discover). Set by the server (it owns the workspace rows + the
-        // vault tokens); nil = the tool is not offered. WorkspaceManifest
-        // carries the CONNECTED CLOUD WORKSPACES block (repo rows) when
-        // any are bound — composeTurnSystem prepends it above the
-        // protocols, mirroring the brain's _build_system_prompt.
-        WorkspaceToolFn   func(ctx context.Context, argJSON string) string `json:"-"`
-        WorkspaceManifest string                                           `json:"-"`
-        // v1.20.3 THE ARM: the Termux hand on the direct path — the chat's
-        // bound device (termux) workspaces through the server's runner
-        // (exec + file verbs + pkg + background process sessions, HARD-jailed
-        // to the bound folders, full output with Termux's 100KB result cap
-        // honestly reported). Set by the server (it owns the session store +
-        // the bridge); nil = the tool is not offered. Armed only when the
-        // session holds the ⌨ Termux capability AND a device folder is bound.
-        TermuxToolFn func(ctx context.Context, argJSON string) string `json:"-"`
-        // v1.47.1 THE JOURNAL HAND: the personal journal on the direct
-        // path — the authentic dt_journal.py port (engine/internal/
-        // djournal) over the app-global diary (<DataDir>/journal/
-        // entries.jsonl). Set by the server; nil = the tool reports
-        // it needs a live session. Exports also sink into the session's
-        // artifact drawer via ArtifactSink (the docx/xlsx pattern).
-        DjournalToolFn func(ctx context.Context, argJSON string) string `json:"-"`
-        // v1.47.2 THE FLEET HAND: the other-chatbots roster/detail on
-        // the direct path — the server reads its own store (sessions,
-        // canvases, the live turn locks, the events tail). nil = the
-        // tool reports it needs a live session.
-        FleetToolFn func(ctx context.Context, argJSON string) string `json:"-"`
-        // v0.38 FALLBACK ROUTING: the full key map (set by the server at resolve
-        // time) lets a deprovisioned model rotate to another provider hosting
-        // the same logical model; FallbackTried caps it at one rotation/turn.
-        Keys          map[string]string `json:"-"`
-        FallbackTried bool              `json:"-"`
-        // v0.44 TEMPLATE PILL (user spec: "change the deep research pill
-        // entirely to a template pill"): when the composer has a method
-        // template active, TemplateID is its id and TemplateBrief the
-        // resolved methodology text (the frontend resolves it from the
-        // template library — no engine-side fetch on the turn path). The
-        // turn pipelines prepend it to the system prompt as a METHOD
-        // TEMPLATE block. Empty = no template.
-        TemplateID    string `json:"-"`
-        TemplateBrief string `json:"-"`
-        // v0.72: THE ATTACHED BUNDLE — when the user armed a whole bundle
-        // (the v0.71 use-bundle flow), BundleManifest carries the
-        // composed manifest block (members + the pick/load protocol);
-        // composeTurnSystem prepends it above everything. Mirrors the PM
-        // path's opts.bundle handling in vendor/pm/pmsdk.js.
-        BundleManifest string `json:"-"`
-        // v0.44 SELF-ENABLE (user spec: the model may reach for the template
-        // library itself): the brain's base URL so the template_list /
-        // template_show ACTION tools can browse /templates. "" (APK / brain
-        // down) → the tools degrade with an honest observation.
-        BrainURL string `json:"-"`
-        // v0.52 THE 3 PILLS (user item 6): per-chat auto-search toggles.
-        // TemplateAuto=true → the template ACTION tools are offered in the
-        // protocol AND executable; false → they are neither advertised nor
-        // run (the [template|+] pill's label press flips the session flag).
-        // SkillsAuto rides for the brain path (direct chats have no skills
-        // tooling — the flag persists for when the chat moves to a brain).
-        TemplateAuto bool `json:"-"`
-        SkillsAuto   bool `json:"-"`
+	// v0.67.2: HUBLIB — the public-hub library ACTION tool for the
+	// direct path (the quick chats). Set by the server (it owns the
+	// hub service + the per-chat Bot Library switch). The runner
+	// enforces the switch per action: browse/get always answer;
+	// download refuses with the exact switch path when OFF.
+	HublibToolFn func(ctx context.Context, argJSON string) string `json:"-"`
+	// v0.72: the skills hand on the direct path — bootstrap/list/
+	// search/load a downloaded skill's methodology (the PM bridge's
+	// /api/tools/skills twin, riding the quick chats).
+	SkillsToolFn func(ctx context.Context, argJSON string) string `json:"-"`
+	// v0.76.5: THE WORKSPACE HAND on the direct path — the chat's
+	// connected cloud repos (tree/read/grep/view/put/fork/pr/create/
+	// discover). Set by the server (it owns the workspace rows + the
+	// vault tokens); nil = the tool is not offered. WorkspaceManifest
+	// carries the CONNECTED CLOUD WORKSPACES block (repo rows) when
+	// any are bound — composeTurnSystem prepends it above the
+	// protocols, mirroring the brain's _build_system_prompt.
+	WorkspaceToolFn   func(ctx context.Context, argJSON string) string `json:"-"`
+	WorkspaceManifest string                                           `json:"-"`
+	// v1.20.3 THE ARM: the Termux hand on the direct path — the chat's
+	// bound device (termux) workspaces through the server's runner
+	// (exec + file verbs + pkg + background process sessions, HARD-jailed
+	// to the bound folders, full output with Termux's 100KB result cap
+	// honestly reported). Set by the server (it owns the session store +
+	// the bridge); nil = the tool is not offered. Armed only when the
+	// session holds the ⌨ Termux capability AND a device folder is bound.
+	TermuxToolFn func(ctx context.Context, argJSON string) string `json:"-"`
+	// v1.47.1 THE JOURNAL HAND: the personal journal on the direct
+	// path — the authentic dt_journal.py port (engine/internal/
+	// djournal) over the app-global diary (<DataDir>/journal/
+	// entries.jsonl). Set by the server; nil = the tool reports
+	// it needs a live session. Exports also sink into the session's
+	// artifact drawer via ArtifactSink (the docx/xlsx pattern).
+	DjournalToolFn func(ctx context.Context, argJSON string) string `json:"-"`
+	// v1.47.2 THE FLEET HAND: the other-chatbots roster/detail on
+	// the direct path — the server reads its own store (sessions,
+	// canvases, the live turn locks, the events tail). nil = the
+	// tool reports it needs a live session.
+	FleetToolFn func(ctx context.Context, argJSON string) string `json:"-"`
+	// v0.38 FALLBACK ROUTING: the full key map (set by the server at resolve
+	// time) lets a deprovisioned model rotate to another provider hosting
+	// the same logical model; FallbackTried caps it at one rotation/turn.
+	Keys          map[string]string `json:"-"`
+	FallbackTried bool              `json:"-"`
+	// v0.44 TEMPLATE PILL (user spec: "change the deep research pill
+	// entirely to a template pill"): when the composer has a method
+	// template active, TemplateID is its id and TemplateBrief the
+	// resolved methodology text (the frontend resolves it from the
+	// template library — no engine-side fetch on the turn path). The
+	// turn pipelines prepend it to the system prompt as a METHOD
+	// TEMPLATE block. Empty = no template.
+	TemplateID    string `json:"-"`
+	TemplateBrief string `json:"-"`
+	// v0.72: THE ATTACHED BUNDLE — when the user armed a whole bundle
+	// (the v0.71 use-bundle flow), BundleManifest carries the
+	// composed manifest block (members + the pick/load protocol);
+	// composeTurnSystem prepends it above everything. Mirrors the PM
+	// path's opts.bundle handling in vendor/pm/pmsdk.js.
+	BundleManifest string `json:"-"`
+	// v0.44 SELF-ENABLE (user spec: the model may reach for the template
+	// library itself): the brain's base URL so the template_list /
+	// template_show ACTION tools can browse /templates. "" (APK / brain
+	// down) → the tools degrade with an honest observation.
+	BrainURL string `json:"-"`
+	// v0.52 THE 3 PILLS (user item 6): per-chat auto-search toggles.
+	// TemplateAuto=true → the template ACTION tools are offered in the
+	// protocol AND executable; false → they are neither advertised nor
+	// run (the [template|+] pill's label press flips the session flag).
+	// SkillsAuto rides for the brain path (direct chats have no skills
+	// tooling — the flag persists for when the chat moves to a brain).
+	TemplateAuto bool `json:"-"`
+	SkillsAuto   bool `json:"-"`
 }
 
 // Message is one chat message.
 type Message struct {
-        Role    string `json:"role"`
-        Content string `json:"content"`
-        // v0.38 NATIVE TOOLS: assistant messages may carry structured
-        // tool_calls (JSON, OpenAI shape) and tool results reply with
-        // tool_call_id — both marshal onto the wire, both stay empty for
-        // every legacy path.
-        ToolCalls  json.RawMessage `json:"tool_calls,omitempty"`
-        ToolCallID string          `json:"tool_call_id,omitempty"`
-        Name       string          `json:"name,omitempty"`
-        // FoldedDone marks assistant messages assembled from assistant_delta
-        // fragments (pre-v0.13 sessions) so later deltas don't append to them.
-        FoldedDone bool `json:"-"`
+	Role    string `json:"role"`
+	Content string `json:"content"`
+	// v0.38 NATIVE TOOLS: assistant messages may carry structured
+	// tool_calls (JSON, OpenAI shape) and tool results reply with
+	// tool_call_id — both marshal onto the wire, both stay empty for
+	// every legacy path.
+	ToolCalls  json.RawMessage `json:"tool_calls,omitempty"`
+	ToolCallID string          `json:"tool_call_id,omitempty"`
+	Name       string          `json:"name,omitempty"`
+	// FoldedDone marks assistant messages assembled from assistant_delta
+	// fragments (pre-v0.13 sessions) so later deltas don't append to them.
+	FoldedDone bool `json:"-"`
 }
 
 // ChatChunk is one streamed event. Matches the brain's wire format.
 type ChatChunk struct {
-        Type     string         `json:"type"`
-        Text     string         `json:"text,omitempty"`
-        State    string         `json:"state,omitempty"`
-        Usage    *Usage         `json:"usage,omitempty"`
-        Error    string         `json:"error,omitempty"`
-        Message  string         `json:"message,omitempty"`
-        Name     string         `json:"name,omitempty"`     // tool name (tool_use)
-        Summary  string         `json:"summary,omitempty"`  // tool arg summary (tool_use — the collapsed pill's short label)
-        Args     string         `json:"args,omitempty"`     // v1.19.1: the RAW tool argument JSON, unclamped (the viewer's "query under the tool name")
-        Sources  []SearchResult `json:"sources,omitempty"`  // web sources (sources event)
-        Artifact map[string]any `json:"artifact,omitempty"` // v0.22: file tool result (name/id/size) — the UI renders a download card
+	Type     string         `json:"type"`
+	Text     string         `json:"text,omitempty"`
+	State    string         `json:"state,omitempty"`
+	Usage    *Usage         `json:"usage,omitempty"`
+	Error    string         `json:"error,omitempty"`
+	Message  string         `json:"message,omitempty"`
+	Name     string         `json:"name,omitempty"`     // tool name (tool_use)
+	Summary  string         `json:"summary,omitempty"`  // tool arg summary (tool_use — the collapsed pill's short label)
+	Args     string         `json:"args,omitempty"`     // v1.19.1: the RAW tool argument JSON, unclamped (the viewer's "query under the tool name")
+	Sources  []SearchResult `json:"sources,omitempty"`  // web sources (sources event)
+	Artifact map[string]any `json:"artifact,omitempty"` // v0.22: file tool result (name/id/size) — the UI renders a download card
 }
 
 // Usage is the token usage from the final chunk. v1.14.1 THE LEDGER:
@@ -184,243 +184,243 @@ type ChatChunk struct {
 // final; other OpenAI-compat hosts send the same OpenAI detail field).
 // 0 = the provider does not report it (never invented).
 type Usage struct {
-        InputTokens     int    `json:"input_tokens"`
-        OutputTokens    int    `json:"output_tokens"`
-        TotalTokens     int    `json:"total_tokens"`
-        ReasoningTokens int64  `json:"reasoning_tokens,omitempty"`
-        FinishReason    string `json:"finish_reason,omitempty"`
-        OutputCut       bool   `json:"output_cut,omitempty"`
+	InputTokens     int    `json:"input_tokens"`
+	OutputTokens    int    `json:"output_tokens"`
+	TotalTokens     int    `json:"total_tokens"`
+	ReasoningTokens int64  `json:"reasoning_tokens,omitempty"`
+	FinishReason    string `json:"finish_reason,omitempty"`
+	OutputCut       bool   `json:"output_cut,omitempty"`
 }
 
 // openAIChunk is the raw SSE chunk from an OpenAI-compatible provider.
 type openAIChunk struct {
-        Choices []struct {
-                Delta struct {
-                        Content   string `json:"content"`
-                        Reasoning string `json:"reasoning_content"`
-                        // v0.93.1: OpenRouter (and OpenAI's newer shapes)
-                        // stream reasoning as plain `reasoning` — the
-                        // DeepSeek-style `reasoning_content` above covers the
-                        // China-hosted convention, this one the Western one
-                        // (live-verified on liquid/lfm-2.5-2.6b:free — the
-                        // user's "OpenRouter is bland, no reasoning" report:
-                        // every token arrived and was DROPPED here).
-                        ReasoningOR string `json:"reasoning"`
-                        // v0.38: native function-calling deltas — the FIRST
-                        // chunk of a call carries id+name; the rest ride the
-                        // index and append argument fragments (per the OpenAI
-                        // streaming spec, verified against NVIDIA NIM).
-                        ToolCalls []openAIToolCallDelta `json:"tool_calls"`
-                } `json:"delta"`
-                FinishReason string `json:"finish_reason"`
-        } `json:"choices"`
-        Usage *struct {
-                PromptTokens     int `json:"prompt_tokens"`
-                CompletionTokens int `json:"completion_tokens"`
-                TotalTokens      int `json:"total_tokens"`
-                // v1.46.2 THE REASONING LEDGER: the OpenAI detail block —
-                // PM's gateway (live: glm-5.3, 53 of 56 completion tokens)
-                // and OpenAI-compatible hosts report the reasoning share
-                // here. Pointer: absent block = 0, never invented.
-                CompletionTokensDetails *struct {
-                        ReasoningTokens int64 `json:"reasoning_tokens"`
-                } `json:"completion_tokens_details,omitempty"`
-        } `json:"usage,omitempty"`
+	Choices []struct {
+		Delta struct {
+			Content   string `json:"content"`
+			Reasoning string `json:"reasoning_content"`
+			// v0.93.1: OpenRouter (and OpenAI's newer shapes)
+			// stream reasoning as plain `reasoning` — the
+			// DeepSeek-style `reasoning_content` above covers the
+			// China-hosted convention, this one the Western one
+			// (live-verified on liquid/lfm-2.5-2.6b:free — the
+			// user's "OpenRouter is bland, no reasoning" report:
+			// every token arrived and was DROPPED here).
+			ReasoningOR string `json:"reasoning"`
+			// v0.38: native function-calling deltas — the FIRST
+			// chunk of a call carries id+name; the rest ride the
+			// index and append argument fragments (per the OpenAI
+			// streaming spec, verified against NVIDIA NIM).
+			ToolCalls []openAIToolCallDelta `json:"tool_calls"`
+		} `json:"delta"`
+		FinishReason string `json:"finish_reason"`
+	} `json:"choices"`
+	Usage *struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+		TotalTokens      int `json:"total_tokens"`
+		// v1.46.2 THE REASONING LEDGER: the OpenAI detail block —
+		// PM's gateway (live: glm-5.3, 53 of 56 completion tokens)
+		// and OpenAI-compatible hosts report the reasoning share
+		// here. Pointer: absent block = 0, never invented.
+		CompletionTokensDetails *struct {
+			ReasoningTokens int64 `json:"reasoning_tokens"`
+		} `json:"completion_tokens_details,omitempty"`
+	} `json:"usage,omitempty"`
 }
 
 // openAIToolCallDelta is one streamed tool-call fragment.
 type openAIToolCallDelta struct {
-        Index    int    `json:"index"`
-        ID       string `json:"id"`
-        Type     string `json:"type"`
-        Function struct {
-                Name      string `json:"name"`
-                Arguments string `json:"arguments"`
-        } `json:"function"`
+	Index    int    `json:"index"`
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
 }
 
 // Chat streams a chat completion from an OpenAI-compatible provider,
 // dispatching to the capability pipelines when requested.
 func Chat(ctx context.Context, req ChatRequest) (<-chan ChatChunk, <-chan error) {
-        ch := make(chan ChatChunk, 64)
-        errs := make(chan error, 1)
+	ch := make(chan ChatChunk, 64)
+	errs := make(chan error, 1)
 
-        go func() {
-                // v1.14.6 THE SOLID STREAM: the per-bot FSM — ONE instance per
-                // turn, riding the ctx; every stream path reports its lifecycle
-                // (open → deltas → wire verdict) and exits through sealTurn.
-                // Declared before the panic-guard defer so the defer's TurnEnd
-                // can report the verdict even for panicked turns.
-                fsm := newTurnFSM(ctx, req)
-                // v0.93.2 THE ENGINE-KILL GUARD: this producer goroutine is
-                // OUTSIDE every server-side recover middleware (it runs on
-                // its own stack, spawned per turn) — a panic anywhere in the
-                // ReAct loop / tool chain / stream parsing killed the WHOLE
-                // ENGINE (the Android watchdog restarted it, the user's
-                // 'gets killed by engine restart' report). The guard turns
-                // a would-be crash into one honest error chunk + a terminal
-                // status; the engine lives, the next turn works.
-                panicked := false
-                defer func() {
-                        if rec := recover(); rec != nil {
-                                panicked = true
-                                log.Printf("PANIC recovered in llm.Chat (%s · %s): %v", providerLabel(req.Provider), modelShort(req.Model), rec)
-                                // v1.14.4 THE TRACE: the panic lands on the timeline too —
-                                // a killed turn leaves a body, not a hole.
-                                obs.EmitS(ctx, obs.ErrorEv, "where", "llm.Chat", "panic", fmt.Sprint(rec))
-                                ch <- ChatChunk{Type: "error", Error: "panic", Message: "internal error — the turn was cancelled but the engine recovered; try again"}
-                                ch <- ChatChunk{Type: "status", State: "error"}
-                        }
-                        // v1.14.4 THE TRACE: the turn's terminal event — the
-                        // goroutine returned (clean or panicked). The runners'
-                        // Finish events carry the token truth; this closes the
-                        // turn record either way. v1.14.6: the FSM verdict —
-                        // stop/length/tool_calls/error/aborted/silent-stop/
-                        // empty/no-stream — the terminal-state machine's word,
-                        // sealed by the runner or computed here for the exits
-                        // that never reached one.
-                        v, rounds, fpath, fms := fsm.report()
-                        obs.EmitS(ctx, obs.TurnEnd, "provider", req.Provider, "model", req.Model, "panicked", panicked,
-                                "verdict", v, "rounds", rounds, "path", fpath, "duration_ms", fms)
-                        close(ch)
-                        close(errs)
-                }()
+	go func() {
+		// v1.14.6 THE SOLID STREAM: the per-bot FSM — ONE instance per
+		// turn, riding the ctx; every stream path reports its lifecycle
+		// (open → deltas → wire verdict) and exits through sealTurn.
+		// Declared before the panic-guard defer so the defer's TurnEnd
+		// can report the verdict even for panicked turns.
+		fsm := newTurnFSM(ctx, req)
+		// v0.93.2 THE ENGINE-KILL GUARD: this producer goroutine is
+		// OUTSIDE every server-side recover middleware (it runs on
+		// its own stack, spawned per turn) — a panic anywhere in the
+		// ReAct loop / tool chain / stream parsing killed the WHOLE
+		// ENGINE (the Android watchdog restarted it, the user's
+		// 'gets killed by engine restart' report). The guard turns
+		// a would-be crash into one honest error chunk + a terminal
+		// status; the engine lives, the next turn works.
+		panicked := false
+		defer func() {
+			if rec := recover(); rec != nil {
+				panicked = true
+				log.Printf("PANIC recovered in llm.Chat (%s · %s): %v", providerLabel(req.Provider), modelShort(req.Model), rec)
+				// v1.14.4 THE TRACE: the panic lands on the timeline too —
+				// a killed turn leaves a body, not a hole.
+				obs.EmitS(ctx, obs.ErrorEv, "where", "llm.Chat", "panic", fmt.Sprint(rec))
+				ch <- ChatChunk{Type: "error", Error: "panic", Message: "internal error — the turn was cancelled but the engine recovered; try again"}
+				ch <- ChatChunk{Type: "status", State: "error"}
+			}
+			// v1.14.4 THE TRACE: the turn's terminal event — the
+			// goroutine returned (clean or panicked). The runners'
+			// Finish events carry the token truth; this closes the
+			// turn record either way. v1.14.6: the FSM verdict —
+			// stop/length/tool_calls/error/aborted/silent-stop/
+			// empty/no-stream — the terminal-state machine's word,
+			// sealed by the runner or computed here for the exits
+			// that never reached one.
+			v, rounds, fpath, fms := fsm.report()
+			obs.EmitS(ctx, obs.TurnEnd, "provider", req.Provider, "model", req.Model, "panicked", panicked,
+				"verdict", v, "rounds", rounds, "path", fpath, "duration_ms", fms)
+			close(ch)
+			close(errs)
+		}()
 
-                // v1.14.4 THE TRACE: the turn scope (session + monotonic turn
-                // number) and the `turn` root span — every span, event and delta
-                // of this turn descends from here. The dispatch PATH label rides
-                // the turn.dispatch event emitted inside each switch case below.
-                ctx = obs.TurnScope(ctx, req.SessionID)
-                // v1.14.6: the FSM rides the turn ctx from here down.
-                ctx = withFSM(ctx, fsm)
-                tctx, turnSpan := obs.StartTurnSpan(ctx, req.SessionID, req.Provider, req.Model, "pending")
-                ctx = tctx
-                defer turnSpan.End()
-                obs.EmitS(ctx, obs.TurnStart, "provider", req.Provider, "model", req.Model,
-                        "messages", len(req.Messages), "web_search", req.WebSearch, "deep_research", req.DeepResearch)
+		// v1.14.4 THE TRACE: the turn scope (session + monotonic turn
+		// number) and the `turn` root span — every span, event and delta
+		// of this turn descends from here. The dispatch PATH label rides
+		// the turn.dispatch event emitted inside each switch case below.
+		ctx = obs.TurnScope(ctx, req.SessionID)
+		// v1.14.6: the FSM rides the turn ctx from here down.
+		ctx = withFSM(ctx, fsm)
+		tctx, turnSpan := obs.StartTurnSpan(ctx, req.SessionID, req.Provider, req.Model, "pending")
+		ctx = tctx
+		defer turnSpan.End()
+		obs.EmitS(ctx, obs.TurnStart, "provider", req.Provider, "model", req.Model,
+			"messages", len(req.Messages), "web_search", req.WebSearch, "deep_research", req.DeepResearch)
 
-                // v1.14.1 THE LEDGER — the 92% CONTEXT GUARD: before the
-                // turn spends a single provider token, count the assembled
-                // request with the real BPE and compare it against the
-                // model's documented window. Past 92%, say so — with the
-                // actual numbers — before the provider answers with a
-                // silent truncation, a failed tool round, or an error
-                // body the user can't parse. Informational ONLY: the turn
-                // proceeds either way (compaction owns the actual
-                // shrinking; this guard makes the invisible visible).
-                emitContextGuard(ctx, ch, req)
+		// v1.14.1 THE LEDGER — the 92% CONTEXT GUARD: before the
+		// turn spends a single provider token, count the assembled
+		// request with the real BPE and compare it against the
+		// model's documented window. Past 92%, say so — with the
+		// actual numbers — before the provider answers with a
+		// silent truncation, a failed tool round, or an error
+		// body the user can't parse. Informational ONLY: the turn
+		// proceeds either way (compaction owns the actual
+		// shrinking; this guard makes the invisible visible).
+		emitContextGuard(ctx, ch, req)
 
-                switch {
-                case req.DeepResearch && req.Provider != "":
-                        obs.EmitS(ctx, obs.Dispatch, "path", "deep_research", "provider", req.Provider, "model", req.Model)
-                        fsm.dispatched("deep_research")
-                        runDeepResearch(ctx, ch, errs, req)
-                case req.Provider != "" && req.AuthStyle != "anthropic" && !nativeToolsBlacklisted(req.Provider):
-                        obs.EmitS(ctx, obs.Dispatch, "path", "native_tools", "provider", req.Provider, "model", req.Model, "reason", "tools-capable provider")
-                        fsm.dispatched("native_tools")
-                        // v0.38 NATIVE FUNCTION CALLING + v1.13.2 THE HANDOFF +
-                        // v1.13.3 THE GUT + v1.13.6 THE THIRD CARRIER: EVERY
-                        // OpenAI-compatible provider — openrouter INCLUDED —
-                        // runs the structured tool_calls loop against the
-                        // mcpbus. The v1.13.6 rig's S12 finding: the old
-                        // plugin-first ordering + the always-on WebSearch flag
-                        // meant openrouter turns NEVER reached the bus (a
-                        // single plugin round, zero of the 100+ tools); now
-                        // the bus's web_search tool grounds web questions in
-                        // the loop, and a provider that 400s tools is
-                        // blacklisted once and ladders DOWN to the plugin
-                        // path below (openrouter keeps provider-side web
-                        // grounding without tools) or the tool-less loop.
-                        // Anthropic-wire providers (their native tool format
-                        // is a future wave) fall to the plain paths below.
-                        runNativeToolsTurn(ctx, ch, errs, req)
-                case req.WebSearch && req.Provider != "" && NativeWebSearchBody(req.Provider, req.Model) != nil:
-                        obs.EmitS(ctx, obs.Dispatch, "path", "web_plugin", "provider", req.Provider, "model", req.Model, "reason", "provider-side web grounding")
-                        fsm.dispatched("web_plugin")
-                        // v1.13.6: OpenRouter's provider-side search is now the
-                        // FALLBACK (blacklisted or anthropic-wire turns) —
-                        // provider-side web grounding without tools instead of
-                        // a tools dead end.
-                        runWebSearchTurn(ctx, ch, errs, req)
-                case req.Provider != "" && req.AuthStyle != "anthropic":
-                        // a BLACKLISTED provider without the plugin: the loop
-                        // skips tools upfront (v1.13.4 — no wasted 400s per
-                        // turn) and answers honestly.
-                        fsm.dispatched("native_tools")
-                        runNativeToolsTurn(ctx, ch, errs, req)
-                default:
-                        // v0.20's unified ReAct tool loop is gone (v1.13.3 THE
-                        // GUT); what remains here is the plain streaming path
-                        // for anthropic-wire providers and provider-less
-                        // requests (runWebSearchTurn's Path A fires only for
-                        // the plugin case routed above).
-                        obs.EmitS(ctx, obs.Dispatch, "path", "plain", "provider", req.Provider, "model", req.Model, "reason", "anthropic-wire or provider-less")
-                        fsm.dispatched("plain")
-                        runWebSearchTurn(ctx, ch, errs, req)
-                }
-        }()
+		switch {
+		case req.DeepResearch && req.Provider != "":
+			obs.EmitS(ctx, obs.Dispatch, "path", "deep_research", "provider", req.Provider, "model", req.Model)
+			fsm.dispatched("deep_research")
+			runDeepResearch(ctx, ch, errs, req)
+		case req.Provider != "" && req.AuthStyle != "anthropic" && !nativeToolsBlacklisted(req.Provider):
+			obs.EmitS(ctx, obs.Dispatch, "path", "native_tools", "provider", req.Provider, "model", req.Model, "reason", "tools-capable provider")
+			fsm.dispatched("native_tools")
+			// v0.38 NATIVE FUNCTION CALLING + v1.13.2 THE HANDOFF +
+			// v1.13.3 THE GUT + v1.13.6 THE THIRD CARRIER: EVERY
+			// OpenAI-compatible provider — openrouter INCLUDED —
+			// runs the structured tool_calls loop against the
+			// mcpbus. The v1.13.6 rig's S12 finding: the old
+			// plugin-first ordering + the always-on WebSearch flag
+			// meant openrouter turns NEVER reached the bus (a
+			// single plugin round, zero of the 100+ tools); now
+			// the bus's web_search tool grounds web questions in
+			// the loop, and a provider that 400s tools is
+			// blacklisted once and ladders DOWN to the plugin
+			// path below (openrouter keeps provider-side web
+			// grounding without tools) or the tool-less loop.
+			// Anthropic-wire providers (their native tool format
+			// is a future wave) fall to the plain paths below.
+			runNativeToolsTurn(ctx, ch, errs, req)
+		case req.WebSearch && req.Provider != "" && NativeWebSearchBody(req.Provider, req.Model) != nil:
+			obs.EmitS(ctx, obs.Dispatch, "path", "web_plugin", "provider", req.Provider, "model", req.Model, "reason", "provider-side web grounding")
+			fsm.dispatched("web_plugin")
+			// v1.13.6: OpenRouter's provider-side search is now the
+			// FALLBACK (blacklisted or anthropic-wire turns) —
+			// provider-side web grounding without tools instead of
+			// a tools dead end.
+			runWebSearchTurn(ctx, ch, errs, req)
+		case req.Provider != "" && req.AuthStyle != "anthropic":
+			// a BLACKLISTED provider without the plugin: the loop
+			// skips tools upfront (v1.13.4 — no wasted 400s per
+			// turn) and answers honestly.
+			fsm.dispatched("native_tools")
+			runNativeToolsTurn(ctx, ch, errs, req)
+		default:
+			// v0.20's unified ReAct tool loop is gone (v1.13.3 THE
+			// GUT); what remains here is the plain streaming path
+			// for anthropic-wire providers and provider-less
+			// requests (runWebSearchTurn's Path A fires only for
+			// the plugin case routed above).
+			obs.EmitS(ctx, obs.Dispatch, "path", "plain", "provider", req.Provider, "model", req.Model, "reason", "anthropic-wire or provider-less")
+			fsm.dispatched("plain")
+			runWebSearchTurn(ctx, ch, errs, req)
+		}
+	}()
 
-        return ch, errs
+	return ch, errs
 }
 
 // ── Plain turn: single streaming completion ────────────────────────────────
 
 func runPlainTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- error, req ChatRequest) {
-        ch <- ChatChunk{Type: "status", State: "running"}
-        // v1.39.3 THE PATIENT ENGINE: the plain path runs through the net
-        // ladder (it had ZERO net retry — one transport error ended the
-        // turn instantly; the emission tap preserves the double-render law).
-        final, streamed, err := netLadderStream(ctx, req, ch, nil)
-        // v1.39.6 THE SEAMLESS CUT (PLAN-V140 §4): a transient cut of a
-        // stream that ALREADY streamed visible content is no longer a
-        // terminal. The double-render guard was right to refuse a blind
-        // restart (the partial would re-print) — the seam is the sanctioned
-        // continuation: seal the partial (round_end finalizes the open
-        // block), persist the seam notice, hold in the suspension until the
-        // network returns, then ONE continuation call whose context carries
-        // the partial + the nudge. The continuation streams a NEW segment
-        // (double-render impossible by construction — the old block is
-        // sealed complete). Bounded at ONE seam per plain turn: a second
-        // cut ends honestly.
-        var cut *emittedCutError
-        if errors.As(err, &cut) {
-                ch <- ChatChunk{Type: "round_end"}
-                ch <- ChatChunk{Type: "notice", Text: "the connection cut mid-reply — holding, and continuing when the network returns (Stop always works)"}
-                seamReq := req
-                msgs := make([]Message, len(req.Messages))
-                copy(msgs, req.Messages)
-                msgs = append(msgs,
-                        Message{Role: "assistant", Content: streamed},
-                        Message{Role: "user", Content: seamNudgeText})
-                seamReq.Messages = msgs
-                final, err = netSuspendedLoopPlain(ctx, ch, seamReq)
-        }
-        if err != nil {
-                sealTurn(ctx, ch, err, nil)
-                emitTurnError(ch, err)
-                errs <- err
-                return
-        }
-        // v1.14.6 THE SILENT-STOP NET (the plain path — the net leaves the
-        // native-only ghetto): a clean 200 with ZERO deltas and no wire
-        // verdict is the "empty" class. Nothing was rendered, so ONE
-        // announced retry can never double-stream — the generalized
-        // answer-force net. "silent-stop" (deltas then no verdict) is NOT
-        // retried: content is already on screen; it is recorded honestly
-        // instead.
-        if v := sealTurn(ctx, ch, nil, final); v == "empty" {
-                obs.EmitS(ctx, obs.Notice, "where", "turnfsm", "verdict", v, "text", "plain turn ended empty — one retry armed")
-                ch <- ChatChunk{Type: "progress", Text: "the stream ended without a token — retrying once…"}
-                final, _, err = netLadderStream(ctx, req, ch, nil) // v1.39.3: laddered too (a net blip during the retry must not kill the turn)
-                if err != nil {
-                        sealTurn(ctx, ch, err, nil)
-                        emitTurnError(ch, err)
-                        errs <- err
-                        return
-                }
-                sealTurn(ctx, ch, nil, final)
-        }
-        ch <- ChatChunk{Type: "status", State: "idle", Usage: final}
+	ch <- ChatChunk{Type: "status", State: "running"}
+	// v1.39.3 THE PATIENT ENGINE: the plain path runs through the net
+	// ladder (it had ZERO net retry — one transport error ended the
+	// turn instantly; the emission tap preserves the double-render law).
+	final, streamed, err := netLadderStream(ctx, req, ch, nil)
+	// v1.39.6 THE SEAMLESS CUT (PLAN-V140 §4): a transient cut of a
+	// stream that ALREADY streamed visible content is no longer a
+	// terminal. The double-render guard was right to refuse a blind
+	// restart (the partial would re-print) — the seam is the sanctioned
+	// continuation: seal the partial (round_end finalizes the open
+	// block), persist the seam notice, hold in the suspension until the
+	// network returns, then ONE continuation call whose context carries
+	// the partial + the nudge. The continuation streams a NEW segment
+	// (double-render impossible by construction — the old block is
+	// sealed complete). Bounded at ONE seam per plain turn: a second
+	// cut ends honestly.
+	var cut *emittedCutError
+	if errors.As(err, &cut) {
+		ch <- ChatChunk{Type: "round_end"}
+		ch <- ChatChunk{Type: "notice", Text: "the connection cut mid-reply — holding, and continuing when the network returns (Stop always works)"}
+		seamReq := req
+		msgs := make([]Message, len(req.Messages))
+		copy(msgs, req.Messages)
+		msgs = append(msgs,
+			Message{Role: "assistant", Content: streamed},
+			Message{Role: "user", Content: seamNudgeText})
+		seamReq.Messages = msgs
+		final, err = netSuspendedLoopPlain(ctx, ch, seamReq)
+	}
+	if err != nil {
+		sealTurn(ctx, ch, err, nil)
+		emitTurnError(ch, err)
+		errs <- err
+		return
+	}
+	// v1.14.6 THE SILENT-STOP NET (the plain path — the net leaves the
+	// native-only ghetto): a clean 200 with ZERO deltas and no wire
+	// verdict is the "empty" class. Nothing was rendered, so ONE
+	// announced retry can never double-stream — the generalized
+	// answer-force net. "silent-stop" (deltas then no verdict) is NOT
+	// retried: content is already on screen; it is recorded honestly
+	// instead.
+	if v := sealTurn(ctx, ch, nil, final); v == "empty" {
+		obs.EmitS(ctx, obs.Notice, "where", "turnfsm", "verdict", v, "text", "plain turn ended empty — one retry armed")
+		ch <- ChatChunk{Type: "progress", Text: "the stream ended without a token — retrying once…"}
+		final, _, err = netLadderStream(ctx, req, ch, nil) // v1.39.3: laddered too (a net blip during the retry must not kill the turn)
+		if err != nil {
+			sealTurn(ctx, ch, err, nil)
+			emitTurnError(ch, err)
+			errs <- err
+			return
+		}
+		sealTurn(ctx, ch, nil, final)
+	}
+	ch <- ChatChunk{Type: "status", State: "idle", Usage: final}
 }
 
 // emitTurnError (v0.39): the ONE honest error chunk + terminal status pair
@@ -428,8 +428,8 @@ func runPlainTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- error, r
 // retryable error surfaced), never inside the retry loop (an early chunk
 // terminalizes the UI: the frontend treats error events as end-of-turn).
 func emitTurnError(ch chan<- ChatChunk, err error) {
-        ch <- ChatChunk{Type: "error", Error: "stream", Message: friendlyStreamError(err)}
-        ch <- ChatChunk{Type: "status", State: "error"}
+	ch <- ChatChunk{Type: "error", Error: "stream", Message: friendlyStreamError(err)}
+	ch <- ChatChunk{Type: "status", State: "error"}
 }
 
 // ctxGuardPct is the context guard's arm point: a request estimated past
@@ -444,89 +444,89 @@ const ctxGuardPct = 92
 // unknown (heuristic limit only — no invented urgency) or the request is
 // empty.
 func emitContextGuard(ctx context.Context, ch chan<- ChatChunk, req ChatRequest) {
-        if ctx.Err() != nil || len(req.Messages) == 0 {
-                return
-        }
-        limit, specKnown := SpecContext(req.Model)
-        if !specKnown {
-                return // heuristic window ≠ honest denominator
-        }
-        used := countMessagesTokens(req.Messages, req.SystemPrompt)
-        if used <= 0 {
-                return
-        }
-        pct := used * 100 / limit
-        if pct < ctxGuardPct {
-                return
-        }
-        // v1.14.4 THE TRACE: the guard verdict lands on the timeline (the
-        // visible notice below already replays via status events — this is
-        // for the observability sink).
-        obs.EmitS(ctx, obs.Guard, "model", req.Model, "used", used, "limit", limit, "pct", pct)
-        select {
-        case ch <- ChatChunk{
-                Type: "progress",
-                Text: fmt.Sprintf("context guard: this turn is ~%s tokens of %s's %s-token window (%d%% full) — compaction or a fresh chat is due; long turns may be truncated or refused by the provider",
-                        humanCount(used), modelShort(req.Model), humanCount(limit), pct),
-        }:
-        default: // never block the stream on a notice
-        }
+	if ctx.Err() != nil || len(req.Messages) == 0 {
+		return
+	}
+	limit, specKnown := SpecContext(req.Model)
+	if !specKnown {
+		return // heuristic window ≠ honest denominator
+	}
+	used := countMessagesTokens(req.Messages, req.SystemPrompt)
+	if used <= 0 {
+		return
+	}
+	pct := used * 100 / limit
+	if pct < ctxGuardPct {
+		return
+	}
+	// v1.14.4 THE TRACE: the guard verdict lands on the timeline (the
+	// visible notice below already replays via status events — this is
+	// for the observability sink).
+	obs.EmitS(ctx, obs.Guard, "model", req.Model, "used", used, "limit", limit, "pct", pct)
+	select {
+	case ch <- ChatChunk{
+		Type: "progress",
+		Text: fmt.Sprintf("context guard: this turn is ~%s tokens of %s's %s-token window (%d%% full) — compaction or a fresh chat is due; long turns may be truncated or refused by the provider",
+			humanCount(used), modelShort(req.Model), humanCount(limit), pct),
+	}:
+	default: // never block the stream on a notice
+	}
 }
 
 // humanCount renders a token count as "12.3k" / "1.2M" for notices.
 func humanCount(n int) string {
-        switch {
-        case n >= 1_000_000:
-                return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
-        case n >= 1_000:
-                return fmt.Sprintf("%.1fk", float64(n)/1_000)
-        default:
-                return fmt.Sprintf("%d", n)
-        }
+	switch {
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
+	case n >= 1_000:
+		return fmt.Sprintf("%.1fk", float64(n)/1_000)
+	default:
+		return fmt.Sprintf("%d", n)
+	}
 }
 
 // deltaHead (v1.14.4 THE TRACE) clips a string to its head runes for the
 // trace events — DOOM_TRACE_DELTAS=1 records a 64-rune head per delta,
 // the request-body head is 4096 runes, level 2 records everything raw.
 func deltaHead(s string, n int) string {
-        r := []rune(s)
-        if len(r) <= n {
-                return s
-        }
-        return string(r[:n]) + "…"
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
 }
 
 // friendlyStreamError humanizes the raw transport/stream error.
 func friendlyStreamError(err error) string {
-        if err == nil {
-                return "unknown error"
-        }
-        s := err.Error()
-        msg := s
-        for _, pair := range [][2]string{
-                {"request failed: ", ""},
-                {"stream: ", ""},
-                {"send: ", ""},
-        } {
-                msg = strings.Replace(msg, pair[0], pair[1], 1)
-        }
-        if len(msg) > 300 {
-                msg = msg[:300] + "…"
-        }
-        return msg
+	if err == nil {
+		return "unknown error"
+	}
+	s := err.Error()
+	msg := s
+	for _, pair := range [][2]string{
+		{"request failed: ", ""},
+		{"stream: ", ""},
+		{"send: ", ""},
+	} {
+		msg = strings.Replace(msg, pair[0], pair[1], 1)
+	}
+	if len(msg) > 300 {
+		msg = msg[:300] + "…"
+	}
+	return msg
 }
 
 // streamCompletion performs ONE streaming chat completion, forwarding
 // thinking + assistant deltas to ch. Returns the final usage.
 func streamCompletion(ctx context.Context, req ChatRequest, ch chan<- ChatChunk, extraBody map[string]any) (*Usage, error) {
-        return scanSSE(ctx, req, extraBody, ch, func(reasoning, content string) {
-                if reasoning != "" {
-                        ch <- ChatChunk{Type: "thinking", Text: reasoning}
-                }
-                if content != "" {
-                        ch <- ChatChunk{Type: "assistant_delta", Text: content}
-                }
-        })
+	return scanSSE(ctx, req, extraBody, ch, func(reasoning, content string) {
+		if reasoning != "" {
+			ch <- ChatChunk{Type: "thinking", Text: reasoning}
+		}
+		if content != "" {
+			ch <- ChatChunk{Type: "assistant_delta", Text: content}
+		}
+	})
 }
 
 // idleTimeoutReader closes the underlying body when no bytes arrive for
@@ -548,64 +548,64 @@ func streamCompletion(ctx context.Context, req ChatRequest, ch chan<- ChatChunk,
 // caller that passes a positive timeout still gets the old kill. The
 // user's Stop button is the escape hatch for a truly dead connection.
 type idleTimeoutReader struct {
-        rc        io.ReadCloser
-        timeout   time.Duration
-        timer     *time.Timer
-        stopped   chan struct{}
-        timedOut  atomic.Bool
-        lastDelta atomic.Int64 // v0.24: unix-ms of the last REAL reasoning/content delta (0 = none yet)
-        startMS   atomic.Int64 // v0.24: when the stream opened (for notices)
+	rc        io.ReadCloser
+	timeout   time.Duration
+	timer     *time.Timer
+	stopped   chan struct{}
+	timedOut  atomic.Bool
+	lastDelta atomic.Int64 // v0.24: unix-ms of the last REAL reasoning/content delta (0 = none yet)
+	startMS   atomic.Int64 // v0.24: when the stream opened (for notices)
 }
 
 func newIdleTimeoutReader(rc io.ReadCloser, d time.Duration) *idleTimeoutReader {
-        r := &idleTimeoutReader{rc: rc, timeout: d, stopped: make(chan struct{})}
-        if d > 0 { // v0.80.1: d <= 0 means the watchdog is DISABLED (no kill timer)
-                r.timer = time.AfterFunc(d, func() {
-                        select {
-                        case <-r.stopped:
-                        default:
-                                r.timedOut.Store(true)
-                                rc.Close()
-                        }
-                })
-        }
-        return r
+	r := &idleTimeoutReader{rc: rc, timeout: d, stopped: make(chan struct{})}
+	if d > 0 { // v0.80.1: d <= 0 means the watchdog is DISABLED (no kill timer)
+		r.timer = time.AfterFunc(d, func() {
+			select {
+			case <-r.stopped:
+			default:
+				r.timedOut.Store(true)
+				rc.Close()
+			}
+		})
+	}
+	return r
 }
 
 func (r *idleTimeoutReader) Read(p []byte) (int, error) {
-        n, err := r.rc.Read(p)
-        if n > 0 && r.timer != nil {
-                // v0.24 NOTE: raw bytes reset the KILL timer (the connection is
-                // alive — SSE keepalive comments count), but NOT gotData: that flag
-                // means "a real reasoning/content delta reached the user" and is set
-                // by scanSSE's parse loop. NIM trickles keepalives for minutes while
-                // kimi-k3 thinks (observed live: 139-151s gaps) — the kill must stay
-                // off, but the wait-notices must keep talking to the user.
-                r.timer.Reset(r.timeout)
-        }
-        return n, err
+	n, err := r.rc.Read(p)
+	if n > 0 && r.timer != nil {
+		// v0.24 NOTE: raw bytes reset the KILL timer (the connection is
+		// alive — SSE keepalive comments count), but NOT gotData: that flag
+		// means "a real reasoning/content delta reached the user" and is set
+		// by scanSSE's parse loop. NIM trickles keepalives for minutes while
+		// kimi-k3 thinks (observed live: 139-151s gaps) — the kill must stay
+		// off, but the wait-notices must keep talking to the user.
+		r.timer.Reset(r.timeout)
+	}
+	return n, err
 }
 
 func (r *idleTimeoutReader) Close() error {
-        close(r.stopped)
-        if r.timer != nil {
-                r.timer.Stop()
-        }
-        return r.rc.Close()
+	close(r.stopped)
+	if r.timer != nil {
+		r.timer.Stop()
+	}
+	return r.rc.Close()
 }
 
 func (r *idleTimeoutReader) markDelta() {
-        r.lastDelta.Store(time.Now().UnixMilli())
+	r.lastDelta.Store(time.Now().UnixMilli())
 }
 
 // silentFor returns how long since the last REAL token (or since the
 // stream opened, if none arrived yet).
 func (r *idleTimeoutReader) silentFor() time.Duration {
-        last := r.lastDelta.Load()
-        if last == 0 {
-                return time.Since(time.UnixMilli(r.startMS.Load()))
-        }
-        return time.Since(time.UnixMilli(last))
+	last := r.lastDelta.Load()
+	if last == 0 {
+		return time.Since(time.UnixMilli(r.startMS.Load()))
+	}
+	return time.Since(time.UnixMilli(last))
 }
 
 // idleWaitFor returns the no-data watchdog for a model. v0.24 made it
@@ -617,7 +617,7 @@ func (r *idleTimeoutReader) silentFor() time.Duration {
 // knows, waitNotices keeps the user informed, and Stop is the canceller.
 // The model-aware shape stays for documentation + any future opt-in.
 func idleWaitFor(model string) time.Duration {
-        return 0
+	return 0
 }
 
 // IsSlowReasoningModel reports whether a model is known to take multi-minute
@@ -625,18 +625,18 @@ func idleWaitFor(model string) time.Duration {
 // any timeout — the turn budget is gone and the idle kill is disabled; kept
 // as the shared classification helper (UI hints, analytics).
 func IsSlowReasoningModel(model string) bool {
-        m := strings.ToLower(model)
-        return matchesAny(m, reasonKws) || strings.Contains(m, "kimi") ||
-                strings.Contains(m, "gpt-oss") || strings.Contains(m, "glm")
+	m := strings.ToLower(model)
+	return matchesAny(m, reasonKws) || strings.Contains(m, "kimi") ||
+		strings.Contains(m, "gpt-oss") || strings.Contains(m, "glm")
 }
 
 // modelShort strips the provider prefix for UI text ("kimi-k3", not
 // "nvidia/moonshotai/kimi-k3").
 func modelShort(model string) string {
-        if i := strings.LastIndex(model, "/"); i >= 0 {
-                return model[i+1:]
-        }
-        return model
+	if i := strings.LastIndex(model, "/"); i >= 0 {
+		return model[i+1:]
+	}
+	return model
 }
 
 // ── v0.24 intent detection (the auto-proceed nudge) ────────────────────────
@@ -646,20 +646,20 @@ func modelShort(model string) string {
 // (user report, kimi via NVIDIA): the model lays out its plan, ends the
 // turn, and waits for the user to say "go". We detect that and push once.
 var intentPhrases = []string{
-        "i will now", "i'll now", "i will start", "i'll start", "i will begin", "i'll begin",
-        "i will demonstrate", "i'll demonstrate", "i will show", "i'll show you",
-        "i'm going to", "im going to", "let me start", "let me begin", "let me demonstrate",
-        "let me show", "i will walk", "i'll walk you", "i will create", "i'll create",
-        "i will use", "i'll use", "i will run", "i'll run", "i will call", "i'll call",
-        "i will first", "i'll first", "starting now", "shall i proceed", "should i proceed",
-        "would you like me to", "want me to", "ready when you are", "say go", "give me the go",
-        "tell me to", "i am about to", "i'm about to", "here's my plan", "here is my plan",
-        "my plan is", "i plan to",
-        // v0.28: the “proactively search” flavors — models that announce
-        // a search instead of just running it.
-        "i'll search", "i will search", "let me search", "i'll look", "let me look",
-        "i'll check", "let me check", "i'll fetch", "let me fetch", "i'll go ahead",
-        "i will go ahead", "let me try", "i'll try", "i'll find out", "let me find out",
+	"i will now", "i'll now", "i will start", "i'll start", "i will begin", "i'll begin",
+	"i will demonstrate", "i'll demonstrate", "i will show", "i'll show you",
+	"i'm going to", "im going to", "let me start", "let me begin", "let me demonstrate",
+	"let me show", "i will walk", "i'll walk you", "i will create", "i'll create",
+	"i will use", "i'll use", "i will run", "i'll run", "i will call", "i'll call",
+	"i will first", "i'll first", "starting now", "shall i proceed", "should i proceed",
+	"would you like me to", "want me to", "ready when you are", "say go", "give me the go",
+	"tell me to", "i am about to", "i'm about to", "here's my plan", "here is my plan",
+	"my plan is", "i plan to",
+	// v0.28: the “proactively search” flavors — models that announce
+	// a search instead of just running it.
+	"i'll search", "i will search", "let me search", "i'll look", "let me look",
+	"i'll check", "let me check", "i'll fetch", "let me fetch", "i'll go ahead",
+	"i will go ahead", "let me try", "i'll try", "i'll find out", "let me find out",
 }
 
 // denialPhrases — v0.28 CAPABILITY-DENIAL NUDGE (the user's "models don't
@@ -670,30 +670,30 @@ var intentPhrases = []string{
 // the model DID have web tools armed but announced it couldn't access
 // the repo, and only a manual push made it try web_fetch.
 var denialPhrases = []string{
-        "i can't search", "i cannot search", "i can't browse", "i cannot browse",
-        "i can't access the internet", "i cannot access the internet",
-        "i don't have internet access", "i don't have access to the internet",
-        "no internet access", "i can't go online", "i can't fetch", "i cannot fetch",
-        "i can't access the web", "i cannot access the web", "i can't access external",
-        "i can't visit websites", "i cannot visit websites", "i can't look that up",
-        "i can't check the time", "i don't have the ability to search",
-        "i don't have the ability to browse", "i'm not able to access",
-        "i am not able to access", "i don't have access to that",
-        "i don't have real-time", "i don't have live", "as an ai language model, i",
-        "my knowledge cutoff", "i can't verify", "i cannot verify",
+	"i can't search", "i cannot search", "i can't browse", "i cannot browse",
+	"i can't access the internet", "i cannot access the internet",
+	"i don't have internet access", "i don't have access to the internet",
+	"no internet access", "i can't go online", "i can't fetch", "i cannot fetch",
+	"i can't access the web", "i cannot access the web", "i can't access external",
+	"i can't visit websites", "i cannot visit websites", "i can't look that up",
+	"i can't check the time", "i don't have the ability to search",
+	"i don't have the ability to browse", "i'm not able to access",
+	"i am not able to access", "i don't have access to that",
+	"i don't have real-time", "i don't have live", "as an ai language model, i",
+	"my knowledge cutoff", "i can't verify", "i cannot verify",
 }
 
 func looksLikeIntentOnly(reply string) bool {
-        r := strings.ToLower(reply)
-        if len(r) > 900 {
-                return false // a real, substantial answer — not an announcement
-        }
-        for _, p := range intentPhrases {
-                if strings.Contains(r, p) {
-                        return true
-                }
-        }
-        return false
+	r := strings.ToLower(reply)
+	if len(r) > 900 {
+		return false // a real, substantial answer — not an announcement
+	}
+	for _, p := range intentPhrases {
+		if strings.Contains(r, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // ── v1.29.4 THE PROCEED (PLAN-V130 §4) ─────────────────────────────────────
@@ -707,23 +707,23 @@ func looksLikeIntentOnly(reply string) bool {
 const maxProceeds = 2
 
 func shouldProceed(roundText string) bool {
-        return looksLikeIntentOnly(strings.TrimSpace(roundText))
+	return looksLikeIntentOnly(strings.TrimSpace(roundText))
 }
 
 // looksLikeCapabilityDenial — the second nudge flavor (v0.28): the model
 // claims it CAN'T do something the tools do. Slightly longer budget
 // than intent (denials can carry an apologetic preamble).
 func looksLikeCapabilityDenial(reply string) bool {
-        r := strings.ToLower(reply)
-        if len(r) > 1200 {
-                return false
-        }
-        for _, p := range denialPhrases {
-                if strings.Contains(r, p) {
-                        return true
-                }
-        }
-        return false
+	r := strings.ToLower(reply)
+	if len(r) > 1200 {
+		return false
+	}
+	for _, p := range denialPhrases {
+		if strings.Contains(r, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // silentClock is the pre-connect silence source (v0.24): NIM's kimi-k3
@@ -740,34 +740,34 @@ func (s *silentClock) silentFor() time.Duration { return time.Since(s.start) }
 // on Nvidia...". The PROVIDER is what the user picked; the model underneath
 // can change mid-flow).
 func providerLabel(provider string) string {
-        switch strings.ToLower(strings.TrimSpace(provider)) {
-        case "nvidia":
-                return "Nvidia"
-        case "opencode":
-                return "OpenCode"
-        case "privatemodeai":
-                return "PrivateMode"
-        case "openrouter":
-                return "OpenRouter"
-        case "cloudflare":
-                return "Cloudflare"
-        case "groq":
-                return "Groq"
-        case "together":
-                return "Together"
-        case "mistral":
-                return "Mistral"
-        case "anthropic":
-                return "Anthropic"
-        case "openai":
-                return "OpenAI"
-        case "deepseek":
-                return "DeepSeek"
-        case "":
-                return ""
-        default:
-                return provider
-        }
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "nvidia":
+		return "Nvidia"
+	case "opencode":
+		return "OpenCode"
+	case "privatemodeai":
+		return "PrivateMode"
+	case "openrouter":
+		return "OpenRouter"
+	case "cloudflare":
+		return "Cloudflare"
+	case "groq":
+		return "Groq"
+	case "together":
+		return "Together"
+	case "mistral":
+		return "Mistral"
+	case "anthropic":
+		return "Anthropic"
+	case "openai":
+		return "OpenAI"
+	case "deepseek":
+		return "DeepSeek"
+	case "":
+		return ""
+	default:
+		return provider
+	}
 }
 
 // waitNotices streams live "still waiting" progress chunks while the
@@ -778,51 +778,51 @@ func providerLabel(provider string) string {
 // always knows it's the model, not the app. Works for BOTH the connect
 // phase (silentClock) and the body phase (idleTimeoutReader).
 func waitNotices(ch chan<- ChatChunk, src interface{ silentFor() time.Duration }, model, provider string) (stop func()) {
-        shortModel := modelShort(model)
-        who := shortModel
-        if p := providerLabel(provider); p != "" {
-                who = p // v0.35: "waiting on Nvidia · 25s" — provider first, per spec
-        }
-        done := make(chan struct{})
-        go func() {
-                var tick *time.Ticker
-                defer func() {
-                        if tick != nil {
-                                tick.Stop()
-                        }
-                }()
-                for {
-                        select {
-                        case <-time.After(12 * time.Second): // first notice — below that, waiting is normal
-                        case <-done:
-                                return
-                        }
-                        tick = time.NewTicker(15 * time.Second) // steady cadence from the FIRST notice
-                        for {
-                                silent := src.silentFor()
-                                if silent < 10*time.Second {
-                                        break // tokens are flowing — go quiet
-                                }
-                                note := fmt.Sprintf("waiting on %s · %ds", who, int(silent.Seconds()))
-                                if silent >= 60*time.Second {
-                                        note += " — still no data; the model may be at capacity"
-                                }
-                                select {
-                                case ch <- ChatChunk{Type: "progress", Text: note}:
-                                default: // never block the stream on UI notices
-                                }
-                                select {
-                                case <-tick.C:
-                                case <-done:
-                                        return
-                                }
-                        }
-                        tick.Stop()
-                        tick = nil
-                }
-        }()
-        var once sync.Once
-        return func() { once.Do(func() { close(done) }) }
+	shortModel := modelShort(model)
+	who := shortModel
+	if p := providerLabel(provider); p != "" {
+		who = p // v0.35: "waiting on Nvidia · 25s" — provider first, per spec
+	}
+	done := make(chan struct{})
+	go func() {
+		var tick *time.Ticker
+		defer func() {
+			if tick != nil {
+				tick.Stop()
+			}
+		}()
+		for {
+			select {
+			case <-time.After(12 * time.Second): // first notice — below that, waiting is normal
+			case <-done:
+				return
+			}
+			tick = time.NewTicker(15 * time.Second) // steady cadence from the FIRST notice
+			for {
+				silent := src.silentFor()
+				if silent < 10*time.Second {
+					break // tokens are flowing — go quiet
+				}
+				note := fmt.Sprintf("waiting on %s · %ds", who, int(silent.Seconds()))
+				if silent >= 60*time.Second {
+					note += " — still no data; the model may be at capacity"
+				}
+				select {
+				case ch <- ChatChunk{Type: "progress", Text: note}:
+				default: // never block the stream on UI notices
+				}
+				select {
+				case <-tick.C:
+				case <-done:
+					return
+				}
+			}
+			tick.Stop()
+			tick = nil
+		}
+	}()
+	var once sync.Once
+	return func() { once.Do(func() { close(done) }) }
 }
 
 // friendlyHTTPError rewrites provider HTTP failures into actionable text
@@ -830,105 +830,111 @@ func waitNotices(ch chan<- ChatChunk, src interface{ silentFor() time.Duration }
 // model is at capacity, or taking too long, let the user know... We can
 // suggest a switch of models as well").
 func friendlyHTTPError(status int, body string, provider string) string {
-        b := strings.TrimSpace(body)
-        // v0.93.1 THE OPENROUTER HONESTY SET (live-probed 2026-10-02 with the
-        // user's key): three provider states the generic branches mislabeled —
-        // each now says what actually happened and what to do next.
-        if provider == "openrouter" {
-                // (1) The retired-:free 404. OpenRouter pulled the popular
-                // free variants (llama-3.3-70b:free, deepseek-r1:free, … all
-                // 404 with a "use this slug instead" pointer to the PAID
-                // slug — live-verified on 4 slugs). The user read it as "my
-                // account lost the models".
-                if status == 404 && strings.Contains(b, "use this slug instead") {
-                        paid := ""
-                        if i := strings.LastIndex(b, "instead: "); i >= 0 {
-                                rest := b[i+9:]
-                                // the slug runs to the closing quote (the body is
-                                // the raw JSON error: …instead: slug","code"…)
-                                if j := strings.IndexByte(rest, '"'); j >= 0 {
-                                        rest = rest[:j]
-                                } else if j := strings.IndexAny(rest, ",}"); j >= 0 {
-                                        rest = rest[:j]
-                                }
-                                paid = strings.TrimSpace(rest)
-                        }
-                        msg := "OpenRouter retired this free model variant (the :free tier was pared down in Sept 2026)"
-                        if paid != "" {
-                                msg += " — the paid slug is " + paid + " (needs credits)"
-                        }
-                        msg += ". Try openrouter/free — it routes to whatever is genuinely free right now"
-                        return msg
-                }
-                // (2) The never-purchased-credits 402. The generic 402 branch
-                // said "free quota used up" — wrong account state entirely
-                // (the key is FINE, the account just has no credits and this
-                // model isn't free).
-                if status == 402 || strings.Contains(b, "Insufficient credits") {
-                        return "this model is PAID on OpenRouter and your key's account has no credits — your key works; use openrouter/free or one of the live :free models instead"
-                }
-                // (3) The upstream shared-pool 429. The free pool is shared
-                // by ALL OpenRouter free users — it is NOT the user's quota
-                // (their own daily budget: 50 free requests, live-checked:
-                // 50/50 remaining while the model still 429'd upstream).
-                if status == 429 && strings.Contains(b, "upstream_provider_shared_pool") {
-                        return "the FREE pool for this model is rate-limited upstream right now (shared by all OpenRouter free users — not YOUR quota) — retry in a moment, or try openrouter/free which routes around it"
-                }
-        }
-        // 404 "Function '<id>': Not found for account" — NIM dropped the model
-        // for this key (observed live: kimi-k2.6 after NIM rotation).
-        if status == 404 && strings.Contains(b, "Not found for account") {
-                return "404: this model is no longer available for your " + provider + " account — pick another model"
-        }
-        // v0.35: 410 Gone — the model reached end-of-life upstream (live hit:
-        // deepseek-ai/deepseek-v4-flash EOL'd 2026-08-07 but still appears in
-        // older cached catalogs). Say it plainly so the user picks another.
-        if status == 410 || strings.Contains(b, "end of life") || strings.Contains(b, "end-of-life") {
-                return "this model has been retired by the provider (end of life) — pick another model"
-        }
-        // v0.38: 402 from the OpenCode bridge ("Upstream request failed:
-        // Insufficient account funds" — live hit during testing; the user's
-        // "GLM flash hit its capacity" report). The key is fine; the FREE
-        // quota is spent.
-        if status == 402 || strings.Contains(strings.ToLower(b), "insufficient account funds") {
-                return "this provider's free quota for this model is used up (402) — try again later, another provider hosting the same model, or a different model"
-        }
-        // v0.25 OPENCODE ZEN billing clarifications (live-verified with a
-        // working key): paid models answer 400 CreditsError "No payment
-        // method …/billing" even though the KEY is perfectly valid — free
-        // models (big-pickle, *-free) work on the same key. The raw message
-        // read as "my key needs billing enabled", which is wrong.
-        if strings.Contains(b, "CreditsError") || strings.Contains(b, "No payment method") {
-                return "this model is PAID on OpenCode Zen — your key works, but this model needs a payment method at opencode.ai/settings/billing, or switch provider (NVIDIA / PrivateMode have working free models)"
-        }
-        if strings.Contains(b, "MissingSessionID") {
-                return "OpenCode Zen wants a client session for this model — try big-pickle or another free model"
-        }
-        // v0.26 (2026-09-17): upstream walled the free tier to their own
-        // client — even WITH the x-session-id header big-pickle/*-free now
-        // answer 403 FreeTierError "OpenCode's free tier can only be used
-        // from within OpenCode" (live-verified; worked on 09-14). Honest
-        // message: nothing wrong with the key or the app.
-        if strings.Contains(b, "FreeTierError") || strings.Contains(b, "free tier can only be used") {
-                return "OpenCode just walled their FREE models to their own client — your key and the app are fine. Paid zen models still work with a payment method, or switch provider (NVIDIA / PrivateMode work great right now)"
-        }
-        if strings.Contains(b, "FreeUsageLimitError") {
-                return "OpenCode Zen free-tier limit for this model right now — wait a moment or switch models"
-        }
-        if status == 429 || strings.Contains(b, "rate limit") || strings.Contains(b, "Too Many Requests") {
-                msg := "429: the model is at capacity / rate-limited — wait ~15s and try again, or switch models"
-                if provider == "nvidia" {
-                        msg += " (each NVIDIA model has its own limit)"
-                }
-                return msg
-        }
-        if status >= 500 {
-                return fmt.Sprintf("%d: provider error (model may be at capacity) — try again or switch models", status)
-        }
-        if len(b) > 220 {
-                b = b[:220] + "…"
-        }
-        return fmt.Sprintf("%d: %s", status, b)
+	b := strings.TrimSpace(body)
+	// v0.93.1 THE OPENROUTER HONESTY SET (live-probed 2026-10-02 with the
+	// user's key): three provider states the generic branches mislabeled —
+	// each now says what actually happened and what to do next.
+	if provider == "openrouter" {
+		// (1) The retired-:free 404. OpenRouter pulled the popular
+		// free variants (llama-3.3-70b:free, deepseek-r1:free, … all
+		// 404 with a "use this slug instead" pointer to the PAID
+		// slug — live-verified on 4 slugs). The user read it as "my
+		// account lost the models".
+		if status == 404 && strings.Contains(b, "use this slug instead") {
+			paid := ""
+			if i := strings.LastIndex(b, "instead: "); i >= 0 {
+				rest := b[i+9:]
+				// the slug runs to the closing quote (the body is
+				// the raw JSON error: …instead: slug","code"…)
+				if j := strings.IndexByte(rest, '"'); j >= 0 {
+					rest = rest[:j]
+				} else if j := strings.IndexAny(rest, ",}"); j >= 0 {
+					rest = rest[:j]
+				}
+				paid = strings.TrimSpace(rest)
+			}
+			msg := "OpenRouter retired this free model variant (the :free tier was pared down in Sept 2026)"
+			if paid != "" {
+				msg += " — the paid slug is " + paid + " (needs credits)"
+			}
+			msg += ". Try openrouter/free — it routes to whatever is genuinely free right now"
+			return msg
+		}
+		// (2) The never-purchased-credits 402. The generic 402 branch
+		// said "free quota used up" — wrong account state entirely
+		// (the key is FINE, the account just has no credits and this
+		// model isn't free).
+		if status == 402 || strings.Contains(b, "Insufficient credits") {
+			return "this model is PAID on OpenRouter and your key's account has no credits — your key works; use openrouter/free or one of the live :free models instead"
+		}
+		// (3) The upstream shared-pool 429. The free pool is shared
+		// by ALL OpenRouter free users — it is NOT the user's quota
+		// (their own daily budget: 50 free requests, live-checked:
+		// 50/50 remaining while the model still 429'd upstream).
+		if status == 429 && strings.Contains(b, "upstream_provider_shared_pool") {
+			return "the FREE pool for this model is rate-limited upstream right now (shared by all OpenRouter free users — not YOUR quota) — retry in a moment, or try openrouter/free which routes around it"
+		}
+	}
+	// 404 "Function '<id>': Not found for account" — NIM dropped the model
+	// for this key (observed live: kimi-k2.6 after NIM rotation).
+	if status == 404 && strings.Contains(b, "Not found for account") {
+		return "404: this model is no longer available for your " + provider + " account — pick another model"
+	}
+	// v0.35: 410 Gone — the model reached end-of-life upstream (live hit:
+	// deepseek-ai/deepseek-v4-flash EOL'd 2026-08-07 but still appears in
+	// older cached catalogs). Say it plainly so the user picks another.
+	if status == 410 || strings.Contains(b, "end of life") || strings.Contains(b, "end-of-life") {
+		return "this model has been retired by the provider (end of life) — pick another model"
+	}
+	// v0.38: 402 from the OpenCode bridge ("Upstream request failed:
+	// Insufficient account funds" — live hit during testing; the user's
+	// "GLM flash hit its capacity" report). The key is fine; the FREE
+	// quota is spent.
+	if status == 402 || strings.Contains(strings.ToLower(b), "insufficient account funds") {
+		return "this provider's free quota for this model is used up (402) — try again later, another provider hosting the same model, or a different model"
+	}
+	// v0.25 OPENCODE ZEN billing clarifications (live-verified with a
+	// working key): paid models answer 400 CreditsError "No payment
+	// method …/billing" even though the KEY is perfectly valid — free
+	// models (big-pickle, *-free) work on the same key. The raw message
+	// read as "my key needs billing enabled", which is wrong.
+	if strings.Contains(b, "CreditsError") || strings.Contains(b, "No payment method") {
+		return "this model is PAID on OpenCode Zen — your key works, but this model needs a payment method at opencode.ai/settings/billing, or switch provider (NVIDIA / PrivateMode have working free models)"
+	}
+	if strings.Contains(b, "MissingSessionID") {
+		return "OpenCode Zen wants a client session for this model — try big-pickle or another free model"
+	}
+	// v0.26 (2026-09-17): upstream walled the free tier to their own
+	// client — even WITH the x-session-id header big-pickle/*-free now
+	// answer 403 FreeTierError "OpenCode's free tier can only be used
+	// from within OpenCode" (live-verified; worked on 09-14). Honest
+	// message: nothing wrong with the key or the app.
+	// v1.48.5: the wall is BELOW HTTP (byte-faithful CLI-identity
+	// replays still 403) — but the genuine client now rides the engine
+	// as the serve bridge: on the DESKTOP engine the free models just
+	// work (the bridge takes the turn); this message is what you see
+	// where the bridge cannot run (Android, or the CLI download
+	// failed).
+	if strings.Contains(b, "FreeTierError") || strings.Contains(b, "free tier can only be used") {
+		return "OpenCode's free models are walled to their own client — your key and the app are fine. On the DESKTOP engine the free models run through the built-in OpenCode bridge; on this device use the paid zen models (a payment method at opencode.ai/settings/billing) or switch provider (NVIDIA / PrivateMode work great right now)"
+	}
+	if strings.Contains(b, "FreeUsageLimitError") {
+		return "OpenCode Zen free-tier limit for this model right now — wait a moment or switch models"
+	}
+	if status == 429 || strings.Contains(b, "rate limit") || strings.Contains(b, "Too Many Requests") {
+		msg := "429: the model is at capacity / rate-limited — wait ~15s and try again, or switch models"
+		if provider == "nvidia" {
+			msg += " (each NVIDIA model has its own limit)"
+		}
+		return msg
+	}
+	if status >= 500 {
+		return fmt.Sprintf("%d: provider error (model may be at capacity) — try again or switch models", status)
+	}
+	if len(b) > 220 {
+		b = b[:220] + "…"
+	}
+	return fmt.Sprintf("%d: %s", status, b)
 }
 
 // scanSSE performs ONE streaming chat completion, invoking onDelta for every
@@ -938,8 +944,8 @@ func friendlyHTTPError(status int, body string, provider string) string {
 // at once). ch receives error chunks (so the UI sees provider failures);
 // onDelta receives the fragments.
 func scanSSE(ctx context.Context, req ChatRequest, extraBody map[string]any, ch chan<- ChatChunk, onDelta func(reasoning, content string)) (*Usage, error) {
-        usage, _, err := scanSSECollect(ctx, req, extraBody, ch, onDelta)
-        return usage, err
+	usage, _, err := scanSSECollect(ctx, req, extraBody, ch, onDelta)
+	return usage, err
 }
 
 // scanSSECollect is scanSSE + native tool-call accumulation (v0.38): streams
@@ -947,565 +953,565 @@ func scanSSE(ctx context.Context, req ChatRequest, extraBody map[string]any, ch 
 // tool_calls deltas (index-keyed, per the OpenAI streaming spec) into a
 // complete call list. The legacy callers ignore the second return.
 func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]any, ch chan<- ChatChunk, onDelta func(reasoning, content string)) (*Usage, []nativeCall, error) {
-        messages := make([]Message, 0, len(req.Messages)+1)
-        if req.SystemPrompt != "" {
-                messages = append(messages, Message{Role: "system", Content: req.SystemPrompt})
-        }
-        messages = append(messages, req.Messages...)
+	messages := make([]Message, 0, len(req.Messages)+1)
+	if req.SystemPrompt != "" {
+		messages = append(messages, Message{Role: "system", Content: req.SystemPrompt})
+	}
+	messages = append(messages, req.Messages...)
 
-        body := map[string]any{
-                "model":          req.Model,
-                "messages":       messages,
-                "stream":         true,
-                "stream_options": map[string]bool{"include_usage": true},
-        }
-        // v0.13: effort body from the ported reasoning catalog (replaces the
-        // v0.12 hardcoded o1/deepseek guesses).
-        // v0.26: remember WHICH keys the effort body added — the 400-resilience
-        // below strips exactly these on retry.
-        // v0.42: "off" now flows through too — BuildEffortBodyFor resolves the
-        // DYNAMIC per-model surface (effort.go registry) and only emits a
-        // disable when the model actually documents one (kimi
-        // chat_template_kwargs.thinking:false, deepseek reasoning_effort
-        // "none"); mandatory reasoners get nil (never a disable). "med"
-        // remains the session-default sentinel (unset — sends nothing).
-        var effortKeys []string
-        if req.Effort != "" && req.Effort != "med" {
-                if extra := BuildEffortBodyFor(req.Provider, req.Model, req.Effort); extra != nil {
-                        for k, v := range extra {
-                                body[k] = v
-                                effortKeys = append(effortKeys, k)
-                        }
-                }
-        }
-        for k, v := range extraBody {
-                body[k] = v
-        }
-        _, hasTools := body["tools"]
+	body := map[string]any{
+		"model":          req.Model,
+		"messages":       messages,
+		"stream":         true,
+		"stream_options": map[string]bool{"include_usage": true},
+	}
+	// v0.13: effort body from the ported reasoning catalog (replaces the
+	// v0.12 hardcoded o1/deepseek guesses).
+	// v0.26: remember WHICH keys the effort body added — the 400-resilience
+	// below strips exactly these on retry.
+	// v0.42: "off" now flows through too — BuildEffortBodyFor resolves the
+	// DYNAMIC per-model surface (effort.go registry) and only emits a
+	// disable when the model actually documents one (kimi
+	// chat_template_kwargs.thinking:false, deepseek reasoning_effort
+	// "none"); mandatory reasoners get nil (never a disable). "med"
+	// remains the session-default sentinel (unset — sends nothing).
+	var effortKeys []string
+	if req.Effort != "" && req.Effort != "med" {
+		if extra := BuildEffortBodyFor(req.Provider, req.Model, req.Effort); extra != nil {
+			for k, v := range extra {
+				body[k] = v
+				effortKeys = append(effortKeys, k)
+			}
+		}
+	}
+	for k, v := range extraBody {
+		body[k] = v
+	}
+	_, hasTools := body["tools"]
 
-        // v1.13.3 THE GUT: the DSML filter's reinject mode (re-render
-        // rescued calls as ACTION lines for the ReAct parser) is gone
-        // with the parser — the filter now only STRIPS the markup from
-        // the visible stream; rescued calls feed the native loop's
-        // consumer when a tools array rides the request.
-        var dsml dsmlFilter
-        dsml.takeNative = hasTools
-        // v1.14.6 THE SOLID STREAM: the reasoning normalization — the
-        // inline <think>/<thinking> shape (QwQ, R1-distills) rides the
-        // CONTENT wire; this filter extracts it into the canonical
-        // reasoning channel before the DSML filter sees the remainder.
-        think := newThinkFilter()
+	// v1.13.3 THE GUT: the DSML filter's reinject mode (re-render
+	// rescued calls as ACTION lines for the ReAct parser) is gone
+	// with the parser — the filter now only STRIPS the markup from
+	// the visible stream; rescued calls feed the native loop's
+	// consumer when a tools array rides the request.
+	var dsml dsmlFilter
+	dsml.takeNative = hasTools
+	// v1.14.6 THE SOLID STREAM: the reasoning normalization — the
+	// inline <think>/<thinking> shape (QwQ, R1-distills) rides the
+	// CONTENT wire; this filter extracts it into the canonical
+	// reasoning channel before the DSML filter sees the remainder.
+	think := newThinkFilter()
 
-        // v0.95.4 THE OUTPUT FLOOR (the .MD-artifact cutoff class): no
-        // max_tokens was EVER set on any chat request — providers that
-        // default LOW (NIM: 1024 output tokens ≈ 4KB) silently cut long
-        // outputs mid-file, which reads downstream as "the artifact's
-        // contents got cut off". Set an explicit floor for the providers
-        // KNOWN to default low; every other host keeps its server default
-        // (never cap a host that would have given more). A 400 that names
-        // max_tokens strips it and retries once (the effortKeys pattern).
-        var bodyKeys []string
-        if _, exists := body["max_tokens"]; !exists {
-                if floor, known := providerMaxTokensFloor(req.Provider); known {
-                        // v1.14.1 THE LEDGER: the value is now the MODEL's
-                        // documented output cap (models.dev snapshot) when
-                        // known — the flat 16384 crossed fingers that every
-                        // NIM model tolerated it; the spec says exactly what
-                        // this model allows. The 400-strip retry below stays
-                        // as the safety net for stale snapshots.
-                        if specOut, ok := SpecMaxOutput(req.Model); ok && specOut > 0 {
-                                floor = specOut
-                        }
-                        body["max_tokens"] = floor
-                        bodyKeys = append(bodyKeys, "max_tokens")
-                }
-        }
+	// v0.95.4 THE OUTPUT FLOOR (the .MD-artifact cutoff class): no
+	// max_tokens was EVER set on any chat request — providers that
+	// default LOW (NIM: 1024 output tokens ≈ 4KB) silently cut long
+	// outputs mid-file, which reads downstream as "the artifact's
+	// contents got cut off". Set an explicit floor for the providers
+	// KNOWN to default low; every other host keeps its server default
+	// (never cap a host that would have given more). A 400 that names
+	// max_tokens strips it and retries once (the effortKeys pattern).
+	var bodyKeys []string
+	if _, exists := body["max_tokens"]; !exists {
+		if floor, known := providerMaxTokensFloor(req.Provider); known {
+			// v1.14.1 THE LEDGER: the value is now the MODEL's
+			// documented output cap (models.dev snapshot) when
+			// known — the flat 16384 crossed fingers that every
+			// NIM model tolerated it; the spec says exactly what
+			// this model allows. The 400-strip retry below stays
+			// as the safety net for stale snapshots.
+			if specOut, ok := SpecMaxOutput(req.Model); ok && specOut > 0 {
+				floor = specOut
+			}
+			body["max_tokens"] = floor
+			bodyKeys = append(bodyKeys, "max_tokens")
+		}
+	}
 
-        bodyBytes, err := json.Marshal(body)
-        if err != nil {
-                return nil, nil, fmt.Errorf("marshal: %w", err)
-        }
+	bodyBytes, err := json.Marshal(body)
+	if err != nil {
+		return nil, nil, fmt.Errorf("marshal: %w", err)
+	}
 
-        base := strings.TrimSuffix(req.BaseURL, "/")
-        url := base + "/v1/chat/completions"
-        if strings.HasSuffix(base, "/v1") {
-                url = base + "/chat/completions"
-        }
+	base := strings.TrimSuffix(req.BaseURL, "/")
+	url := base + "/v1/chat/completions"
+	if strings.HasSuffix(base, "/v1") {
+		url = base + "/chat/completions"
+	}
 
-        // v0.26: EFFORT-PARAM RESILIENCE — a model that rejects an unverified
-        // reasoning shape (reasoning_effort / chat_template_kwargs / thinking)
-        // with a 400 is retried ONCE without the param, and the (provider,
-        // model) is blacklisted for this engine's lifetime so every later
-        // request skips it. The effort button keeps working; the model just
-        // never sees the param again.
-        if len(effortKeys) > 0 && effortBlacklisted(req.Provider, req.Model) {
-                for _, k := range effortKeys {
-                        delete(body, k)
-                }
-                bodyBytes, _ = json.Marshal(body)
-                effortKeys = nil
-        }
+	// v0.26: EFFORT-PARAM RESILIENCE — a model that rejects an unverified
+	// reasoning shape (reasoning_effort / chat_template_kwargs / thinking)
+	// with a 400 is retried ONCE without the param, and the (provider,
+	// model) is blacklisted for this engine's lifetime so every later
+	// request skips it. The effort button keeps working; the model just
+	// never sees the param again.
+	if len(effortKeys) > 0 && effortBlacklisted(req.Provider, req.Model) {
+		for _, k := range effortKeys {
+			delete(body, k)
+		}
+		bodyBytes, _ = json.Marshal(body)
+		effortKeys = nil
+	}
 
-        // v1.14.4 THE TRACE: the GenAI client span for THIS upstream
-        // completion — `chat <model>` (semconv span-name convention),
-        // parented to the turn span. The deferred block carries the
-        // response-side semconv attrs (finish reasons, token usage, delta
-        // tallies) on EVERY exit path — early error returns included — so
-        // a failed call still leaves a complete waterfall entry, and it
-        // feeds the two GenAI histograms. `usage` is hoisted ABOVE the
-        // span so the defer can read it (it used to be declared at the
-        // scanner; the re-assignment below is a fresh struct either way).
-        usage := &Usage{}
-        var nReason, nContent, nToolDelta int
-        firstTok := false
-        maxTok := 0
-        if n, ok := body["max_tokens"].(int); ok {
-                maxTok = n
-        }
-        bodyHead := ""
-        if obs.TraceBodies() {
-                bodyHead = deltaHead(string(bodyBytes), 4096)
-        }
-        ctx, chatSpan := obs.StartChatSpan(ctx, req.SessionID, req.Provider, req.Model, maxTok, bodyHead)
-        chatStart := time.Now()
-        defer func() {
-                obs.EmitS(ctx, obs.Finish, "model", req.Model, "provider", req.Provider,
-                        "finish_reason", usage.FinishReason, "output_cut", usage.OutputCut,
-                        "input_tokens", usage.InputTokens, "output_tokens", usage.OutputTokens,
-                        "total_tokens", usage.TotalTokens,
-                        "reasoning_deltas", nReason, "content_deltas", nContent, "tool_call_deltas", nToolDelta,
-                        "duration_ms", int(time.Since(chatStart).Milliseconds()))
-                chatSpan.End(usage.FinishReason, usage.OutputCut,
-                        usage.InputTokens, usage.OutputTokens,
-                        fmt.Sprintf("reasoning=%d content=%d tool_call=%d", nReason, nContent, nToolDelta))
-                obs.RecordChatMetrics(req.Provider, req.Model, time.Since(chatStart), usage.InputTokens, usage.OutputTokens)
-        }()
+	// v1.14.4 THE TRACE: the GenAI client span for THIS upstream
+	// completion — `chat <model>` (semconv span-name convention),
+	// parented to the turn span. The deferred block carries the
+	// response-side semconv attrs (finish reasons, token usage, delta
+	// tallies) on EVERY exit path — early error returns included — so
+	// a failed call still leaves a complete waterfall entry, and it
+	// feeds the two GenAI histograms. `usage` is hoisted ABOVE the
+	// span so the defer can read it (it used to be declared at the
+	// scanner; the re-assignment below is a fresh struct either way).
+	usage := &Usage{}
+	var nReason, nContent, nToolDelta int
+	firstTok := false
+	maxTok := 0
+	if n, ok := body["max_tokens"].(int); ok {
+		maxTok = n
+	}
+	bodyHead := ""
+	if obs.TraceBodies() {
+		bodyHead = deltaHead(string(bodyBytes), 4096)
+	}
+	ctx, chatSpan := obs.StartChatSpan(ctx, req.SessionID, req.Provider, req.Model, maxTok, bodyHead)
+	chatStart := time.Now()
+	defer func() {
+		obs.EmitS(ctx, obs.Finish, "model", req.Model, "provider", req.Provider,
+			"finish_reason", usage.FinishReason, "output_cut", usage.OutputCut,
+			"input_tokens", usage.InputTokens, "output_tokens", usage.OutputTokens,
+			"total_tokens", usage.TotalTokens,
+			"reasoning_deltas", nReason, "content_deltas", nContent, "tool_call_deltas", nToolDelta,
+			"duration_ms", int(time.Since(chatStart).Milliseconds()))
+		chatSpan.End(usage.FinishReason, usage.OutputCut,
+			usage.InputTokens, usage.OutputTokens,
+			fmt.Sprintf("reasoning=%d content=%d tool_call=%d", nReason, nContent, nToolDelta))
+		obs.RecordChatMetrics(req.Provider, req.Model, time.Since(chatStart), usage.InputTokens, usage.OutputTokens)
+	}()
 
-        // v0.39 PACING (P8-FULL, socreate scheduler.py:338-361): reserve the
-        // provider's rpm slot — reserve-under-lock, sleep outside — so
-        // concurrent turns (parallel chats) stagger instead of bursting
-        // into a 429. Bounded: pacing alone never stalls a turn >5s.
-        if wait := PaceProvider(req.Provider); wait > 0 {
-                select {
-                case ch <- ChatChunk{Type: "progress", Text: fmt.Sprintf("pacing %s — sending in %.1fs", providerLabel(req.Provider), wait.Seconds())}:
-                default:
-                }
-                select {
-                case <-ctx.Done():
-                        ch <- ChatChunk{Type: "error", Error: "cancelled", Message: "turn stopped while pacing the provider"}
-                        return nil, nil, nil
-                case <-time.After(wait):
-                }
-        }
+	// v0.39 PACING (P8-FULL, socreate scheduler.py:338-361): reserve the
+	// provider's rpm slot — reserve-under-lock, sleep outside — so
+	// concurrent turns (parallel chats) stagger instead of bursting
+	// into a 429. Bounded: pacing alone never stalls a turn >5s.
+	if wait := PaceProvider(req.Provider); wait > 0 {
+		select {
+		case ch <- ChatChunk{Type: "progress", Text: fmt.Sprintf("pacing %s — sending in %.1fs", providerLabel(req.Provider), wait.Seconds())}:
+		default:
+		}
+		select {
+		case <-ctx.Done():
+			ch <- ChatChunk{Type: "error", Error: "cancelled", Message: "turn stopped while pacing the provider"}
+			return nil, nil, nil
+		case <-time.After(wait):
+		}
+	}
 
-        obs.EmitS(ctx, obs.Request, "model", req.Model, "provider", req.Provider, "url", url, "attempt", 1, "body_bytes", len(bodyBytes))
-        resp, reqErr := doPostSSE(ctx, req, url, bodyBytes, ch)
-        if resp == nil {
-                return nil, nil, fmt.Errorf("request failed: %w", reqErr)
-        }
-        // v0.36: 429/503 RETRY-WITH-BACKOFF (mirrors the brain's
-        // num_retries=3): NVIDIA's per-model rate limits answer 429 on
-        // burst sends — failing the whole turn on the first 429 was harsh
-        // when a short pause clears it. Up to 2 retries (3 attempts total)
-        // with 4s/8s backoff, each wait announced as a progress notice so
-        // the UI explains the pause. Non-retryable statuses flow straight
-        // to friendlyHTTPError; a turn cancelled mid-wait ends quietly.
-        //
-        // v0.39 COOLDOWN TABLE (P8-FULL): every 429/503 is RECORDED (the
-        // provider's proportional cooldown informs alternate routing), and
-        // the SECOND retry waits the LONGER of the flat backoff and the
-        // cooldown — diverging from socreate's rotate-immediately because
-        // this engine usually has exactly ONE keyed provider (rotate has
-        // nowhere to go; the honest move is the proportional wait).
-        for attempt := 1; (resp.StatusCode == 429 || resp.StatusCode == 503) && attempt < 3; attempt++ {
-                wait := time.Duration(attempt*4) * time.Second // 4s, then 8s
-                class := "429"
-                if resp.StatusCode == 503 {
-                        class = "5xx"
-                }
-                RecordProviderFailure(req.Provider, class, fmt.Sprintf("HTTP %d on %s", resp.StatusCode, modelShort(req.Model)))
-                if attempt >= 2 {
-                        if r := ProviderCooldownRemaining(req.Provider); r > wait {
-                                if r > 30*time.Second {
-                                        r = 30 * time.Second // single-provider cap: never wedge one wait past 30s
-                                }
-                                wait = r
-                        }
-                }
-                io.Copy(io.Discard, resp.Body)
-                resp.Body.Close()
-                note := fmt.Sprintf("429: rate-limited by %s — retrying in %ds (attempt %d of 3)",
-                        providerLabel(req.Provider), int(wait.Seconds()), attempt+1)
-                if resp.StatusCode == 503 {
-                        note = fmt.Sprintf("%s is overloaded (503) — retrying in %ds (attempt %d of 3)",
-                                providerLabel(req.Provider), int(wait.Seconds()), attempt+1)
-                }
-                obs.EmitS(ctx, obs.Retry, "model", req.Model, "provider", req.Provider,
-                        "status", resp.StatusCode, "attempt", attempt+1, "wait_ms", int(wait.Milliseconds()))
-                select {
-                case ch <- ChatChunk{Type: "progress", Text: note}:
-                default: // never block the stream on UI notices
-                }
-                select {
-                case <-ctx.Done():
-                        ch <- ChatChunk{Type: "error", Error: "cancelled", Message: "turn stopped while waiting to retry after the rate limit"}
-                        return nil, nil, nil
-                case <-time.After(wait):
-                }
-                resp, reqErr = doPostSSE(ctx, req, url, bodyBytes, ch)
-                if resp == nil {
-                        return nil, nil, fmt.Errorf("request failed: %w", reqErr)
-                }
-        }
-        if resp.StatusCode != 200 {
-                bts, _ := io.ReadAll(resp.Body)
-                resp.Body.Close()
-                // v0.38 MODEL-GONE FALLBACK ROUTING (live-observed: NIM models
-                // get deprovisioned mid-session — 404 "Not found for account"):
-                // rotate to another provider hosting the same logical model,
-                // once per turn, announced as a progress notice.
-                if (resp.StatusCode == 404 || resp.StatusCode == 410) && !req.FallbackTried && modelGoneBody(string(bts)) {
-                        if am, ab, _, ak, as, altProv, ok := ResolveModelAlternate(req.Model, req.Provider, req.Keys); ok {
-                                req.FallbackTried = true
-                                note := fmt.Sprintf("%s no longer hosts %s — switching to %s (same model)",
-                                        providerLabel(req.Provider), modelShort(req.Model), providerLabel(altProv))
-                                obs.EmitS(ctx, obs.Fallback, "model", am, "provider", altProv, "from_provider", req.Provider)
-                                select {
-                                case ch <- ChatChunk{Type: "progress", Text: note}:
-                                default:
-                                }
-                                req.Model, req.APIKey, req.BaseURL, req.AuthStyle = am, ak, ab, as
-                                body["model"] = am
-                                bodyBytes, _ = json.Marshal(body)
-                                resp, reqErr = doPostSSE(ctx, req, url, bodyBytes, ch)
-                                if resp == nil {
-                                        return nil, nil, fmt.Errorf("request failed: %w", reqErr)
-                                }
-                                if resp.StatusCode != 200 {
-                                        bts, _ = io.ReadAll(resp.Body)
-                                        resp.Body.Close()
-                                }
-                        }
-                }
-                if resp.StatusCode != 200 {
-                        // v0.38 NATIVE-TOOLS REJECTION: a 400 that names tools/function
-                        // calling on a tools-bearing request is a capability gap, not a
-                        // user error — suppress the UI error, blacklist the provider
-                        // for this engine's lifetime, and let the caller fall back to
-                        // the ACTION text protocol.
-                        if hasTools && resp.StatusCode == 400 && toolsRejectedBody(string(bts)) {
-                                blacklistNativeTools(req.Provider)
-                                obs.EmitS(ctx, obs.ToolsRejected, "provider", req.Provider, "model", req.Model, "status", 400)
-                                return nil, nil, errToolsRejected
-                        }
-                        if len(effortKeys) > 0 && resp.StatusCode == 400 && mentionsEffortParam(string(bts)) {
-                                blacklistEffort(req.Provider, req.Model)
-                                obs.EmitS(ctx, obs.Strip, "what", "effort", "provider", req.Provider, "model", req.Model)
-                                for _, k := range effortKeys {
-                                        delete(body, k)
-                                }
-                                clean, _ := json.Marshal(body)
-                                resp2, reqErr2 := doPostSSE(ctx, req, url, clean, ch)
-                                if resp2 != nil {
-                                        if resp2.StatusCode != 200 {
-                                                bts2, _ := io.ReadAll(resp2.Body)
-                                                resp2.Body.Close()
-                                                RecordProviderFailure(req.Provider,
-                                                        ClassifyProviderError(resp2.StatusCode, string(bts2)),
-                                                        fmt.Sprintf("HTTP %d on %s (post effort-strip)", resp2.StatusCode, modelShort(req.Model)))
-                                                ch <- ChatChunk{Type: "error", Error: "http", Message: friendlyHTTPError(resp2.StatusCode, string(bts2), req.Provider)}
-                                                return nil, nil, nil
-                                        }
-                                        resp = resp2
-                                } else {
-                                        return nil, nil, fmt.Errorf("request failed: %w", reqErr2)
-                                }
-                        } else {
-                                // v0.95.4 OUTPUT-FLOOR RESILIENCE: a 400 that
-                                // names max_tokens means the host rejected the
-                                // floor (a model with a lower output headroom)
-                                // — strip it and retry once, then never send
-                                // it to this provider again (the effortKeys
-                                // pattern; the server's own default returns).
-                                if len(bodyKeys) > 0 && resp.StatusCode == 400 && mentionsMaxTokens(string(bts)) {
-                                        obs.EmitS(ctx, obs.Strip, "what", "max_tokens", "provider", req.Provider, "model", req.Model)
-                                        for _, k := range bodyKeys {
-                                                delete(body, k)
-                                        }
-                                        bodyKeys = nil
-                                        clean, _ := json.Marshal(body)
-                                        resp2, reqErr2 := doPostSSE(ctx, req, url, clean, ch)
-                                        if resp2 == nil {
-                                                return nil, nil, fmt.Errorf("request failed: %w", reqErr2)
-                                        }
-                                        if resp2.StatusCode == 200 {
-                                                resp = resp2
-                                        } else {
-                                                bts2, _ := io.ReadAll(resp2.Body)
-                                                resp2.Body.Close()
-                                                RecordProviderFailure(req.Provider,
-                                                        ClassifyProviderError(resp2.StatusCode, string(bts2)),
-                                                        fmt.Sprintf("HTTP %d on %s (post max_tokens-strip)", resp2.StatusCode, modelShort(req.Model)))
-                                                ch <- ChatChunk{Type: "error", Error: "http", Message: friendlyHTTPError(resp2.StatusCode, string(bts2), req.Provider)}
-                                                return nil, nil, nil
-                                        }
-                                        // fall through to the stream with the stripped body
-                                } else {
-                                        // v0.39: record the provider failure class (auth →
-                                        // engine-lifetime blacklist, quota/payload/5xx →
-                                        // 60s cooldown) — alternate routing + later
-                                        // turns consult the table.
-                                        RecordProviderFailure(req.Provider,
-                                                ClassifyProviderError(resp.StatusCode, string(bts)),
-                                                fmt.Sprintf("HTTP %d on %s", resp.StatusCode, modelShort(req.Model)))
-                                        ch <- ChatChunk{Type: "error", Error: "http", Message: friendlyHTTPError(resp.StatusCode, string(bts), req.Provider)}
-                                        return nil, nil, nil
-                                }
-                        }
-                }
-        }
+	obs.EmitS(ctx, obs.Request, "model", req.Model, "provider", req.Provider, "url", url, "attempt", 1, "body_bytes", len(bodyBytes))
+	resp, reqErr := doPostSSE(ctx, req, url, bodyBytes, ch)
+	if resp == nil {
+		return nil, nil, fmt.Errorf("request failed: %w", reqErr)
+	}
+	// v0.36: 429/503 RETRY-WITH-BACKOFF (mirrors the brain's
+	// num_retries=3): NVIDIA's per-model rate limits answer 429 on
+	// burst sends — failing the whole turn on the first 429 was harsh
+	// when a short pause clears it. Up to 2 retries (3 attempts total)
+	// with 4s/8s backoff, each wait announced as a progress notice so
+	// the UI explains the pause. Non-retryable statuses flow straight
+	// to friendlyHTTPError; a turn cancelled mid-wait ends quietly.
+	//
+	// v0.39 COOLDOWN TABLE (P8-FULL): every 429/503 is RECORDED (the
+	// provider's proportional cooldown informs alternate routing), and
+	// the SECOND retry waits the LONGER of the flat backoff and the
+	// cooldown — diverging from socreate's rotate-immediately because
+	// this engine usually has exactly ONE keyed provider (rotate has
+	// nowhere to go; the honest move is the proportional wait).
+	for attempt := 1; (resp.StatusCode == 429 || resp.StatusCode == 503) && attempt < 3; attempt++ {
+		wait := time.Duration(attempt*4) * time.Second // 4s, then 8s
+		class := "429"
+		if resp.StatusCode == 503 {
+			class = "5xx"
+		}
+		RecordProviderFailure(req.Provider, class, fmt.Sprintf("HTTP %d on %s", resp.StatusCode, modelShort(req.Model)))
+		if attempt >= 2 {
+			if r := ProviderCooldownRemaining(req.Provider); r > wait {
+				if r > 30*time.Second {
+					r = 30 * time.Second // single-provider cap: never wedge one wait past 30s
+				}
+				wait = r
+			}
+		}
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		note := fmt.Sprintf("429: rate-limited by %s — retrying in %ds (attempt %d of 3)",
+			providerLabel(req.Provider), int(wait.Seconds()), attempt+1)
+		if resp.StatusCode == 503 {
+			note = fmt.Sprintf("%s is overloaded (503) — retrying in %ds (attempt %d of 3)",
+				providerLabel(req.Provider), int(wait.Seconds()), attempt+1)
+		}
+		obs.EmitS(ctx, obs.Retry, "model", req.Model, "provider", req.Provider,
+			"status", resp.StatusCode, "attempt", attempt+1, "wait_ms", int(wait.Milliseconds()))
+		select {
+		case ch <- ChatChunk{Type: "progress", Text: note}:
+		default: // never block the stream on UI notices
+		}
+		select {
+		case <-ctx.Done():
+			ch <- ChatChunk{Type: "error", Error: "cancelled", Message: "turn stopped while waiting to retry after the rate limit"}
+			return nil, nil, nil
+		case <-time.After(wait):
+		}
+		resp, reqErr = doPostSSE(ctx, req, url, bodyBytes, ch)
+		if resp == nil {
+			return nil, nil, fmt.Errorf("request failed: %w", reqErr)
+		}
+	}
+	if resp.StatusCode != 200 {
+		bts, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		// v0.38 MODEL-GONE FALLBACK ROUTING (live-observed: NIM models
+		// get deprovisioned mid-session — 404 "Not found for account"):
+		// rotate to another provider hosting the same logical model,
+		// once per turn, announced as a progress notice.
+		if (resp.StatusCode == 404 || resp.StatusCode == 410) && !req.FallbackTried && modelGoneBody(string(bts)) {
+			if am, ab, _, ak, as, altProv, ok := ResolveModelAlternate(req.Model, req.Provider, req.Keys); ok {
+				req.FallbackTried = true
+				note := fmt.Sprintf("%s no longer hosts %s — switching to %s (same model)",
+					providerLabel(req.Provider), modelShort(req.Model), providerLabel(altProv))
+				obs.EmitS(ctx, obs.Fallback, "model", am, "provider", altProv, "from_provider", req.Provider)
+				select {
+				case ch <- ChatChunk{Type: "progress", Text: note}:
+				default:
+				}
+				req.Model, req.APIKey, req.BaseURL, req.AuthStyle = am, ak, ab, as
+				body["model"] = am
+				bodyBytes, _ = json.Marshal(body)
+				resp, reqErr = doPostSSE(ctx, req, url, bodyBytes, ch)
+				if resp == nil {
+					return nil, nil, fmt.Errorf("request failed: %w", reqErr)
+				}
+				if resp.StatusCode != 200 {
+					bts, _ = io.ReadAll(resp.Body)
+					resp.Body.Close()
+				}
+			}
+		}
+		if resp.StatusCode != 200 {
+			// v0.38 NATIVE-TOOLS REJECTION: a 400 that names tools/function
+			// calling on a tools-bearing request is a capability gap, not a
+			// user error — suppress the UI error, blacklist the provider
+			// for this engine's lifetime, and let the caller fall back to
+			// the ACTION text protocol.
+			if hasTools && resp.StatusCode == 400 && toolsRejectedBody(string(bts)) {
+				blacklistNativeTools(req.Provider)
+				obs.EmitS(ctx, obs.ToolsRejected, "provider", req.Provider, "model", req.Model, "status", 400)
+				return nil, nil, errToolsRejected
+			}
+			if len(effortKeys) > 0 && resp.StatusCode == 400 && mentionsEffortParam(string(bts)) {
+				blacklistEffort(req.Provider, req.Model)
+				obs.EmitS(ctx, obs.Strip, "what", "effort", "provider", req.Provider, "model", req.Model)
+				for _, k := range effortKeys {
+					delete(body, k)
+				}
+				clean, _ := json.Marshal(body)
+				resp2, reqErr2 := doPostSSE(ctx, req, url, clean, ch)
+				if resp2 != nil {
+					if resp2.StatusCode != 200 {
+						bts2, _ := io.ReadAll(resp2.Body)
+						resp2.Body.Close()
+						RecordProviderFailure(req.Provider,
+							ClassifyProviderError(resp2.StatusCode, string(bts2)),
+							fmt.Sprintf("HTTP %d on %s (post effort-strip)", resp2.StatusCode, modelShort(req.Model)))
+						ch <- ChatChunk{Type: "error", Error: "http", Message: friendlyHTTPError(resp2.StatusCode, string(bts2), req.Provider)}
+						return nil, nil, nil
+					}
+					resp = resp2
+				} else {
+					return nil, nil, fmt.Errorf("request failed: %w", reqErr2)
+				}
+			} else {
+				// v0.95.4 OUTPUT-FLOOR RESILIENCE: a 400 that
+				// names max_tokens means the host rejected the
+				// floor (a model with a lower output headroom)
+				// — strip it and retry once, then never send
+				// it to this provider again (the effortKeys
+				// pattern; the server's own default returns).
+				if len(bodyKeys) > 0 && resp.StatusCode == 400 && mentionsMaxTokens(string(bts)) {
+					obs.EmitS(ctx, obs.Strip, "what", "max_tokens", "provider", req.Provider, "model", req.Model)
+					for _, k := range bodyKeys {
+						delete(body, k)
+					}
+					bodyKeys = nil
+					clean, _ := json.Marshal(body)
+					resp2, reqErr2 := doPostSSE(ctx, req, url, clean, ch)
+					if resp2 == nil {
+						return nil, nil, fmt.Errorf("request failed: %w", reqErr2)
+					}
+					if resp2.StatusCode == 200 {
+						resp = resp2
+					} else {
+						bts2, _ := io.ReadAll(resp2.Body)
+						resp2.Body.Close()
+						RecordProviderFailure(req.Provider,
+							ClassifyProviderError(resp2.StatusCode, string(bts2)),
+							fmt.Sprintf("HTTP %d on %s (post max_tokens-strip)", resp2.StatusCode, modelShort(req.Model)))
+						ch <- ChatChunk{Type: "error", Error: "http", Message: friendlyHTTPError(resp2.StatusCode, string(bts2), req.Provider)}
+						return nil, nil, nil
+					}
+					// fall through to the stream with the stripped body
+				} else {
+					// v0.39: record the provider failure class (auth →
+					// engine-lifetime blacklist, quota/payload/5xx →
+					// 60s cooldown) — alternate routing + later
+					// turns consult the table.
+					RecordProviderFailure(req.Provider,
+						ClassifyProviderError(resp.StatusCode, string(bts)),
+						fmt.Sprintf("HTTP %d on %s", resp.StatusCode, modelShort(req.Model)))
+					ch <- ChatChunk{Type: "error", Error: "http", Message: friendlyHTTPError(resp.StatusCode, string(bts), req.Provider)}
+					return nil, nil, nil
+				}
+			}
+		}
+	}
 
-        // v0.39: a landed 200 clears the provider's EXPIRED cooldown (the
-        // socreate race guard — an ACTIVE 429 cooldown recorded by a sibling
-        // request survives).
-        RecordProviderSuccess(req.Provider)
-        obs.EmitS(ctx, obs.StreamOpen, "model", req.Model, "provider", req.Provider, "status", 200)
-        fsmOpened(ctx) // v1.14.6: the FSM saw the 200
+	// v0.39: a landed 200 clears the provider's EXPIRED cooldown (the
+	// socreate race guard — an ACTIVE 429 cooldown recorded by a sibling
+	// request survives).
+	RecordProviderSuccess(req.Provider)
+	obs.EmitS(ctx, obs.StreamOpen, "model", req.Model, "provider", req.Provider, "status", 200)
+	fsmOpened(ctx) // v1.14.6: the FSM saw the 200
 
-        // v0.19: no-data watchdog — v0.80.1: DISARMED. idleWaitFor returns 0
-        // (no kill timer is armed — the user directive: no timer may cancel
-        // an output). The reader still tracks silentFor()/lastDelta so
-        // waitNotices keeps the UI informed ("waiting for kimi-k3 · 60s…")
-        // for as long as the provider needs; Stop is the canceller.
-        wd := newIdleTimeoutReader(resp.Body, idleWaitFor(req.Model))
-        wd.startMS.Store(time.Now().UnixMilli())
-        wd.lastDelta.Store(0)
-        defer resp.Body.Close()
-        // v0.95.4: finish_reason == "length" honesty — the provider cut the
-        // output at its token cap. NEVER silently: the note rides the visible
-        // stream so it persists, replays, and the user knows to say
-        // "continue" (the silent .MD-artifact cutoff class).
-        hitLength := false
-        var lastFinishReason string // v1.14.1 THE LEDGER: last terminal verdict on the wire
-        defer wd.Close()
-        stopNotices := waitNotices(ch, wd, req.Model, req.Provider)
-        defer stopNotices()
+	// v0.19: no-data watchdog — v0.80.1: DISARMED. idleWaitFor returns 0
+	// (no kill timer is armed — the user directive: no timer may cancel
+	// an output). The reader still tracks silentFor()/lastDelta so
+	// waitNotices keeps the UI informed ("waiting for kimi-k3 · 60s…")
+	// for as long as the provider needs; Stop is the canceller.
+	wd := newIdleTimeoutReader(resp.Body, idleWaitFor(req.Model))
+	wd.startMS.Store(time.Now().UnixMilli())
+	wd.lastDelta.Store(0)
+	defer resp.Body.Close()
+	// v0.95.4: finish_reason == "length" honesty — the provider cut the
+	// output at its token cap. NEVER silently: the note rides the visible
+	// stream so it persists, replays, and the user knows to say
+	// "continue" (the silent .MD-artifact cutoff class).
+	hitLength := false
+	var lastFinishReason string // v1.14.1 THE LEDGER: last terminal verdict on the wire
+	defer wd.Close()
+	stopNotices := waitNotices(ch, wd, req.Model, req.Provider)
+	defer stopNotices()
 
-        scanner := bufio.NewScanner(wd)
-        // v0.93.1: 256KB → 16MB max (64KB initial). Media models
-        // (google/lyria-3-clip-preview — the user's live hit) stream ONE
-        // SSE data line carrying a full base64-encoded media payload:
-        // multi-megabyte tokens that 256KB aborted with "bufio.Scanner:
-        // token too long", killing the whole turn. 16MB covers every
-        // observed payload class (images/audio clips) while still capping
-        // runaway hosts.
-        scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
-        var calls []nativeCall
-        callIdx := map[int]int{} // delta index → position in calls
-        for scanner.Scan() {
-                line := scanner.Text()
-                if !strings.HasPrefix(line, "data: ") {
-                        continue
-                }
-                data := strings.TrimPrefix(line, "data: ")
-                if data == "[DONE]" {
-                        break
-                }
-                var chunk openAIChunk
-                if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-                        continue
-                }
-                for _, choice := range chunk.Choices {
-                        if choice.FinishReason == "length" {
-                                hitLength = true
-                        }
-                        if choice.FinishReason != "" {
-                                lastFinishReason = choice.FinishReason
-                        }
-                        // v0.38: assemble streamed tool-call fragments — the
-                        // first carries id+name, later ones only arguments.
-                        for _, tc := range choice.Delta.ToolCalls {
-                                wd.markDelta()
-                                nToolDelta++
-                                if !firstTok {
-                                        firstTok = true
-                                        obs.EmitS(ctx, obs.FirstToken, "model", req.Model, "kind", "tool_call")
-                                        fsmStreamed(ctx) // v1.14.6: real wire traffic
-                                }
-                                pos, ok := callIdx[tc.Index]
-                                if !ok {
-                                        pos = len(calls)
-                                        callIdx[tc.Index] = pos
-                                        calls = append(calls, nativeCall{ID: tc.ID, Name: tc.Function.Name})
-                                }
-                                if tc.ID != "" && calls[pos].ID == "" {
-                                        calls[pos].ID = tc.ID
-                                }
-                                if tc.Function.Name != "" && calls[pos].Name == "" {
-                                        calls[pos].Name = tc.Function.Name
-                                }
-                                calls[pos].Arguments += tc.Function.Arguments
-                                // v1.14.4 THE TRACE: every tool_call argument
-                                // fragment (the assembled call is judged at
-                                // execution time — this is the wire truth).
-                                if obs.DeltaTrace() >= 1 {
-                                        obs.EmitS(ctx, obs.ToolCallDelta, "index", tc.Index,
-                                                "name", calls[pos].Name, "args_len", len(calls[pos].Arguments),
-                                                "chunk", tc.Function.Arguments)
-                                }
-                        }
-                        // v0.95.4 THE DSML FILTER: deepseek-family models
-                        // stream their native tool markup (<｜DSML｜calls>…)
-                        // as CONTENT when they fall back to their own format
-                        // — the markup leaked into the visible transcript and
-                        // the calls inside never executed (the user's live
-                        // scooby export). Split each fragment: visible text
-                        // passes through, the markup is stripped, and a
-                        // closed block's calls are RESCUED (native call list
-                        // when the request carries tools; ACTION lines in the
-                        // content stream for the ReAct parser when not).
-                        if choice.Delta.Reasoning != "" || choice.Delta.ReasoningOR != "" || choice.Delta.Content != "" {
-                                wd.markDelta() // v0.24: real token — wait-notices go quiet
-                                // v1.14.6: think-tag extraction FIRST — the inline
-                                // reasoning shape rides delta.content; the visible
-                                // remainder then goes through the DSML filter.
-                                extracted, rawVisible := think.feed(choice.Delta.Content)
-                                visible := dsml.feed(rawVisible)
-                                if !firstTok {
-                                        firstTok = true
-                                        obs.EmitS(ctx, obs.FirstToken, "model", req.Model, "kind", "delta")
-                                        fsmStreamed(ctx) // v1.14.6: real wire traffic
-                                }
-                                // v1.14.4 THE TRACE: reasoning + content deltas
-                                // under the DOOM_TRACE_DELTAS gate (0 = counts
-                                // only, 1 = 64-rune head, 2 = full text). The
-                                // tallies ride the finish event at every gate.
-                                // v1.46.1 THE ALIAS LAW: the two wire spellings are documented
-                                // aliases of ONE channel — PM's vllm-0.31 gateway emits BOTH
-                                // byte-equal on every reasoning delta (live-convicted:
-                                // "every word appears twice"), so mergeWireReasoning
-                                // dedupes the pair; single-spelling senders (OpenRouter
-                                // reasoning / NIM reasoning_content) pass through as-is.
-                                if r := mergeWireReasoning(choice.Delta.Reasoning, choice.Delta.ReasoningOR); r != "" {
-                                        nReason++
-                                        if obs.DeltaTrace() >= 2 {
-                                                obs.EmitS(ctx, obs.ReasoningDelta, "len", len(r), "text", r)
-                                        } else if obs.DeltaTrace() == 1 {
-                                                obs.EmitS(ctx, obs.ReasoningDelta, "len", len(r), "head", deltaHead(r, 64))
-                                        }
-                                }
-                                if extracted != "" {
-                                        nReason++ // normalized reasoning counts as reasoning
-                                }
-                                if visible != "" {
-                                        nContent++
-                                        if obs.DeltaTrace() >= 2 {
-                                                obs.EmitS(ctx, obs.ContentDelta, "len", len(visible), "text", visible)
-                                        } else if obs.DeltaTrace() == 1 {
-                                                obs.EmitS(ctx, obs.ContentDelta, "len", len(visible), "head", deltaHead(visible, 64))
-                                        }
-                                }
-                                if onDelta != nil {
-                                        // v1.14.6 THE NORMALIZATION TABLE: one canonical
-                                        // reasoning channel — wire-native reasoning_content
-                                        // / reasoning AND the think-tag extraction merge
-                                        // here. v1.46.1: the two wire spellings merge via
-                                        // mergeWireReasoning (the PM alias pair is ONE
-                                        // channel — the old blind concatenation doubled
-                                        // every word of PM-native reasoning); the extracted
-                                        // think-tag text (a DIFFERENT channel — content)
-                                        // still appends, and the sum is always the
-                                        // model's thinking.
-                                        onDelta(mergeWireReasoning(choice.Delta.Reasoning, choice.Delta.ReasoningOR)+extracted, visible)
-                                }
-                        }
-                }
-                if chunk.Usage != nil {
-                        usage.InputTokens = chunk.Usage.PromptTokens
-                        usage.OutputTokens = chunk.Usage.CompletionTokens
-                        // v1.46.2 THE REASONING LEDGER: the reasoning share
-                        // rides the same per-chunk overwrite (the final chunk's
-                        // usage is the honest one — PM streams it every frame).
-                        if chunk.Usage.CompletionTokensDetails != nil {
-                                usage.ReasoningTokens = chunk.Usage.CompletionTokensDetails.ReasoningTokens
-                        }
-                        // v1.44.6: the total is computed HERE (chunk-parse
-                        // time), not only at the scan's clean end — the
-                        // v0.71 bridge's normUsage law, engine-side: every
-                        // early exit (tool-call collection, a cut stream,
-                        // the empty-round nets) still reports the honest
-                        // sum, never total=0 with real in/out numbers.
-                        usage.TotalTokens = chunk.Usage.TotalTokens
-                        if usage.TotalTokens == 0 {
-                                usage.TotalTokens = usage.InputTokens + usage.OutputTokens
-                        }
-                }
-        }
-        // v1.14.1 THE LEDGER: the terminal verdict — the LAST non-empty
-        // finish_reason on the wire (this is ONE completion; earlier
-        // chunks never carry one). "length" also flags output_cut so the
-        // status event, the usage ledger, and the UI all name the cutoff
-        // class.
-        if lastFinishReason != "" {
-                usage.FinishReason = lastFinishReason
-                usage.OutputCut = lastFinishReason == "length"
-        }
-        fsmWire(ctx, usage) // v1.14.6: the per-completion wire verdict feeds the FSM
-        // v0.95.4 END-OF-STREAM: flush the DSML filter (salvage an
-        // unterminated block — the finish_reason=length class — release held
-        // partial openers, deliver rescued calls to the right consumer) and
-        // surface the token-cap note when the provider cut the output.
-        // v1.14.6: the think filter flushes FIRST — a trailing partial tag
-        // is literal prose (fed through the DSML filter like any content),
-        // an unclosed <think> delivers its whole tail as reasoning (the
-        // length-cut class) through the canonical channel.
-        if tThink, tVisible := think.flush(); tThink != "" || tVisible != "" {
-                if tVisible != "" {
-                        _ = dsml.feed(tVisible) // the tail rides dsml.flush() below
-                }
-                if tThink != "" && onDelta != nil {
-                        nReason++
-                        onDelta(tThink, "")
-                }
-        }
-        if dCalls, dVisible := dsml.flush(); len(dCalls) > 0 || dVisible != "" {
-                if dsml.takeNative {
-                        calls = append(calls, dCalls...)
-                }
-                if onDelta != nil && dVisible != "" {
-                        onDelta("", dVisible)
-                }
-        }
-        if hitLength {
-                note := "\n\n_(the provider cut this output at its token cap — say \"continue\" to resume)_"
-                if onDelta != nil {
-                        onDelta("", note)
-                }
-        }
-        if err := scanner.Err(); err != nil {
-                // v1.14.4 THE TRACE: the transport verdict — timeout, oversize
-                // line, or mid-stream failure all land here before the
-                // caller's policy (retry / honest error) picks up.
-                obs.EmitS(ctx, obs.ErrorEv, "where", "stream", "model", req.Model,
-                        "error", err.Error(), "timed_out", wd.timedOut.Load())
-                if wd.timedOut.Load() {
-                        ch <- ChatChunk{Type: "error", Error: "timeout", Message: fmt.Sprintf("%s went silent (no data for %s) — it may be overloaded or at capacity; try again or switch models", modelShort(req.Model), idleWaitFor(req.Model))}
-                        return usage, calls, nil
-                }
-                // v0.93.1: the oversize-line case gets a plain-language name —
-                // "bufio.Scanner: token too long" told the user nothing. The
-                // 16MB cap means this is now a genuine runaway host or a
-                // media payload class the chat can't render.
-                if errors.Is(err, bufio.ErrTooLong) {
-                        return usage, calls, fmt.Errorf("stream: %s's response lines exceeded the 16MB line cap (a media/base64 payload the chat view can't render) — try a text model", modelShort(req.Model))
-                }
-                // v0.39: mid-stream transport failure — RETURN the error (the
-                // round-level pause ladder retries transient ones; the turn
-                // runners emit the single honest error chunk on give-up).
-                return usage, calls, fmt.Errorf("stream: %w", err)
-        }
-        usage.TotalTokens = usage.InputTokens + usage.OutputTokens
-        return usage, calls, nil
+	scanner := bufio.NewScanner(wd)
+	// v0.93.1: 256KB → 16MB max (64KB initial). Media models
+	// (google/lyria-3-clip-preview — the user's live hit) stream ONE
+	// SSE data line carrying a full base64-encoded media payload:
+	// multi-megabyte tokens that 256KB aborted with "bufio.Scanner:
+	// token too long", killing the whole turn. 16MB covers every
+	// observed payload class (images/audio clips) while still capping
+	// runaway hosts.
+	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
+	var calls []nativeCall
+	callIdx := map[int]int{} // delta index → position in calls
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := strings.TrimPrefix(line, "data: ")
+		if data == "[DONE]" {
+			break
+		}
+		var chunk openAIChunk
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			continue
+		}
+		for _, choice := range chunk.Choices {
+			if choice.FinishReason == "length" {
+				hitLength = true
+			}
+			if choice.FinishReason != "" {
+				lastFinishReason = choice.FinishReason
+			}
+			// v0.38: assemble streamed tool-call fragments — the
+			// first carries id+name, later ones only arguments.
+			for _, tc := range choice.Delta.ToolCalls {
+				wd.markDelta()
+				nToolDelta++
+				if !firstTok {
+					firstTok = true
+					obs.EmitS(ctx, obs.FirstToken, "model", req.Model, "kind", "tool_call")
+					fsmStreamed(ctx) // v1.14.6: real wire traffic
+				}
+				pos, ok := callIdx[tc.Index]
+				if !ok {
+					pos = len(calls)
+					callIdx[tc.Index] = pos
+					calls = append(calls, nativeCall{ID: tc.ID, Name: tc.Function.Name})
+				}
+				if tc.ID != "" && calls[pos].ID == "" {
+					calls[pos].ID = tc.ID
+				}
+				if tc.Function.Name != "" && calls[pos].Name == "" {
+					calls[pos].Name = tc.Function.Name
+				}
+				calls[pos].Arguments += tc.Function.Arguments
+				// v1.14.4 THE TRACE: every tool_call argument
+				// fragment (the assembled call is judged at
+				// execution time — this is the wire truth).
+				if obs.DeltaTrace() >= 1 {
+					obs.EmitS(ctx, obs.ToolCallDelta, "index", tc.Index,
+						"name", calls[pos].Name, "args_len", len(calls[pos].Arguments),
+						"chunk", tc.Function.Arguments)
+				}
+			}
+			// v0.95.4 THE DSML FILTER: deepseek-family models
+			// stream their native tool markup (<｜DSML｜calls>…)
+			// as CONTENT when they fall back to their own format
+			// — the markup leaked into the visible transcript and
+			// the calls inside never executed (the user's live
+			// scooby export). Split each fragment: visible text
+			// passes through, the markup is stripped, and a
+			// closed block's calls are RESCUED (native call list
+			// when the request carries tools; ACTION lines in the
+			// content stream for the ReAct parser when not).
+			if choice.Delta.Reasoning != "" || choice.Delta.ReasoningOR != "" || choice.Delta.Content != "" {
+				wd.markDelta() // v0.24: real token — wait-notices go quiet
+				// v1.14.6: think-tag extraction FIRST — the inline
+				// reasoning shape rides delta.content; the visible
+				// remainder then goes through the DSML filter.
+				extracted, rawVisible := think.feed(choice.Delta.Content)
+				visible := dsml.feed(rawVisible)
+				if !firstTok {
+					firstTok = true
+					obs.EmitS(ctx, obs.FirstToken, "model", req.Model, "kind", "delta")
+					fsmStreamed(ctx) // v1.14.6: real wire traffic
+				}
+				// v1.14.4 THE TRACE: reasoning + content deltas
+				// under the DOOM_TRACE_DELTAS gate (0 = counts
+				// only, 1 = 64-rune head, 2 = full text). The
+				// tallies ride the finish event at every gate.
+				// v1.46.1 THE ALIAS LAW: the two wire spellings are documented
+				// aliases of ONE channel — PM's vllm-0.31 gateway emits BOTH
+				// byte-equal on every reasoning delta (live-convicted:
+				// "every word appears twice"), so mergeWireReasoning
+				// dedupes the pair; single-spelling senders (OpenRouter
+				// reasoning / NIM reasoning_content) pass through as-is.
+				if r := mergeWireReasoning(choice.Delta.Reasoning, choice.Delta.ReasoningOR); r != "" {
+					nReason++
+					if obs.DeltaTrace() >= 2 {
+						obs.EmitS(ctx, obs.ReasoningDelta, "len", len(r), "text", r)
+					} else if obs.DeltaTrace() == 1 {
+						obs.EmitS(ctx, obs.ReasoningDelta, "len", len(r), "head", deltaHead(r, 64))
+					}
+				}
+				if extracted != "" {
+					nReason++ // normalized reasoning counts as reasoning
+				}
+				if visible != "" {
+					nContent++
+					if obs.DeltaTrace() >= 2 {
+						obs.EmitS(ctx, obs.ContentDelta, "len", len(visible), "text", visible)
+					} else if obs.DeltaTrace() == 1 {
+						obs.EmitS(ctx, obs.ContentDelta, "len", len(visible), "head", deltaHead(visible, 64))
+					}
+				}
+				if onDelta != nil {
+					// v1.14.6 THE NORMALIZATION TABLE: one canonical
+					// reasoning channel — wire-native reasoning_content
+					// / reasoning AND the think-tag extraction merge
+					// here. v1.46.1: the two wire spellings merge via
+					// mergeWireReasoning (the PM alias pair is ONE
+					// channel — the old blind concatenation doubled
+					// every word of PM-native reasoning); the extracted
+					// think-tag text (a DIFFERENT channel — content)
+					// still appends, and the sum is always the
+					// model's thinking.
+					onDelta(mergeWireReasoning(choice.Delta.Reasoning, choice.Delta.ReasoningOR)+extracted, visible)
+				}
+			}
+		}
+		if chunk.Usage != nil {
+			usage.InputTokens = chunk.Usage.PromptTokens
+			usage.OutputTokens = chunk.Usage.CompletionTokens
+			// v1.46.2 THE REASONING LEDGER: the reasoning share
+			// rides the same per-chunk overwrite (the final chunk's
+			// usage is the honest one — PM streams it every frame).
+			if chunk.Usage.CompletionTokensDetails != nil {
+				usage.ReasoningTokens = chunk.Usage.CompletionTokensDetails.ReasoningTokens
+			}
+			// v1.44.6: the total is computed HERE (chunk-parse
+			// time), not only at the scan's clean end — the
+			// v0.71 bridge's normUsage law, engine-side: every
+			// early exit (tool-call collection, a cut stream,
+			// the empty-round nets) still reports the honest
+			// sum, never total=0 with real in/out numbers.
+			usage.TotalTokens = chunk.Usage.TotalTokens
+			if usage.TotalTokens == 0 {
+				usage.TotalTokens = usage.InputTokens + usage.OutputTokens
+			}
+		}
+	}
+	// v1.14.1 THE LEDGER: the terminal verdict — the LAST non-empty
+	// finish_reason on the wire (this is ONE completion; earlier
+	// chunks never carry one). "length" also flags output_cut so the
+	// status event, the usage ledger, and the UI all name the cutoff
+	// class.
+	if lastFinishReason != "" {
+		usage.FinishReason = lastFinishReason
+		usage.OutputCut = lastFinishReason == "length"
+	}
+	fsmWire(ctx, usage) // v1.14.6: the per-completion wire verdict feeds the FSM
+	// v0.95.4 END-OF-STREAM: flush the DSML filter (salvage an
+	// unterminated block — the finish_reason=length class — release held
+	// partial openers, deliver rescued calls to the right consumer) and
+	// surface the token-cap note when the provider cut the output.
+	// v1.14.6: the think filter flushes FIRST — a trailing partial tag
+	// is literal prose (fed through the DSML filter like any content),
+	// an unclosed <think> delivers its whole tail as reasoning (the
+	// length-cut class) through the canonical channel.
+	if tThink, tVisible := think.flush(); tThink != "" || tVisible != "" {
+		if tVisible != "" {
+			_ = dsml.feed(tVisible) // the tail rides dsml.flush() below
+		}
+		if tThink != "" && onDelta != nil {
+			nReason++
+			onDelta(tThink, "")
+		}
+	}
+	if dCalls, dVisible := dsml.flush(); len(dCalls) > 0 || dVisible != "" {
+		if dsml.takeNative {
+			calls = append(calls, dCalls...)
+		}
+		if onDelta != nil && dVisible != "" {
+			onDelta("", dVisible)
+		}
+	}
+	if hitLength {
+		note := "\n\n_(the provider cut this output at its token cap — say \"continue\" to resume)_"
+		if onDelta != nil {
+			onDelta("", note)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		// v1.14.4 THE TRACE: the transport verdict — timeout, oversize
+		// line, or mid-stream failure all land here before the
+		// caller's policy (retry / honest error) picks up.
+		obs.EmitS(ctx, obs.ErrorEv, "where", "stream", "model", req.Model,
+			"error", err.Error(), "timed_out", wd.timedOut.Load())
+		if wd.timedOut.Load() {
+			ch <- ChatChunk{Type: "error", Error: "timeout", Message: fmt.Sprintf("%s went silent (no data for %s) — it may be overloaded or at capacity; try again or switch models", modelShort(req.Model), idleWaitFor(req.Model))}
+			return usage, calls, nil
+		}
+		// v0.93.1: the oversize-line case gets a plain-language name —
+		// "bufio.Scanner: token too long" told the user nothing. The
+		// 16MB cap means this is now a genuine runaway host or a
+		// media payload class the chat can't render.
+		if errors.Is(err, bufio.ErrTooLong) {
+			return usage, calls, fmt.Errorf("stream: %s's response lines exceeded the 16MB line cap (a media/base64 payload the chat view can't render) — try a text model", modelShort(req.Model))
+		}
+		// v0.39: mid-stream transport failure — RETURN the error (the
+		// round-level pause ladder retries transient ones; the turn
+		// runners emit the single honest error chunk on give-up).
+		return usage, calls, fmt.Errorf("stream: %w", err)
+	}
+	usage.TotalTokens = usage.InputTokens + usage.OutputTokens
+	return usage, calls, nil
 }
 
 // doPostSSE issues the POST and returns the response — or (nil, err) when
@@ -1516,77 +1522,77 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
 // pattern terminalized the UI on recoverable blips: the frontend treats
 // an error event as end-of-turn).
 func doPostSSE(ctx context.Context, req ChatRequest, url string, bodyBytes []byte, ch chan<- ChatChunk) (*http.Response, error) {
-        // v1.44.3 THE WIRE: PM rides the engine's pinned client — the body
-        // encrypts into OAE frames upstream and the decrypted SSE comes back
-        // as a synthetic response the standard parser consumes. NEVER the
-        // plaintext path: even unwired, a PM request must not hit the plain
-        // HTTPS arm (the gateway only speaks the encrypted protocol).
-        if req.Provider == pmProvider {
-                return pmDoPostSSE(ctx, req, bodyBytes, ch)
-        }
-        httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(bodyBytes))
-        if err != nil {
-                return nil, fmt.Errorf("new request: %w", err)
-        }
-        httpReq.Header.Set("Content-Type", "application/json")
-        httpReq.Header.Set("User-Agent", browserUA)
-        if req.AuthStyle == "anthropic" {
-                httpReq.Header.Set("x-api-key", req.APIKey)
-                httpReq.Header.Set("anthropic-version", "2023-06-01")
-        } else {
-                httpReq.Header.Set("Authorization", "Bearer "+req.APIKey)
-        }
-        // v0.25: OpenCode Zen free-tier session id (x-session-id) — without it
-        // big-pickle + *-free models 400 with MissingSessionID.
-        // v1.14.6: scoped PER CHAT (req.SessionID) — the per-key id made every
-        // chat on one key share an upstream Zen session (the cross-bot leak).
-        for k, v := range providerExtraHeaders(req.Provider, req.APIKey, req.SessionID) {
-                httpReq.Header.Set(k, v)
-        }
-        httpReq.Header.Set("Accept", "text/event-stream")
-        httpReq.Header.Set("HTTP-Referer", "https://doomalay.app")
-        httpReq.Header.Set("X-Title", "Doomalay")
+	// v1.44.3 THE WIRE: PM rides the engine's pinned client — the body
+	// encrypts into OAE frames upstream and the decrypted SSE comes back
+	// as a synthetic response the standard parser consumes. NEVER the
+	// plaintext path: even unwired, a PM request must not hit the plain
+	// HTTPS arm (the gateway only speaks the encrypted protocol).
+	if req.Provider == pmProvider {
+		return pmDoPostSSE(ctx, req, bodyBytes, ch)
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return nil, fmt.Errorf("new request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("User-Agent", browserUA)
+	if req.AuthStyle == "anthropic" {
+		httpReq.Header.Set("x-api-key", req.APIKey)
+		httpReq.Header.Set("anthropic-version", "2023-06-01")
+	} else {
+		httpReq.Header.Set("Authorization", "Bearer "+req.APIKey)
+	}
+	// v0.25: OpenCode Zen free-tier session id (x-session-id) — without it
+	// big-pickle + *-free models 400 with MissingSessionID.
+	// v1.14.6: scoped PER CHAT (req.SessionID) — the per-key id made every
+	// chat on one key share an upstream Zen session (the cross-bot leak).
+	for k, v := range providerExtraHeaders(req.Provider, req.APIKey, req.SessionID) {
+		httpReq.Header.Set(k, v)
+	}
+	httpReq.Header.Set("Accept", "text/event-stream")
+	httpReq.Header.Set("HTTP-Referer", "https://doomalay.app")
+	httpReq.Header.Set("X-Title", "Doomalay")
 
-        // v0.24: CONNECT-PHASE notices — kimi-k3 can sit in http.Do for
-        // MINUTES before even the response HEADERS arrive (observed live:
-        // a whole 3-min turn never reached the body). Cover that silence
-        // too, then hand over to the body-phase notifier in scanSSE.
-        connClock := &silentClock{start: time.Now()}
-        stopConnNotices := waitNotices(ch, connClock, req.Model, req.Provider)
-        resp, err := providerStreamHTTP.Do(httpReq)
-        if err != nil {
-                stopConnNotices()
-                // v0.39: transport-level failure (timeout/reset/refused) —
-                // network class: 60s provider cooldown so alternate routing
-                // skips the dead host; the round-level pause ladder retries.
-                RecordProviderFailure(req.Provider, "net", err.Error())
-                return nil, fmt.Errorf("send: %w", err)
-        }
-        stopConnNotices()
-        return resp, nil
+	// v0.24: CONNECT-PHASE notices — kimi-k3 can sit in http.Do for
+	// MINUTES before even the response HEADERS arrive (observed live:
+	// a whole 3-min turn never reached the body). Cover that silence
+	// too, then hand over to the body-phase notifier in scanSSE.
+	connClock := &silentClock{start: time.Now()}
+	stopConnNotices := waitNotices(ch, connClock, req.Model, req.Provider)
+	resp, err := providerStreamHTTP.Do(httpReq)
+	if err != nil {
+		stopConnNotices()
+		// v0.39: transport-level failure (timeout/reset/refused) —
+		// network class: 60s provider cooldown so alternate routing
+		// skips the dead host; the round-level pause ladder retries.
+		RecordProviderFailure(req.Provider, "net", err.Error())
+		return nil, fmt.Errorf("send: %w", err)
+	}
+	stopConnNotices()
+	return resp, nil
 }
 
 // ── v0.26: the effort-param blacklist (400-resilience state) ──────────
 
 var (
-        effortBLMu   sync.Mutex
-        effortBlackl = map[string]bool{} // "provider|model" → skip the param
+	effortBLMu   sync.Mutex
+	effortBlackl = map[string]bool{} // "provider|model" → skip the param
 )
 
 func effortBLKey(provider, model string) string {
-        return strings.ToLower(provider) + "|" + strings.ToLower(model)
+	return strings.ToLower(provider) + "|" + strings.ToLower(model)
 }
 
 func blacklistEffort(provider, model string) {
-        effortBLMu.Lock()
-        effortBlackl[effortBLKey(provider, model)] = true
-        effortBLMu.Unlock()
+	effortBLMu.Lock()
+	effortBlackl[effortBLKey(provider, model)] = true
+	effortBLMu.Unlock()
 }
 
 func effortBlacklisted(provider, model string) bool {
-        effortBLMu.Lock()
-        defer effortBLMu.Unlock()
-        return effortBlackl[effortBLKey(provider, model)]
+	effortBLMu.Lock()
+	defer effortBLMu.Unlock()
+	return effortBlackl[effortBLKey(provider, model)]
 }
 
 // mentionsEffortParam reports whether a 400 body is complaining about the
@@ -1595,129 +1601,129 @@ func effortBlacklisted(provider, model string) bool {
 // v0.69: the Pydantic validation shapes join the trigger list — PM's
 // deployed glm-5.3 rejects out-of-enum values with
 //
-//      {'type': 'literal_error', 'loc': ('body', 'reasoning_effort'),
-//       'msg': "Input should be 'none', 'minima…"}
+//	{'type': 'literal_error', 'loc': ('body', 'reasoning_effort'),
+//	 'msg': "Input should be 'none', 'minima…"}
 //
 // which contains NONE of the old trigger words ("unexpected"/"unknown"/…),
 // so the retry-without-param rescue never fired and the raw 400 surfaced
 // (the user's report). A body that names a reasoning field AND carries a
 // validation/literal_error shape is an effort-param rejection.
 func mentionsEffortParam(body string) bool {
-        b := strings.ToLower(body)
-        if !strings.Contains(b, "reason") && !strings.Contains(b, "effort") && !strings.Contains(b, "thinking") && !strings.Contains(b, "chat_template") {
-                return false
-        }
-        return strings.Contains(b, "unexpected") || strings.Contains(b, "unknown") ||
-                strings.Contains(b, "unrecognized") || strings.Contains(b, "not supported") ||
-                strings.Contains(b, "unsupported") || strings.Contains(b, "invalid") ||
-                strings.Contains(b, "additional") || strings.Contains(b, "not allowed") ||
-                strings.Contains(b, "prohibited") ||
-                // v0.69: the Pydantic/FastAPI validation family
-                strings.Contains(b, "literal_error") ||
-                strings.Contains(b, "validation error") ||
-                strings.Contains(b, "input should be")
+	b := strings.ToLower(body)
+	if !strings.Contains(b, "reason") && !strings.Contains(b, "effort") && !strings.Contains(b, "thinking") && !strings.Contains(b, "chat_template") {
+		return false
+	}
+	return strings.Contains(b, "unexpected") || strings.Contains(b, "unknown") ||
+		strings.Contains(b, "unrecognized") || strings.Contains(b, "not supported") ||
+		strings.Contains(b, "unsupported") || strings.Contains(b, "invalid") ||
+		strings.Contains(b, "additional") || strings.Contains(b, "not allowed") ||
+		strings.Contains(b, "prohibited") ||
+		// v0.69: the Pydantic/FastAPI validation family
+		strings.Contains(b, "literal_error") ||
+		strings.Contains(b, "validation error") ||
+		strings.Contains(b, "input should be")
 }
 
 // CompleteSync performs ONE non-streaming completion and returns the full
 // text (exported for the server's auto-compact summarizer + the delegate
 // fan-out; the ReAct loop + research steps also use it).
 func CompleteSync(ctx context.Context, req ChatRequest, extraBody map[string]any) (string, error) {
-        return completeSync(ctx, req, extraBody)
+	return completeSync(ctx, req, extraBody)
 }
 
 // completeSync performs ONE non-streaming completion (ReAct rounds + research
 // steps need the full text before deciding the next move).
 func completeSync(ctx context.Context, req ChatRequest, extraBody map[string]any) (string, error) {
-        // v1.44.3 THE WIRE: PM's non-streaming completions ride the pinned
-        // client too (same body, stream:false — the encrypted round-trip).
-        if req.Provider == pmProvider {
-                messages := make([]Message, 0, len(req.Messages)+1)
-                if req.SystemPrompt != "" {
-                        messages = append(messages, Message{Role: "system", Content: req.SystemPrompt})
-                }
-                messages = append(messages, req.Messages...)
-                body := map[string]any{
-                        "model":    req.Model,
-                        "messages": messages,
-                }
-                if extra := BuildEffortBodyFor(req.Provider, req.Model, req.Effort); extra != nil {
-                        for k, v := range extra {
-                                body[k] = v
-                        }
-                }
-                for k, v := range extraBody {
-                        body[k] = v
-                }
-                return pmCompleteSync(ctx, req, body)
-        }
-        messages := make([]Message, 0, len(req.Messages)+1)
-        if req.SystemPrompt != "" {
-                messages = append(messages, Message{Role: "system", Content: req.SystemPrompt})
-        }
-        messages = append(messages, req.Messages...)
+	// v1.44.3 THE WIRE: PM's non-streaming completions ride the pinned
+	// client too (same body, stream:false — the encrypted round-trip).
+	if req.Provider == pmProvider {
+		messages := make([]Message, 0, len(req.Messages)+1)
+		if req.SystemPrompt != "" {
+			messages = append(messages, Message{Role: "system", Content: req.SystemPrompt})
+		}
+		messages = append(messages, req.Messages...)
+		body := map[string]any{
+			"model":    req.Model,
+			"messages": messages,
+		}
+		if extra := BuildEffortBodyFor(req.Provider, req.Model, req.Effort); extra != nil {
+			for k, v := range extra {
+				body[k] = v
+			}
+		}
+		for k, v := range extraBody {
+			body[k] = v
+		}
+		return pmCompleteSync(ctx, req, body)
+	}
+	messages := make([]Message, 0, len(req.Messages)+1)
+	if req.SystemPrompt != "" {
+		messages = append(messages, Message{Role: "system", Content: req.SystemPrompt})
+	}
+	messages = append(messages, req.Messages...)
 
-        body := map[string]any{
-                "model":    req.Model,
-                "messages": messages,
-        }
-        if extra := BuildEffortBodyFor(req.Provider, req.Model, req.Effort); extra != nil {
-                for k, v := range extra {
-                        body[k] = v
-                }
-        }
-        for k, v := range extraBody {
-                body[k] = v
-        }
-        status, bodyBytes, err := httpPostJSONStream(chatURL(req.BaseURL), req.APIKey, body, authHeaders(req))
-        if err != nil {
-                return "", err
-        }
-        if status != 200 {
-                return "", fmt.Errorf("HTTP %d: %s", status, string(bodyBytes))
-        }
-        var resp struct {
-                Choices []struct {
-                        Message struct {
-                                Content   string `json:"content"`
-                                Reasoning string `json:"reasoning_content"`
-                        } `json:"message"`
-                } `json:"choices"`
-        }
-        if err := json.Unmarshal(bodyBytes, &resp); err != nil {
-                return "", fmt.Errorf("decode: %w", err)
-        }
-        if len(resp.Choices) == 0 {
-                return "", fmt.Errorf("empty choices")
-        }
-        if resp.Choices[0].Message.Content == "" && resp.Choices[0].Message.Reasoning != "" {
-                return resp.Choices[0].Message.Reasoning, nil // reasoning-only response
-        }
-        return resp.Choices[0].Message.Content, nil
+	body := map[string]any{
+		"model":    req.Model,
+		"messages": messages,
+	}
+	if extra := BuildEffortBodyFor(req.Provider, req.Model, req.Effort); extra != nil {
+		for k, v := range extra {
+			body[k] = v
+		}
+	}
+	for k, v := range extraBody {
+		body[k] = v
+	}
+	status, bodyBytes, err := httpPostJSONStream(chatURL(req.BaseURL), req.APIKey, body, authHeaders(req))
+	if err != nil {
+		return "", err
+	}
+	if status != 200 {
+		return "", fmt.Errorf("HTTP %d: %s", status, string(bodyBytes))
+	}
+	var resp struct {
+		Choices []struct {
+			Message struct {
+				Content   string `json:"content"`
+				Reasoning string `json:"reasoning_content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(bodyBytes, &resp); err != nil {
+		return "", fmt.Errorf("decode: %w", err)
+	}
+	if len(resp.Choices) == 0 {
+		return "", fmt.Errorf("empty choices")
+	}
+	if resp.Choices[0].Message.Content == "" && resp.Choices[0].Message.Reasoning != "" {
+		return resp.Choices[0].Message.Reasoning, nil // reasoning-only response
+	}
+	return resp.Choices[0].Message.Content, nil
 }
 
 // chatURL builds the chat-completions URL from a base URL (v0.12 double-/v1 fix).
 func chatURL(baseURL string) string {
-        base := strings.TrimSuffix(baseURL, "/")
-        if strings.HasSuffix(base, "/v1") {
-                return base + "/chat/completions"
-        }
-        return base + "/v1/chat/completions"
+	base := strings.TrimSuffix(baseURL, "/")
+	if strings.HasSuffix(base, "/v1") {
+		return base + "/chat/completions"
+	}
+	return base + "/v1/chat/completions"
 }
 
 // authHeaders returns provider-specific headers for httpPostJSON.
 func authHeaders(req ChatRequest) map[string]string {
-        h := map[string]string{}
-        if req.AuthStyle == "anthropic" {
-                h["x-api-key"] = req.APIKey
-                h["anthropic-version"] = "2023-06-01"
-        }
-        // v0.25: OpenCode Zen — the free-tier models require a session id
-        // (x-session-id); paid models ignore it. Harmless to always send.
-        // v1.14.6: per-chat scope (req.SessionID); "" falls back per key.
-        for k, v := range providerExtraHeaders(req.Provider, req.APIKey, req.SessionID) {
-                h[k] = v
-        }
-        return h
+	h := map[string]string{}
+	if req.AuthStyle == "anthropic" {
+		h["x-api-key"] = req.APIKey
+		h["anthropic-version"] = "2023-06-01"
+	}
+	// v0.25: OpenCode Zen — the free-tier models require a session id
+	// (x-session-id); paid models ignore it. Harmless to always send.
+	// v1.14.6: per-chat scope (req.SessionID); "" falls back per key.
+	for k, v := range providerExtraHeaders(req.Provider, req.APIKey, req.SessionID) {
+		h[k] = v
+	}
+	return h
 }
 
 // ── Web search turn ────────────────────────────────────────────────────────
@@ -1739,59 +1745,59 @@ const seamNudgeText = "(your previous reply was cut off mid-stream after the tex
 // persisted) with fn = one tap-streamed continuation attempt. The
 // continuation's own emitted cut returns honestly (bounded at one seam).
 func netSuspendedLoopPlain(ctx context.Context, ch chan<- ChatChunk, req ChatRequest) (*Usage, error) {
-        var final *Usage
-        var emitted bool
-        err := netSuspendedLoop(ctx, ch, req.Provider, "", func() (bool, error) {
-                var e error
-                final, emitted, _, e = streamTap(ctx, req, ch, nil)
-                return emitted, e
-        })
-        return final, err
+	var final *Usage
+	var emitted bool
+	err := netSuspendedLoop(ctx, ch, req.Provider, "", func() (bool, error) {
+		var e error
+		final, emitted, _, e = streamTap(ctx, req, ch, nil)
+		return emitted, e
+	})
+	return final, err
 }
 
 func runWebSearchTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- error, req ChatRequest) {
-        ch <- ChatChunk{Type: "status", State: "running"}
+	ch <- ChatChunk{Type: "status", State: "running"}
 
-        // Path A: native provider-side search (OpenRouter only, web turns).
-        if req.WebSearch {
-                if native := NativeWebSearchBody(req.Provider, req.Model); native != nil {
-                        // v0.44: Path A never walks the ReAct composition below —
-                        // a method template's brief still rides the system message
-                        // (prepended to the persona system message, the direct
-                        // path's messages[0]).
-                        aReq := req
-                        if req.TemplateBrief != "" && len(aReq.Messages) > 0 && aReq.Messages[0].Role == "system" {
-                                msgs := make([]Message, len(aReq.Messages))
-                                copy(msgs, aReq.Messages)
-                                msgs[0].Content = templateBriefBlock(req.TemplateID, req.TemplateBrief) + "\n" + msgs[0].Content
-                                aReq.Messages = msgs
-                        }
-                        u, _, err := netLadderStream(ctx, aReq, ch, native) // v1.39.3: laddered (the web-search answer stream)
-                        if err != nil {
-                                sealTurn(ctx, ch, err, nil)
-                                emitTurnError(ch, err)
-                                errs <- err
-                                return
-                        }
-                        sealTurn(ctx, ch, nil, u)
-                        ch <- ChatChunk{Type: "status", State: "idle", Usage: u}
-                        return
-                }
-        }
+	// Path A: native provider-side search (OpenRouter only, web turns).
+	if req.WebSearch {
+		if native := NativeWebSearchBody(req.Provider, req.Model); native != nil {
+			// v0.44: Path A never walks the ReAct composition below —
+			// a method template's brief still rides the system message
+			// (prepended to the persona system message, the direct
+			// path's messages[0]).
+			aReq := req
+			if req.TemplateBrief != "" && len(aReq.Messages) > 0 && aReq.Messages[0].Role == "system" {
+				msgs := make([]Message, len(aReq.Messages))
+				copy(msgs, aReq.Messages)
+				msgs[0].Content = templateBriefBlock(req.TemplateID, req.TemplateBrief) + "\n" + msgs[0].Content
+				aReq.Messages = msgs
+			}
+			u, _, err := netLadderStream(ctx, aReq, ch, native) // v1.39.3: laddered (the web-search answer stream)
+			if err != nil {
+				sealTurn(ctx, ch, err, nil)
+				emitTurnError(ch, err)
+				errs <- err
+				return
+			}
+			sealTurn(ctx, ch, nil, u)
+			ch <- ChatChunk{Type: "status", State: "idle", Usage: u}
+			return
+		}
+	}
 
-        // v1.13.3: no native search body — stream plainly (the routing in
-        // Chat sends OpenRouter web turns here; anything else landing on
-        // this branch still gets an honest streamed answer, just no
-        // provider-side search).
-        u, _, err := netLadderStream(ctx, req, ch, nil) // v1.39.3: laddered (the plain web-turn stream)
-        if err != nil {
-                sealTurn(ctx, ch, err, nil)
-                emitTurnError(ch, err)
-                errs <- err
-                return
-        }
-        sealTurn(ctx, ch, nil, u)
-        ch <- ChatChunk{Type: "status", State: "idle", Usage: u}
+	// v1.13.3: no native search body — stream plainly (the routing in
+	// Chat sends OpenRouter web turns here; anything else landing on
+	// this branch still gets an honest streamed answer, just no
+	// provider-side search).
+	u, _, err := netLadderStream(ctx, req, ch, nil) // v1.39.3: laddered (the plain web-turn stream)
+	if err != nil {
+		sealTurn(ctx, ch, err, nil)
+		emitTurnError(ch, err)
+		errs <- err
+		return
+	}
+	sealTurn(ctx, ch, nil, u)
+	ch <- ChatChunk{Type: "status", State: "idle", Usage: u}
 }
 
 // executeAction runs ONE parsed tool call and returns its observation
@@ -1799,306 +1805,307 @@ func runWebSearchTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- erro
 // can call it per action). allSources accumulates web-search citations
 // across calls.
 func executeAction(ctx context.Context, req ChatRequest, ch chan<- ChatChunk, action, argJSON string, allSources *[]SearchResult) string {
-        // v1.13.3 THE GUT: no alias layer — native tool_calls carry exact
-        // manifest names; a hallucinated name gets the honest unknown-tool
-        // teaching (the model self-corrects in one round).
-        var observation string
-        // v0.28: PERSONA TOOLS — the bot's self-management hands. Routed
-        // through the server callback (it owns the session store); the
-        // pill + observation mirror the local-tool shape so the UI and the
-        // model both see a normal tool round.
-        if action == "persona_list" || action == "persona_set" || action == "persona_activate" || action == "placeholder_set" {
-                var args map[string]any
-                summary := ""
-                if json.Unmarshal([]byte(argJSON), &args) == nil {
-                        if v, ok := args["name"].(string); ok {
-                                summary = v
-                        } else if v, ok := args["id"].(string); ok {
-                                summary = v
-                        } else if v, ok := args["key"].(string); ok {
-                                summary = v
-                        }
-                }
-                ch <- ChatChunk{Type: "tool_use", Name: action, Summary: summary, Args: argJSON}
-                if req.PersonaToolFn != nil {
-                        observation = req.PersonaToolFn(ctx, action, argJSON)
-                } else {
-                        observation = "OBSERVATION:\nerror: persona tools need a live session on this server"
-                }
-                ch <- ChatChunk{Type: "tool_result", Text: strings.TrimPrefix(observation, "OBSERVATION:\n"), Name: action}
-                return observation
-        }
-        if action == "hublib" && req.HublibToolFn != nil {
-                // v0.67.2: THE LIBRARY on the direct path — browse/get/
-                // download the public hub through the server's runner
-                // (it owns the hub service + the per-chat Bot Library
-                // switch; downloads refuse with the switch path when
-                // OFF). Pill + observation mirror the local-tool shape.
-                var args map[string]any
-                summary := ""
-                if json.Unmarshal([]byte(argJSON), &args) == nil {
-                        for _, k := range []string{"q", "id", "action"} {
-                                if v, ok := args[k].(string); ok && v != "" {
-                                        summary = v
-                                        break
-                                }
-                        }
-                }
-                ch <- ChatChunk{Type: "tool_use", Name: "hublib", Summary: summary, Args: argJSON}
-                observation = req.HublibToolFn(ctx, argJSON)
-                ch <- ChatChunk{Type: "tool_result", Text: strings.TrimPrefix(observation, "OBSERVATION:\n"), Name: "hublib"}
-                return observation
-        }
-        if action == "skills" && req.SkillsToolFn != nil {
-                // v0.72: THE SKILLS HAND on the direct path — bootstrap/
-                // list/search/load a DOWNLOADED skill's methodology
-                // through the server's runner (same dispatch as the PM
-                // bridge). The load result's "SKILL LOADED — <name>"
-                // head feeds the active-bundle pill (deterministic:
-                // tool_use/tool_result ride the event log, replays match).
-                var args map[string]any
-                summary := ""
-                if json.Unmarshal([]byte(argJSON), &args) == nil {
-                        for _, k := range []string{"skill", "q", "action"} {
-                                if v, ok := args[k].(string); ok && v != "" {
-                                        summary = v
-                                        break
-                                }
-                        }
-                }
-                ch <- ChatChunk{Type: "tool_use", Name: "skills", Summary: summary, Args: argJSON}
-                observation = req.SkillsToolFn(ctx, argJSON)
-                ch <- ChatChunk{Type: "tool_result", Text: strings.TrimPrefix(observation, "OBSERVATION:\n"), Name: "skills"}
-                return observation
-        }
-        if action == "workspace" && req.WorkspaceToolFn != nil {
-                // v0.76.5: THE WORKSPACE HAND on the direct path — the
-                // chat's connected cloud repos through the server's
-                // runner (it owns the rows + vault tokens). Marker heads
-                // (COMMITTED / PR OPENED / FORKED — …) are deterministic.
-                var args map[string]any
-                summary := ""
-                if json.Unmarshal([]byte(argJSON), &args) == nil {
-                        for _, k := range []string{"ws", "path", "query", "what", "action"} {
-                                if v, ok := args[k].(string); ok && v != "" {
-                                        summary = v
-                                        break
-                                }
-                        }
-                }
-                ch <- ChatChunk{Type: "tool_use", Name: "workspace", Summary: summary, Args: argJSON}
-                observation = req.WorkspaceToolFn(ctx, argJSON)
-                ch <- ChatChunk{Type: "tool_result", Text: strings.TrimPrefix(observation, "OBSERVATION:\n"), Name: "workspace"}
-                return observation
-        }
-        if action == "termux" && req.TermuxToolFn != nil {
-                // v1.20.3 THE ARM on the direct path — the chat's bound
-                // device (termux) workspaces through the server's runner
-                // (it owns the session store + the bridge). The runner
-                // builds every observation (jail refusals, full output,
-                // honest caps); marker heads (EXEC DONE / WROTE /
-                // SESSION STARTED — …) are deterministic, the workspace
-                // branch's shape exactly. Not armed → the default-case
-                // unknown-tool teaching below answers honestly (the
-                // workspace tool's own not-armed message style).
-                var args map[string]any
-                summary := ""
-                if json.Unmarshal([]byte(argJSON), &args) == nil {
-                        // the args ride the nested "args" object (the
-                        // one-tool/verb-map shape) — the flat keys are
-                        // tolerated when a provider flattened them.
-                        if nested, ok := args["args"].(map[string]any); ok {
-                                for _, k := range []string{"command", "path", "pattern", "name", "action"} {
-                                        if v, ok := nested[k].(string); ok && v != "" {
-                                                summary = v
-                                                break
-                                        }
-                                }
-                        }
-                        if summary == "" {
-                                for _, k := range []string{"command", "path", "pattern", "name", "action"} {
-                                        if v, ok := args[k].(string); ok && v != "" {
-                                                summary = v
-                                                break
-                                        }
-                                }
-                        }
-                }
-                ch <- ChatChunk{Type: "tool_use", Name: "termux", Summary: summary, Args: argJSON}
-                observation = req.TermuxToolFn(ctx, argJSON)
-                ch <- ChatChunk{Type: "tool_result", Text: strings.TrimPrefix(observation, "OBSERVATION:\n"), Name: "termux"}
-                return observation
-        }
-        if action == "djournal" && req.DjournalToolFn != nil {
-                // v1.47.1 THE JOURNAL HAND on the direct path — the
-                // degraded-bus ladder still serves the diary through
-                // the server's runner (same dispatch, same shapes).
-                summary := mcpbus.DefaultSummary("djournal", argJSON)
-                ch <- ChatChunk{Type: "tool_use", Name: "djournal", Summary: summary, Args: argJSON}
-                observation = req.DjournalToolFn(ctx, argJSON)
-                ch <- ChatChunk{Type: "tool_result", Text: strings.TrimPrefix(observation, "OBSERVATION:\n"), Name: "djournal"}
-                return observation
-        }
-        if action == "fleet" && req.FleetToolFn != nil {
-                // v1.47.2 THE FLEET HAND on the direct path — the roster
-                // + detail through the server's runner.
-                summary := mcpbus.DefaultSummary("fleet", argJSON)
-                ch <- ChatChunk{Type: "tool_use", Name: "fleet", Summary: summary, Args: argJSON}
-                observation = req.FleetToolFn(ctx, argJSON)
-                ch <- ChatChunk{Type: "tool_result", Text: strings.TrimPrefix(observation, "OBSERVATION:\n"), Name: "fleet"}
-                return observation
-        }
-        if action == "delegate" && req.DelegateFn != nil {
-                // v0.21: SWARM FANOUT (the HF panel delegate, ported) —
-                // one prompt, up to 3 other models answer in parallel.
-                var args struct {
-                        Prompt string   `json:"prompt"`
-                        Models []string `json:"models"`
-                }
-                _ = json.Unmarshal([]byte(argJSON), &args)
-                if args.Prompt == "" {
-                        observation = "OBSERVATION:\nerror: delegate needs {\"prompt\": \"...\", \"models\": [\"provider/model\", \"…\"]}"
-                } else {
-                        ch <- ChatChunk{Type: "progress", Text: "consulting other models…"}
-                        ch <- ChatChunk{Type: "tool_use", Name: "delegate", Summary: clamp(args.Prompt, 80), Args: argJSON}
-                        outs := req.DelegateFn(ctx, args.Prompt, args.Models)
-                        b, _ := json.Marshal(outs)
-                        observation = "OBSERVATION:\n" + string(b)
-                        ch <- ChatChunk{Type: "tool_result", Text: string(b), Name: "delegate"}
-                }
-        } else if IsLocalTool(action) {
-                // v0.20: local tools — pure Go, zero latency, zero setup.
-                summary := mcpbus.DefaultSummary(action, argJSON)
-                ch <- ChatChunk{Type: "tool_use", Name: action, Summary: summary, Args: argJSON}
-                observation = RunLocalTool(action, argJSON, req.ArtifactSink)
-                obs := strings.TrimPrefix(observation, "OBSERVATION:\n")
-                res := ChatChunk{Type: "tool_result", Text: obs, Name: action}
-                // v0.22: file tools report the saved artifact so the UI
-                // can render a real download card right after the pill.
-                if strings.Contains(obs, "Saved as artifact ") {
-                        var fargs struct {
-                                Name string `json:"name"`
-                        }
-                        _ = json.Unmarshal([]byte(argJSON), &fargs)
-                        if fargs.Name != "" {
-                                res.Artifact = map[string]any{"name": fargs.Name}
-                        }
-                }
-                ch <- res
-        } else {
-                switch action {
-                case "template_list":
-                        // v0.52 THE 3 PILLS: the chat's template auto-search
-                        // pill gates the tools — the protocol does not
-                        // advertise them when it's off, but a model can
-                        // still invent the call (or remember it from an
-                        // earlier turn): answer honestly, don't run it.
-                        if !req.TemplateAuto {
-                                observation = "OBSERVATION:\nerror: the template library is disabled for this chat (the template pill is off). Ask the user to enable the template pill, or answer without it."
-                                return observation
-                        }
-                        // v0.44 TEMPLATE SELF-SERVE: the model can browse the
-                        // app's template library (the same index the template
-                        // pill shows) and pick a methodology to follow.
-                        ch <- ChatChunk{Type: "tool_use", Name: "template_list", Summary: "browse the template library"}
-                        obs := runTemplateList(ctx, req)
-                        observation = obs
-                        ch <- ChatChunk{Type: "tool_result", Text: strings.TrimPrefix(obs, "OBSERVATION:\n"), Name: "template_list"}
-                case "template_show":
-                        if !req.TemplateAuto {
-                                observation = "OBSERVATION:\nerror: the template library is disabled for this chat (the template pill is off). Ask the user to enable the template pill, or answer without it."
-                                return observation
-                        }
-                        var args struct {
-                                ID string `json:"id"`
-                        }
-                        _ = json.Unmarshal([]byte(argJSON), &args)
-                        if args.ID == "" {
-                                observation = "OBSERVATION:\nerror: template_show needs {\"id\": \"...\"} — get ids from template_list"
-                                return observation
-                        }
-                        ch <- ChatChunk{Type: "tool_use", Name: "template_show", Summary: clamp(args.ID, 80), Args: argJSON}
-                        obs := runTemplateShow(ctx, req, args.ID)
-                        observation = obs
-                        ch <- ChatChunk{Type: "tool_result", Text: strings.TrimPrefix(obs, "OBSERVATION:\n"), Name: "template_show"}
-                case "web_search":
-                        var args struct {
-                                Query string `json:"query"`
-                        }
-                        _ = json.Unmarshal([]byte(argJSON), &args)
-                        if args.Query == "" {
-                                observation = "OBSERVATION:\nerror: empty query"
-                                return observation
-                        }
-                        ch <- ChatChunk{Type: "tool_use", Name: "web_search", Summary: args.Query, Args: argJSON}
-                        results, err := WebSearch(ctx, args.Query, 5, req.TavilyKey)
-                        if err != nil {
-                                observation = "OBSERVATION:\nsearch error: " + err.Error()
-                                return observation
-                        }
-                        *allSources = append(*allSources, results...)
-                        ch <- ChatChunk{Type: "sources", Sources: results}
-                        obs := FormatSearchResults(results)
-                        if obs == "" {
-                                // v0.27.1: mirrors the PM path — "no results" for a specific
-                                // named project usually means private/nonexistent; say that
-                                // so the model stops instead of re-searching (it used to see
-                                // a fake network error here and retry the same query).
-                                obs = "(no results — try different terms; a specific named project or account may be private or nonexistent, in which case say so instead of retrying)"
-                        }
-                        observation = "OBSERVATION:\n" + obs
-                        ch <- ChatChunk{Type: "tool_result", Text: obs, Name: "web_search"}
-                case "web_fetch":
-                        var args struct {
-                                URL string `json:"url"`
-                        }
-                        _ = json.Unmarshal([]byte(argJSON), &args)
-                        if args.URL == "" {
-                                observation = "OBSERVATION:\nerror: empty url"
-                                return observation
-                        }
-                        ch <- ChatChunk{Type: "tool_use", Name: "web_fetch", Summary: args.URL}
-                        text, err := WebFetch(ctx, args.URL) // v1.19.1: full content — no cap
-                        if err != nil {
-                                observation = "OBSERVATION:\nfetch error: " + err.Error()
-                                return observation
-                        }
-                        observation = "OBSERVATION:\n" + text
-                        ch <- ChatChunk{Type: "tool_result", Text: text, Name: "web_fetch"}
-                default:
-                        observation = "OBSERVATION:\nerror: unknown tool \"" + action + "\". Valid tools: " + strings.Join(LocalToolNames, ", ") + ", web_search {\"query\": \"...\"}, web_fetch {\"url\": \"...\"} (live internet), template_list {}, template_show {\"id\": \"...\"} (the method-template library)" + (func() string {
-                                if req.HublibToolFn != nil {
-                                        return ", hublib {\"action\": \"search|get|download|bundles|bundle|download_bundle\", ...} (the public hub library AND its bundles)"
-                                }
-                                return ""
-                        }()) + (func() string {
-                                if req.SkillsToolFn != nil {
-                                        return ", skills {\"action\": \"bootstrap|list|search|load|files|read\", ...} (the installed skill methodologies)"
-                                }
-                                return ""
-                        }()) + (func() string {
-                                // v0.81.6: the repo hand joins the teaching — the
-                                // user's repro had the model guessing "repo_list"
-                                // and dead-ending. Name the real tool + verbs.
-                                if req.WorkspaceToolFn != nil {
-                                        return ", workspace {\"action\": \"help|list|ls|read|grep|view|put|pr|pr_diff|pr_review|pr_comment|pr_merge|issue_create|issue_comment|issue_close|discussion_post|workflow_dispatch|file_delete|release_create|branch|fork\", \"ws\": \"owner/repo\", ...} (this chat's CONNECTED cloud repos — grep, read, push, PR, code review, issues, discussions, workflows)"
-                                }
-                                return ""
-                        }()) + (func() string {
-                                // v1.20.3 THE ARM: the device-shell hand joins
-                                // the teaching when armed — same law as the repo
-                                // hand (name the real tool + the verb map; never
-                                // let the model guess "shell" or "terminal" and
-                                // dead-end).
-                                if req.TermuxToolFn != nil {
-                                        return ", termux {\"action\": \"exec|ls|read|write|append|rm|mkdir|grep|find|pkg|session_start|session_list|session_log|session_kill|help\", \"args\": {\"path\":\"…\",\"command\":\"…\"}} (a real Termux Linux shell on the user's device, jailed to this chat's bound device folders — run commands, edit files, install packages, create/kill background process sessions)"
-                                }
-                                return ""
-                        }()) + "."
-                }
-        }
-        return observation
+	// v1.13.3 THE GUT: no alias layer — native tool_calls carry exact
+	// manifest names; a hallucinated name gets the honest unknown-tool
+	// teaching (the model self-corrects in one round).
+	var observation string
+	// v0.28: PERSONA TOOLS — the bot's self-management hands. Routed
+	// through the server callback (it owns the session store); the
+	// pill + observation mirror the local-tool shape so the UI and the
+	// model both see a normal tool round.
+	if action == "persona_list" || action == "persona_set" || action == "persona_activate" || action == "placeholder_set" {
+		var args map[string]any
+		summary := ""
+		if json.Unmarshal([]byte(argJSON), &args) == nil {
+			if v, ok := args["name"].(string); ok {
+				summary = v
+			} else if v, ok := args["id"].(string); ok {
+				summary = v
+			} else if v, ok := args["key"].(string); ok {
+				summary = v
+			}
+		}
+		ch <- ChatChunk{Type: "tool_use", Name: action, Summary: summary, Args: argJSON}
+		if req.PersonaToolFn != nil {
+			observation = req.PersonaToolFn(ctx, action, argJSON)
+		} else {
+			observation = "OBSERVATION:\nerror: persona tools need a live session on this server"
+		}
+		ch <- ChatChunk{Type: "tool_result", Text: strings.TrimPrefix(observation, "OBSERVATION:\n"), Name: action}
+		return observation
+	}
+	if action == "hublib" && req.HublibToolFn != nil {
+		// v0.67.2: THE LIBRARY on the direct path — browse/get/
+		// download the public hub through the server's runner
+		// (it owns the hub service + the per-chat Bot Library
+		// switch; downloads refuse with the switch path when
+		// OFF). Pill + observation mirror the local-tool shape.
+		var args map[string]any
+		summary := ""
+		if json.Unmarshal([]byte(argJSON), &args) == nil {
+			for _, k := range []string{"q", "id", "action"} {
+				if v, ok := args[k].(string); ok && v != "" {
+					summary = v
+					break
+				}
+			}
+		}
+		ch <- ChatChunk{Type: "tool_use", Name: "hublib", Summary: summary, Args: argJSON}
+		observation = req.HublibToolFn(ctx, argJSON)
+		ch <- ChatChunk{Type: "tool_result", Text: strings.TrimPrefix(observation, "OBSERVATION:\n"), Name: "hublib"}
+		return observation
+	}
+	if action == "skills" && req.SkillsToolFn != nil {
+		// v0.72: THE SKILLS HAND on the direct path — bootstrap/
+		// list/search/load a DOWNLOADED skill's methodology
+		// through the server's runner (same dispatch as the PM
+		// bridge). The load result's "SKILL LOADED — <name>"
+		// head feeds the active-bundle pill (deterministic:
+		// tool_use/tool_result ride the event log, replays match).
+		var args map[string]any
+		summary := ""
+		if json.Unmarshal([]byte(argJSON), &args) == nil {
+			for _, k := range []string{"skill", "q", "action"} {
+				if v, ok := args[k].(string); ok && v != "" {
+					summary = v
+					break
+				}
+			}
+		}
+		ch <- ChatChunk{Type: "tool_use", Name: "skills", Summary: summary, Args: argJSON}
+		observation = req.SkillsToolFn(ctx, argJSON)
+		ch <- ChatChunk{Type: "tool_result", Text: strings.TrimPrefix(observation, "OBSERVATION:\n"), Name: "skills"}
+		return observation
+	}
+	if action == "workspace" && req.WorkspaceToolFn != nil {
+		// v0.76.5: THE WORKSPACE HAND on the direct path — the
+		// chat's connected cloud repos through the server's
+		// runner (it owns the rows + vault tokens). Marker heads
+		// (COMMITTED / PR OPENED / FORKED — …) are deterministic.
+		var args map[string]any
+		summary := ""
+		if json.Unmarshal([]byte(argJSON), &args) == nil {
+			for _, k := range []string{"ws", "path", "query", "what", "action"} {
+				if v, ok := args[k].(string); ok && v != "" {
+					summary = v
+					break
+				}
+			}
+		}
+		ch <- ChatChunk{Type: "tool_use", Name: "workspace", Summary: summary, Args: argJSON}
+		observation = req.WorkspaceToolFn(ctx, argJSON)
+		ch <- ChatChunk{Type: "tool_result", Text: strings.TrimPrefix(observation, "OBSERVATION:\n"), Name: "workspace"}
+		return observation
+	}
+	if action == "termux" && req.TermuxToolFn != nil {
+		// v1.20.3 THE ARM on the direct path — the chat's bound
+		// device (termux) workspaces through the server's runner
+		// (it owns the session store + the bridge). The runner
+		// builds every observation (jail refusals, full output,
+		// honest caps); marker heads (EXEC DONE / WROTE /
+		// SESSION STARTED — …) are deterministic, the workspace
+		// branch's shape exactly. Not armed → the default-case
+		// unknown-tool teaching below answers honestly (the
+		// workspace tool's own not-armed message style).
+		var args map[string]any
+		summary := ""
+		if json.Unmarshal([]byte(argJSON), &args) == nil {
+			// the args ride the nested "args" object (the
+			// one-tool/verb-map shape) — the flat keys are
+			// tolerated when a provider flattened them.
+			if nested, ok := args["args"].(map[string]any); ok {
+				for _, k := range []string{"command", "path", "pattern", "name", "action"} {
+					if v, ok := nested[k].(string); ok && v != "" {
+						summary = v
+						break
+					}
+				}
+			}
+			if summary == "" {
+				for _, k := range []string{"command", "path", "pattern", "name", "action"} {
+					if v, ok := args[k].(string); ok && v != "" {
+						summary = v
+						break
+					}
+				}
+			}
+		}
+		ch <- ChatChunk{Type: "tool_use", Name: "termux", Summary: summary, Args: argJSON}
+		observation = req.TermuxToolFn(ctx, argJSON)
+		ch <- ChatChunk{Type: "tool_result", Text: strings.TrimPrefix(observation, "OBSERVATION:\n"), Name: "termux"}
+		return observation
+	}
+	if action == "djournal" && req.DjournalToolFn != nil {
+		// v1.47.1 THE JOURNAL HAND on the direct path — the
+		// degraded-bus ladder still serves the diary through
+		// the server's runner (same dispatch, same shapes).
+		summary := mcpbus.DefaultSummary("djournal", argJSON)
+		ch <- ChatChunk{Type: "tool_use", Name: "djournal", Summary: summary, Args: argJSON}
+		observation = req.DjournalToolFn(ctx, argJSON)
+		ch <- ChatChunk{Type: "tool_result", Text: strings.TrimPrefix(observation, "OBSERVATION:\n"), Name: "djournal"}
+		return observation
+	}
+	if action == "fleet" && req.FleetToolFn != nil {
+		// v1.47.2 THE FLEET HAND on the direct path — the roster
+		// + detail through the server's runner.
+		summary := mcpbus.DefaultSummary("fleet", argJSON)
+		ch <- ChatChunk{Type: "tool_use", Name: "fleet", Summary: summary, Args: argJSON}
+		observation = req.FleetToolFn(ctx, argJSON)
+		ch <- ChatChunk{Type: "tool_result", Text: strings.TrimPrefix(observation, "OBSERVATION:\n"), Name: "fleet"}
+		return observation
+	}
+	if action == "delegate" && req.DelegateFn != nil {
+		// v0.21: SWARM FANOUT (the HF panel delegate, ported) —
+		// one prompt, up to 3 other models answer in parallel.
+		var args struct {
+			Prompt string   `json:"prompt"`
+			Models []string `json:"models"`
+		}
+		_ = json.Unmarshal([]byte(argJSON), &args)
+		if args.Prompt == "" {
+			observation = "OBSERVATION:\nerror: delegate needs {\"prompt\": \"...\", \"models\": [\"provider/model\", \"…\"]}"
+		} else {
+			ch <- ChatChunk{Type: "progress", Text: "consulting other models…"}
+			ch <- ChatChunk{Type: "tool_use", Name: "delegate", Summary: clamp(args.Prompt, 80), Args: argJSON}
+			outs := req.DelegateFn(ctx, args.Prompt, args.Models)
+			b, _ := json.Marshal(outs)
+			observation = "OBSERVATION:\n" + string(b)
+			ch <- ChatChunk{Type: "tool_result", Text: string(b), Name: "delegate"}
+		}
+	} else if IsLocalTool(action) {
+		// v0.20: local tools — pure Go, zero latency, zero setup.
+		summary := mcpbus.DefaultSummary(action, argJSON)
+		ch <- ChatChunk{Type: "tool_use", Name: action, Summary: summary, Args: argJSON}
+		observation = RunLocalTool(action, argJSON, req.ArtifactSink)
+		obs := strings.TrimPrefix(observation, "OBSERVATION:\n")
+		res := ChatChunk{Type: "tool_result", Text: obs, Name: action}
+		// v0.22: file tools report the saved artifact so the UI
+		// can render a real download card right after the pill.
+		if strings.Contains(obs, "Saved as artifact ") {
+			var fargs struct {
+				Name string `json:"name"`
+			}
+			_ = json.Unmarshal([]byte(argJSON), &fargs)
+			if fargs.Name != "" {
+				res.Artifact = map[string]any{"name": fargs.Name}
+			}
+		}
+		ch <- res
+	} else {
+		switch action {
+		case "template_list":
+			// v0.52 THE 3 PILLS: the chat's template auto-search
+			// pill gates the tools — the protocol does not
+			// advertise them when it's off, but a model can
+			// still invent the call (or remember it from an
+			// earlier turn): answer honestly, don't run it.
+			if !req.TemplateAuto {
+				observation = "OBSERVATION:\nerror: the template library is disabled for this chat (the template pill is off). Ask the user to enable the template pill, or answer without it."
+				return observation
+			}
+			// v0.44 TEMPLATE SELF-SERVE: the model can browse the
+			// app's template library (the same index the template
+			// pill shows) and pick a methodology to follow.
+			ch <- ChatChunk{Type: "tool_use", Name: "template_list", Summary: "browse the template library"}
+			obs := runTemplateList(ctx, req)
+			observation = obs
+			ch <- ChatChunk{Type: "tool_result", Text: strings.TrimPrefix(obs, "OBSERVATION:\n"), Name: "template_list"}
+		case "template_show":
+			if !req.TemplateAuto {
+				observation = "OBSERVATION:\nerror: the template library is disabled for this chat (the template pill is off). Ask the user to enable the template pill, or answer without it."
+				return observation
+			}
+			var args struct {
+				ID string `json:"id"`
+			}
+			_ = json.Unmarshal([]byte(argJSON), &args)
+			if args.ID == "" {
+				observation = "OBSERVATION:\nerror: template_show needs {\"id\": \"...\"} — get ids from template_list"
+				return observation
+			}
+			ch <- ChatChunk{Type: "tool_use", Name: "template_show", Summary: clamp(args.ID, 80), Args: argJSON}
+			obs := runTemplateShow(ctx, req, args.ID)
+			observation = obs
+			ch <- ChatChunk{Type: "tool_result", Text: strings.TrimPrefix(obs, "OBSERVATION:\n"), Name: "template_show"}
+		case "web_search":
+			var args struct {
+				Query string `json:"query"`
+			}
+			_ = json.Unmarshal([]byte(argJSON), &args)
+			if args.Query == "" {
+				observation = "OBSERVATION:\nerror: empty query"
+				return observation
+			}
+			ch <- ChatChunk{Type: "tool_use", Name: "web_search", Summary: args.Query, Args: argJSON}
+			results, err := WebSearch(ctx, args.Query, 5, req.TavilyKey)
+			if err != nil {
+				observation = "OBSERVATION:\nsearch error: " + err.Error()
+				return observation
+			}
+			*allSources = append(*allSources, results...)
+			ch <- ChatChunk{Type: "sources", Sources: results}
+			obs := FormatSearchResults(results)
+			if obs == "" {
+				// v0.27.1: mirrors the PM path — "no results" for a specific
+				// named project usually means private/nonexistent; say that
+				// so the model stops instead of re-searching (it used to see
+				// a fake network error here and retry the same query).
+				obs = "(no results — try different terms; a specific named project or account may be private or nonexistent, in which case say so instead of retrying)"
+			}
+			observation = "OBSERVATION:\n" + obs
+			ch <- ChatChunk{Type: "tool_result", Text: obs, Name: "web_search"}
+		case "web_fetch":
+			var args struct {
+				URL string `json:"url"`
+			}
+			_ = json.Unmarshal([]byte(argJSON), &args)
+			if args.URL == "" {
+				observation = "OBSERVATION:\nerror: empty url"
+				return observation
+			}
+			ch <- ChatChunk{Type: "tool_use", Name: "web_fetch", Summary: args.URL}
+			text, err := WebFetch(ctx, args.URL) // v1.19.1: full content — no cap
+			if err != nil {
+				observation = "OBSERVATION:\nfetch error: " + err.Error()
+				return observation
+			}
+			observation = "OBSERVATION:\n" + text
+			ch <- ChatChunk{Type: "tool_result", Text: text, Name: "web_fetch"}
+		default:
+			observation = "OBSERVATION:\nerror: unknown tool \"" + action + "\". Valid tools: " + strings.Join(LocalToolNames, ", ") + ", web_search {\"query\": \"...\"}, web_fetch {\"url\": \"...\"} (live internet), template_list {}, template_show {\"id\": \"...\"} (the method-template library)" + (func() string {
+				if req.HublibToolFn != nil {
+					return ", hublib {\"action\": \"search|get|download|bundles|bundle|download_bundle\", ...} (the public hub library AND its bundles)"
+				}
+				return ""
+			}()) + (func() string {
+				if req.SkillsToolFn != nil {
+					return ", skills {\"action\": \"bootstrap|list|search|load|files|read\", ...} (the installed skill methodologies)"
+				}
+				return ""
+			}()) + (func() string {
+				// v0.81.6: the repo hand joins the teaching — the
+				// user's repro had the model guessing "repo_list"
+				// and dead-ending. Name the real tool + verbs.
+				if req.WorkspaceToolFn != nil {
+					return ", workspace {\"action\": \"help|list|ls|read|grep|view|put|pr|pr_diff|pr_review|pr_comment|pr_merge|issue_create|issue_comment|issue_close|discussion_post|workflow_dispatch|file_delete|release_create|branch|fork\", \"ws\": \"owner/repo\", ...} (this chat's CONNECTED cloud repos — grep, read, push, PR, code review, issues, discussions, workflows)"
+				}
+				return ""
+			}()) + (func() string {
+				// v1.20.3 THE ARM: the device-shell hand joins
+				// the teaching when armed — same law as the repo
+				// hand (name the real tool + the verb map; never
+				// let the model guess "shell" or "terminal" and
+				// dead-end).
+				if req.TermuxToolFn != nil {
+					return ", termux {\"action\": \"exec|ls|read|write|append|rm|mkdir|grep|find|pkg|session_start|session_list|session_log|session_kill|help\", \"args\": {\"path\":\"…\",\"command\":\"…\"}} (a real Termux Linux shell on the user's device, jailed to this chat's bound device folders — run commands, edit files, install packages, create/kill background process sessions)"
+				}
+				return ""
+			}()) + "."
+		}
+	}
+	return observation
 }
+
 // netPauseWaits (v0.39 P8-FULL): two quick hiccup retries, then the
 // pause-not-fail ladder — 15/30/60s waits that keep the turn ALIVE through
 // a network outage (timemanager's NetworkPauseError semantics: network-class
@@ -2107,11 +2114,11 @@ func executeAction(ctx context.Context, req ChatRequest, ch chan<- ChatChunk, ac
 // knob — the v1400 rig runs whole outage lifetimes in milliseconds; the
 // production numbers are the defaults below.
 var netPauseWaits = envDurs("DOOMALAY_NET_LADDER_WAITS", []time.Duration{
-        1500 * time.Millisecond,
-        3 * time.Second,
-        15 * time.Second,
-        30 * time.Second,
-        60 * time.Second,
+	1500 * time.Millisecond,
+	3 * time.Second,
+	15 * time.Second,
+	30 * time.Second,
+	60 * time.Second,
 })
 
 // ── v1.39.3 THE PATIENT ENGINE ───────────────────────────────────
@@ -2121,22 +2128,22 @@ var netPauseWaits = envDurs("DOOMALAY_NET_LADDER_WAITS", []time.Duration{
 // only by the user's Stop ("It should continue with all it's effort to work
 // despite me not having internet" — the spec, verbatim).
 var (
-        // netSuspendBase/Cap: the suspended wait grows from base toward the
-        // cap, full-jittered per wait (AWS's backoff-and-jitter law — plain
-        // exponential syncs herds; jitter is the documented best trade).
-        // DOOMALAY_NET_SUSPEND_*_MS are the rig-only compression knobs.
-        netSuspendBase = envDur("DOOMALAY_NET_SUSPEND_BASE_MS", 60*time.Second)
-        netSuspendCap  = envDur("DOOMALAY_NET_SUSPEND_CAP_MS", 5*time.Minute)
-        // netHeartbeatEvery: the suspended wait runs in slices no longer than
-        // this — every slice emits an EPHEMERAL progress heartbeat. The
-        // heartbeat does two jobs: (1) the live UI keeps telling the truth
-        // ("network paused — next attempt in Ns"), and (2) it refreshes the
-        // turn pulse (forwardEvents marks EVERY event, persisted or
-        // ephemeral) — a suspended turn can never go turnStale, so the open
-        // door can never abort a turn that is actively waiting for the
-        // network (a >120s silent wait between attempts would otherwise
-        // arm exactly that — the S5 class reborn).
-        netHeartbeatEvery = envDur("DOOMALAY_NET_HEARTBEAT_MS", 45*time.Second)
+	// netSuspendBase/Cap: the suspended wait grows from base toward the
+	// cap, full-jittered per wait (AWS's backoff-and-jitter law — plain
+	// exponential syncs herds; jitter is the documented best trade).
+	// DOOMALAY_NET_SUSPEND_*_MS are the rig-only compression knobs.
+	netSuspendBase = envDur("DOOMALAY_NET_SUSPEND_BASE_MS", 60*time.Second)
+	netSuspendCap  = envDur("DOOMALAY_NET_SUSPEND_CAP_MS", 5*time.Minute)
+	// netHeartbeatEvery: the suspended wait runs in slices no longer than
+	// this — every slice emits an EPHEMERAL progress heartbeat. The
+	// heartbeat does two jobs: (1) the live UI keeps telling the truth
+	// ("network paused — next attempt in Ns"), and (2) it refreshes the
+	// turn pulse (forwardEvents marks EVERY event, persisted or
+	// ephemeral) — a suspended turn can never go turnStale, so the open
+	// door can never abort a turn that is actively waiting for the
+	// network (a >120s silent wait between attempts would otherwise
+	// arm exactly that — the S5 class reborn).
+	netHeartbeatEvery = envDur("DOOMALAY_NET_HEARTBEAT_MS", 45*time.Second)
 )
 
 // THE NET WAKE (§3): the engine-wide "network regained" broadcast. Every
@@ -2146,16 +2153,16 @@ var (
 // (server-side goroutine → WakeNet); with no bridge (desktop/termux/hf)
 // the jittered rungs carry the wake alone — identical semantics, slower.
 var (
-        netWakeMu sync.Mutex
-        netWakeCh = make(chan struct{})
+	netWakeMu sync.Mutex
+	netWakeCh = make(chan struct{})
 )
 
 // netWakeChan returns the current wake channel (always non-nil).
 func netWakeChan() <-chan struct{} {
-        netWakeMu.Lock()
-        ch := netWakeCh
-        netWakeMu.Unlock()
-        return ch
+	netWakeMu.Lock()
+	ch := netWakeCh
+	netWakeMu.Unlock()
+	return ch
 }
 
 // WakeNet broadcasts "network regained" to every suspended retry waiter —
@@ -2163,49 +2170,49 @@ func netWakeChan() <-chan struct{} {
 // burning the next fixed rung. Safe to call from any goroutine, any number
 // of times; a wake with no waiters is a no-op.
 func WakeNet() {
-        netWakeMu.Lock()
-        close(netWakeCh)
-        netWakeCh = make(chan struct{})
-        netWakeMu.Unlock()
+	netWakeMu.Lock()
+	close(netWakeCh)
+	netWakeCh = make(chan struct{})
+	netWakeMu.Unlock()
 }
 
 // envDurs/envDur — rig-only env overrides for the ladder's clocks.
 func envDurs(key string, dflt []time.Duration) []time.Duration {
-        raw := os.Getenv(key)
-        if raw == "" {
-                return dflt
-        }
-        var out []time.Duration
-        for _, part := range strings.Split(raw, ",") {
-                if ms, err := strconv.Atoi(strings.TrimSpace(part)); err == nil && ms >= 0 {
-                        out = append(out, time.Duration(ms)*time.Millisecond)
-                }
-        }
-        if len(out) > 0 {
-                return out
-        }
-        return dflt
+	raw := os.Getenv(key)
+	if raw == "" {
+		return dflt
+	}
+	var out []time.Duration
+	for _, part := range strings.Split(raw, ",") {
+		if ms, err := strconv.Atoi(strings.TrimSpace(part)); err == nil && ms >= 0 {
+			out = append(out, time.Duration(ms)*time.Millisecond)
+		}
+	}
+	if len(out) > 0 {
+		return out
+	}
+	return dflt
 }
 
 func envDur(key string, dflt time.Duration) time.Duration {
-        if ms, err := strconv.Atoi(os.Getenv(key)); err == nil && ms > 0 {
-                return time.Duration(ms) * time.Millisecond
-        }
-        return dflt
+	if ms, err := strconv.Atoi(os.Getenv(key)); err == nil && ms > 0 {
+		return time.Duration(ms) * time.Millisecond
+	}
+	return dflt
 }
 
 // durHuman — the notices' clock ("47s", "3m12s").
 func durHuman(d time.Duration) string {
-        s := int(d.Seconds())
-        if s < 60 {
-                return fmt.Sprintf("%ds", s)
-        }
-        m := s / 60
-        s %= 60
-        if m < 60 {
-                return fmt.Sprintf("%dm%02ds", m, s)
-        }
-        return fmt.Sprintf("%dh%02dm", m/60, m%60)
+	s := int(d.Seconds())
+	if s < 60 {
+		return fmt.Sprintf("%ds", s)
+	}
+	m := s / 60
+	s %= 60
+	if m < 60 {
+		return fmt.Sprintf("%dm%02ds", m, s)
+	}
+	return fmt.Sprintf("%dh%02dm", m/60, m%60)
 }
 
 // netPauseLadder retries a network-class failure. fn returns (emitted, err):
@@ -2236,60 +2243,60 @@ func durHuman(d time.Duration) string {
 // suspension, the wake channel, the "network" texts — THE UNBROKEN TURN
 // law untouched.
 func netPauseLadder(ctx context.Context, ch chan<- ChatChunk, provider string, fn func() (bool, error)) error {
-        emitted, err := fn()
-        if err == nil || !isTransientNetErr(err) || emitted {
-                return err
-        }
-        providerScoped := anyOtherProviderHealthy(provider)
-        label := providerLabel(provider)
-        // v1.45.2: the hiccup counter tells the truth — the old text
-        // hardcoded "/2" while the loop counts every rung (the compressed
-        // rig waits exposed "retry 5/2" live).
-        quick := 0
-        for _, w := range netPauseWaits {
-                if w < 15*time.Second {
-                        quick++
-                }
-        }
-        for i, w := range netPauseWaits {
-                RecordProviderFailure(provider, "net", err.Error())
-                if w >= 15*time.Second {
-                        text := fmt.Sprintf("network paused — %s unreachable, retrying in %ds (your turn is safe)", label, int(w.Seconds()))
-                        if providerScoped {
-                                text = fmt.Sprintf("%s is unreachable — retrying in %ds (your connection is fine)", label, int(w.Seconds()))
-                        }
-                        select {
-                        case ch <- ChatChunk{Type: "progress", Text: text}:
-                        default:
-                        }
-                } else {
-                        msg := fmt.Sprintf("network hiccup — retry %d/%d", i+1, quick)
-                        if providerScoped {
-                                msg = fmt.Sprintf("%s connection hiccup — retry %d/%d", label, i+1, quick)
-                        }
-                        ch <- ChatChunk{Type: "status", State: "running", Message: msg}
-                }
-                select {
-                case <-time.After(w):
-                case <-ctx.Done():
-                        return ctx.Err()
-                }
-                emitted, err = fn()
-                if err == nil || !isTransientNetErr(err) || emitted {
-                        return err
-                }
-        }
-        // v1.39.3: the rungs are spent and the network is STILL down — the
-        // old ladder returned the error here and the turn died. Now: the
-        // suspension (device-offline) or the bounded hold (provider-scoped).
-        if providerScoped {
-                return netProviderHoldLoop(ctx, ch, provider,
-                        fmt.Sprintf("connection to %s keeps failing — holding the turn a little longer (Stop always works)", label),
-                        fn)
-        }
-        return netSuspendedLoop(ctx, ch, provider,
-                fmt.Sprintf("connection to %s lost — the turn holds and keeps retrying (Stop always works)", providerLabel(provider)),
-                fn)
+	emitted, err := fn()
+	if err == nil || !isTransientNetErr(err) || emitted {
+		return err
+	}
+	providerScoped := anyOtherProviderHealthy(provider)
+	label := providerLabel(provider)
+	// v1.45.2: the hiccup counter tells the truth — the old text
+	// hardcoded "/2" while the loop counts every rung (the compressed
+	// rig waits exposed "retry 5/2" live).
+	quick := 0
+	for _, w := range netPauseWaits {
+		if w < 15*time.Second {
+			quick++
+		}
+	}
+	for i, w := range netPauseWaits {
+		RecordProviderFailure(provider, "net", err.Error())
+		if w >= 15*time.Second {
+			text := fmt.Sprintf("network paused — %s unreachable, retrying in %ds (your turn is safe)", label, int(w.Seconds()))
+			if providerScoped {
+				text = fmt.Sprintf("%s is unreachable — retrying in %ds (your connection is fine)", label, int(w.Seconds()))
+			}
+			select {
+			case ch <- ChatChunk{Type: "progress", Text: text}:
+			default:
+			}
+		} else {
+			msg := fmt.Sprintf("network hiccup — retry %d/%d", i+1, quick)
+			if providerScoped {
+				msg = fmt.Sprintf("%s connection hiccup — retry %d/%d", label, i+1, quick)
+			}
+			ch <- ChatChunk{Type: "status", State: "running", Message: msg}
+		}
+		select {
+		case <-time.After(w):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		emitted, err = fn()
+		if err == nil || !isTransientNetErr(err) || emitted {
+			return err
+		}
+	}
+	// v1.39.3: the rungs are spent and the network is STILL down — the
+	// old ladder returned the error here and the turn died. Now: the
+	// suspension (device-offline) or the bounded hold (provider-scoped).
+	if providerScoped {
+		return netProviderHoldLoop(ctx, ch, provider,
+			fmt.Sprintf("connection to %s keeps failing — holding the turn a little longer (Stop always works)", label),
+			fn)
+	}
+	return netSuspendedLoop(ctx, ch, provider,
+		fmt.Sprintf("connection to %s lost — the turn holds and keeps retrying (Stop always works)", providerLabel(provider)),
+		fn)
 }
 
 // netProviderHoldTotal — v1.45.2: how long the provider-scoped hold lasts
@@ -2304,84 +2311,85 @@ var netProviderHoldTotal = envDur("DOOMALAY_PROVIDER_HOLD_MS", 2*time.Minute)
 // ≤45s heartbeat slices (live truth + the turn-pulse refresh), same wake
 // selection (if the network REALLY was the problem and comes back, the
 // retry fires in ~1s). The differences are the honesty laws:
-//   · the texts NEVER say "network" — the provider is unreachable, the
-//     user's connection is fine (another provider proved it);
-//   · the hold is BOUNDED by netProviderHoldTotal: when the clock runs
-//     out, ONE final attempt, and if it still fails the turn ends with
-//     the honest provider-down verdict — the session lock releases, the
-//     partial work + the error persist, the standard retry affordances
-//     own the next move. The infinite-patient law stays reserved for the
-//     device-offline shape (netSuspendedLoop), where waiting IS the only
-//     honest move.
+//
+//	· the texts NEVER say "network" — the provider is unreachable, the
+//	  user's connection is fine (another provider proved it);
+//	· the hold is BOUNDED by netProviderHoldTotal: when the clock runs
+//	  out, ONE final attempt, and if it still fails the turn ends with
+//	  the honest provider-down verdict — the session lock releases, the
+//	  partial work + the error persist, the standard retry affordances
+//	  own the next move. The infinite-patient law stays reserved for the
+//	  device-offline shape (netSuspendedLoop), where waiting IS the only
+//	  honest move.
 func netProviderHoldLoop(ctx context.Context, ch chan<- ChatChunk, provider, enterText string, fn func() (bool, error)) error {
-        label := providerLabel(provider)
-        if enterText != "" {
-                ch <- ChatChunk{Type: "notice", Text: enterText}
-        }
-        entered := time.Now()
-        next := netSuspendBase
-        for {
-                // THE WAIT — full jitter on the growing next (AWS's law), capped
-                // by the remaining hold budget.
-                remaining := netProviderHoldTotal - time.Since(entered)
-                if remaining <= 0 {
-                        // The hold is spent — ONE last attempt, then the honest verdict.
-                        RecordProviderFailure(provider, "net", "provider hold expired")
-                        emitted, err := fn()
-                        if err == nil {
-                                ch <- ChatChunk{Type: "notice", Text: fmt.Sprintf("%s is back — continuing", label)}
-                                return nil
-                        }
-                        if !isTransientNetErr(err) || emitted {
-                                return err // the class changed mid-hold — the caller's verdict
-                        }
-                        return fmt.Errorf("%s is unreachable right now — this looks like a problem on their side (your connection is fine). Tap Retry when you want to try again", label)
-                }
-                if next > remaining {
-                        next = remaining
-                }
-                wait := time.Duration(rand.Int63n(int64(next) + 1))
-                if wait <= 0 {
-                        wait = time.Millisecond // a zero-jitter edge still attempts
-                }
-                deadline := time.Now().Add(wait)
-        waitLoop:
-                for time.Now().Before(deadline) {
-                        slice := netHeartbeatEvery
-                        if d := time.Until(deadline); d < slice {
-                                slice = d
-                        }
-                        select {
-                        case <-time.After(slice):
-                                select {
-                                case ch <- ChatChunk{Type: "progress", Text: fmt.Sprintf("%s still unreachable — next attempt in %ds", label, int(time.Until(deadline).Seconds()+0.5))}:
-                                default:
-                                }
-                        case <-netWakeChan():
-                                select {
-                                case ch <- ChatChunk{Type: "progress", Text: fmt.Sprintf("%s retrying now", label)}:
-                                default:
-                                }
-                                break waitLoop
-                        case <-ctx.Done():
-                                return ctx.Err()
-                        }
-                }
-                RecordProviderFailure(provider, "net", "provider hold retry")
-                emitted, err := fn()
-                if err == nil {
-                        // The provider came back — persisted, the resolution of the
-                        // enter notice.
-                        ch <- ChatChunk{Type: "notice", Text: fmt.Sprintf("%s is back after %s — continuing", label, durHuman(time.Since(entered)))}
-                        return nil
-                }
-                if !isTransientNetErr(err) || emitted {
-                        // The failure class changed (auth/protocol) or the round
-                        // streamed visible content — the caller's verdict, never a
-                        // fabricated one.
-                        return err
-                }
-        }
+	label := providerLabel(provider)
+	if enterText != "" {
+		ch <- ChatChunk{Type: "notice", Text: enterText}
+	}
+	entered := time.Now()
+	next := netSuspendBase
+	for {
+		// THE WAIT — full jitter on the growing next (AWS's law), capped
+		// by the remaining hold budget.
+		remaining := netProviderHoldTotal - time.Since(entered)
+		if remaining <= 0 {
+			// The hold is spent — ONE last attempt, then the honest verdict.
+			RecordProviderFailure(provider, "net", "provider hold expired")
+			emitted, err := fn()
+			if err == nil {
+				ch <- ChatChunk{Type: "notice", Text: fmt.Sprintf("%s is back — continuing", label)}
+				return nil
+			}
+			if !isTransientNetErr(err) || emitted {
+				return err // the class changed mid-hold — the caller's verdict
+			}
+			return fmt.Errorf("%s is unreachable right now — this looks like a problem on their side (your connection is fine). Tap Retry when you want to try again", label)
+		}
+		if next > remaining {
+			next = remaining
+		}
+		wait := time.Duration(rand.Int63n(int64(next) + 1))
+		if wait <= 0 {
+			wait = time.Millisecond // a zero-jitter edge still attempts
+		}
+		deadline := time.Now().Add(wait)
+	waitLoop:
+		for time.Now().Before(deadline) {
+			slice := netHeartbeatEvery
+			if d := time.Until(deadline); d < slice {
+				slice = d
+			}
+			select {
+			case <-time.After(slice):
+				select {
+				case ch <- ChatChunk{Type: "progress", Text: fmt.Sprintf("%s still unreachable — next attempt in %ds", label, int(time.Until(deadline).Seconds()+0.5))}:
+				default:
+				}
+			case <-netWakeChan():
+				select {
+				case ch <- ChatChunk{Type: "progress", Text: fmt.Sprintf("%s retrying now", label)}:
+				default:
+				}
+				break waitLoop
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		RecordProviderFailure(provider, "net", "provider hold retry")
+		emitted, err := fn()
+		if err == nil {
+			// The provider came back — persisted, the resolution of the
+			// enter notice.
+			ch <- ChatChunk{Type: "notice", Text: fmt.Sprintf("%s is back after %s — continuing", label, durHuman(time.Since(entered)))}
+			return nil
+		}
+		if !isTransientNetErr(err) || emitted {
+			// The failure class changed (auth/protocol) or the round
+			// streamed visible content — the caller's verdict, never a
+			// fabricated one.
+			return err
+		}
+	}
 }
 
 // netSuspendedLoop — THE SUSPENDED MODE (v1.39.3 THE PATIENT ENGINE).
@@ -2389,85 +2397,86 @@ func netProviderHoldLoop(ctx context.Context, ch chan<- ChatChunk, provider, ent
 // effort" is the spec. enterText: the PERSISTED enter notice's text ("
 // = quiet — the caller already persisted its own, e.g. §4's seam notice).
 // The loop:
-//   · waits: full-jittered, growing base→cap, in ≤ netHeartbeatEvery slices;
-//     every slice emits an ephemeral progress heartbeat — the live UI truth
-//     AND the turn-pulse refresh (a suspended turn can never read stale, so
-//     the open door can never abort it).
-//   · THE WAKE: every slice also selects on the engine-wide net-wake
-//     channel — regained connectivity retries in ~1s (§3 wires the Kotlin
-//     NetworkCallback into WakeNet).
-//   · EXIT notices: on the first SUCCESSFUL attempt after suspension — a
-//     PERSISTED "network regained after Ns — continuing" (the second half
-//     of the story the user asked to see). Stop (ctx) exits clean.
-//   · There is no give-up. The turn's own truth or the user's Stop ends it.
+//
+//	· waits: full-jittered, growing base→cap, in ≤ netHeartbeatEvery slices;
+//	  every slice emits an ephemeral progress heartbeat — the live UI truth
+//	  AND the turn-pulse refresh (a suspended turn can never read stale, so
+//	  the open door can never abort it).
+//	· THE WAKE: every slice also selects on the engine-wide net-wake
+//	  channel — regained connectivity retries in ~1s (§3 wires the Kotlin
+//	  NetworkCallback into WakeNet).
+//	· EXIT notices: on the first SUCCESSFUL attempt after suspension — a
+//	  PERSISTED "network regained after Ns — continuing" (the second half
+//	  of the story the user asked to see). Stop (ctx) exits clean.
+//	· There is no give-up. The turn's own truth or the user's Stop ends it.
 func netSuspendedLoop(ctx context.Context, ch chan<- ChatChunk, provider, enterText string, fn func() (bool, error)) error {
-        label := providerLabel(provider)
-        if enterText != "" {
-                ch <- ChatChunk{Type: "notice", Text: enterText}
-        }
-        entered := time.Now()
-        next := netSuspendBase
-        for {
-                // THE WAIT — full jitter on the growing next (AWS's law).
-                wait := time.Duration(rand.Int63n(int64(next) + 1))
-                if wait <= 0 {
-                        wait = time.Millisecond // a zero-jitter edge still attempts
-                }
-                deadline := time.Now().Add(wait)
-                // waitLoop: the labeled break exists because a WAKE must
-                // exit the WHOLE wait (not just the slice) — the retry
-                // fires immediately, ~1s after the OS validates the
-                // network. Without the break the wake would announce and
-                // then sit through the remaining rung (the exact timer-waste
-                // §3 exists to kill).
-                waitLoop:
-                for time.Now().Before(deadline) {
-                        slice := netHeartbeatEvery
-                        if d := time.Until(deadline); d < slice {
-                                slice = d
-                        }
-                        select {
-                        case <-time.After(slice):
-                                // THE HEARTBEAT: live-UI truth + turn-pulse
-                                // refresh (forwardEvents marks EVERY event).
-                                select {
-                                case ch <- ChatChunk{Type: "progress", Text: fmt.Sprintf("network still paused — %s unreachable, next attempt in %ds", label, int(time.Until(deadline).Seconds()+0.5))}:
-                                default:
-                                }
-                        case <-netWakeChan():
-                                // §3 THE NET WAKE: connectivity is back —
-                                // attempt NOW, not at the next rung. A live
-                                // heads-up rides the ephemeral path.
-                                select {
-                                case ch <- ChatChunk{Type: "progress", Text: "network is back — retrying now"}:
-                                default:
-                                }
-                                break waitLoop
-                        case <-ctx.Done():
-                                return ctx.Err()
-                        }
-                }
-                RecordProviderFailure(provider, "net", "suspended retry")
-                emitted, err := fn()
-                if err == nil {
-                        // THE REGAINED NOTICE — persisted, the resolution of
-                        // the pause the ENTER notice opened.
-                        ch <- ChatChunk{Type: "notice", Text: fmt.Sprintf("network regained after %s — continuing", durHuman(time.Since(entered)))}
-                        return nil
-                }
-                if !isTransientNetErr(err) || emitted {
-                        // The failure class changed (auth/protocol) or the
-                        // round streamed content (§4 owns that seam) — the
-                        // honest terminal paths stand exactly as before.
-                        return err
-                }
-                if next < netSuspendCap {
-                        next *= 2
-                        if next > netSuspendCap {
-                                next = netSuspendCap
-                        }
-                }
-        }
+	label := providerLabel(provider)
+	if enterText != "" {
+		ch <- ChatChunk{Type: "notice", Text: enterText}
+	}
+	entered := time.Now()
+	next := netSuspendBase
+	for {
+		// THE WAIT — full jitter on the growing next (AWS's law).
+		wait := time.Duration(rand.Int63n(int64(next) + 1))
+		if wait <= 0 {
+			wait = time.Millisecond // a zero-jitter edge still attempts
+		}
+		deadline := time.Now().Add(wait)
+		// waitLoop: the labeled break exists because a WAKE must
+		// exit the WHOLE wait (not just the slice) — the retry
+		// fires immediately, ~1s after the OS validates the
+		// network. Without the break the wake would announce and
+		// then sit through the remaining rung (the exact timer-waste
+		// §3 exists to kill).
+	waitLoop:
+		for time.Now().Before(deadline) {
+			slice := netHeartbeatEvery
+			if d := time.Until(deadline); d < slice {
+				slice = d
+			}
+			select {
+			case <-time.After(slice):
+				// THE HEARTBEAT: live-UI truth + turn-pulse
+				// refresh (forwardEvents marks EVERY event).
+				select {
+				case ch <- ChatChunk{Type: "progress", Text: fmt.Sprintf("network still paused — %s unreachable, next attempt in %ds", label, int(time.Until(deadline).Seconds()+0.5))}:
+				default:
+				}
+			case <-netWakeChan():
+				// §3 THE NET WAKE: connectivity is back —
+				// attempt NOW, not at the next rung. A live
+				// heads-up rides the ephemeral path.
+				select {
+				case ch <- ChatChunk{Type: "progress", Text: "network is back — retrying now"}:
+				default:
+				}
+				break waitLoop
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		RecordProviderFailure(provider, "net", "suspended retry")
+		emitted, err := fn()
+		if err == nil {
+			// THE REGAINED NOTICE — persisted, the resolution of
+			// the pause the ENTER notice opened.
+			ch <- ChatChunk{Type: "notice", Text: fmt.Sprintf("network regained after %s — continuing", durHuman(time.Since(entered)))}
+			return nil
+		}
+		if !isTransientNetErr(err) || emitted {
+			// The failure class changed (auth/protocol) or the
+			// round streamed content (§4 owns that seam) — the
+			// honest terminal paths stand exactly as before.
+			return err
+		}
+		if next < netSuspendCap {
+			next *= 2
+			if next > netSuspendCap {
+				next = netSuspendCap
+			}
+		}
+	}
 }
 
 // emittedCutError (v1.39.6 THE SEAMLESS CUT) marks a transient network
@@ -2489,32 +2498,32 @@ func (e *emittedCutError) Unwrap() error { return e.err }
 // CONTENT that streamed (the seam's context). Channel law:
 // streamCompletion never closes ch (the turn runner owns the close).
 func streamTap(ctx context.Context, req ChatRequest, ch chan<- ChatChunk, extraBody map[string]any) (*Usage, bool, string, error) {
-        mid := make(chan ChatChunk) // unbuffered — the handshake law
-        type res struct {
-                u *Usage
-                e error
-        }
-        resCh := make(chan res, 1)
-        go func() {
-                u, e := streamCompletion(ctx, req, mid, extraBody)
-                resCh <- res{u, e}
-        }()
-        emitted := false
-        var content strings.Builder
-        for {
-                select {
-                case c := <-mid:
-                        if !emitted && (c.Type == "thinking" || c.Type == "assistant_delta") {
-                                emitted = true
-                        }
-                        if c.Type == "assistant_delta" {
-                                content.WriteString(c.Text)
-                        }
-                        ch <- c
-                case r := <-resCh:
-                        return r.u, emitted, content.String(), r.e
-                }
-        }
+	mid := make(chan ChatChunk) // unbuffered — the handshake law
+	type res struct {
+		u *Usage
+		e error
+	}
+	resCh := make(chan res, 1)
+	go func() {
+		u, e := streamCompletion(ctx, req, mid, extraBody)
+		resCh <- res{u, e}
+	}()
+	emitted := false
+	var content strings.Builder
+	for {
+		select {
+		case c := <-mid:
+			if !emitted && (c.Type == "thinking" || c.Type == "assistant_delta") {
+				emitted = true
+			}
+			if c.Type == "assistant_delta" {
+				content.WriteString(c.Text)
+			}
+			ch <- c
+		case r := <-resCh:
+			return r.u, emitted, content.String(), r.e
+		}
+	}
 }
 
 // netLadderStream — v1.39.3: streamCompletion THROUGH the pause ladder for
@@ -2527,68 +2536,68 @@ func streamTap(ctx context.Context, req ChatRequest, ch chan<- ChatChunk, extraB
 // v1.39.6: also returns the streamed assistant content (the seam's context)
 // and wraps the emitted+transient class.
 func netLadderStream(ctx context.Context, req ChatRequest, ch chan<- ChatChunk, extraBody map[string]any) (*Usage, string, error) {
-        var final *Usage
-        var streamed string
-        var emitted bool
-        err := netPauseLadder(ctx, ch, req.Provider, func() (bool, error) {
-                var e error
-                final, emitted, streamed, e = streamTap(ctx, req, ch, extraBody)
-                return emitted, e
-        })
-        if err != nil && isTransientNetErr(err) && emitted {
-                err = &emittedCutError{err: err}
-        }
-        return final, streamed, err
+	var final *Usage
+	var streamed string
+	var emitted bool
+	err := netPauseLadder(ctx, ch, req.Provider, func() (bool, error) {
+		var e error
+		final, emitted, streamed, e = streamTap(ctx, req, ch, extraBody)
+		return emitted, e
+	})
+	if err != nil && isTransientNetErr(err) && emitted {
+		err = &emittedCutError{err: err}
+	}
+	return final, streamed, err
 }
 
 // isTransientNetErr reports whether the error looks like a recoverable
 // network/provider blip (worth a silent retry) rather than an auth or
 // protocol failure (retrying is pointless).
 func isTransientNetErr(err error) bool {
-        if err == nil {
-                return false
-        }
-        s := err.Error()
-        // v0.93.2 THE MISTRAL TLS CLASS: 'tls: bad record MAC' (and the tls/
-        // handshake family) is mid-stream TLS record corruption — carrier
-        // NAT rebinds, mobile-network proxies, connection reuse through
-        // flaky middleboxes (the Go issue tracker's own diagnosis: 'network
-        // corruption of some sort'). The user's live hit: Mistral tool
-        // chains died terminal on api.mistral.ai with
-        //   Post "https://api.mistral.ai/v1/chat/completions": remote error:
-        //   tls: bad record MAC
-        // The cure is EXACTLY what the pause ladder does — retry on a FRESH
-        // connection (Go's transport discards the poisoned one). These are
-        // transient by nature; auth/protocol errors never match this set.
-        return regexp.MustCompile(`(?i)timeout|context deadline|connection reset|broken pipe|unexpected EOF|refused|temporary|HTTP 5[0-9][0-9]|503|502|network|went silent|no data|bad record mac|tls:|record mac|handshake failure`).MatchString(s)
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	// v0.93.2 THE MISTRAL TLS CLASS: 'tls: bad record MAC' (and the tls/
+	// handshake family) is mid-stream TLS record corruption — carrier
+	// NAT rebinds, mobile-network proxies, connection reuse through
+	// flaky middleboxes (the Go issue tracker's own diagnosis: 'network
+	// corruption of some sort'). The user's live hit: Mistral tool
+	// chains died terminal on api.mistral.ai with
+	//   Post "https://api.mistral.ai/v1/chat/completions": remote error:
+	//   tls: bad record MAC
+	// The cure is EXACTLY what the pause ladder does — retry on a FRESH
+	// connection (Go's transport discards the poisoned one). These are
+	// transient by nature; auth/protocol errors never match this set.
+	return regexp.MustCompile(`(?i)timeout|context deadline|connection reset|broken pipe|unexpected EOF|refused|temporary|HTTP 5[0-9][0-9]|503|502|network|went silent|no data|bad record mac|tls:|record mac|handshake failure`).MatchString(s)
 }
 
 // mergeUsage sums two usage reports (nil-safe).
 func mergeUsage(a, b *Usage) *Usage {
-        if b == nil {
-                return a
-        }
-        if a == nil {
-                return b
-        }
-        // v1.14.1 THE LEDGER: the terminal state rides the LAST round — the
-        // turn ended however the final completion ended, not the first.
-        // v1.44.6 FIX: TotalTokens rides the merge (it was DROPPED here —
-        // multi-round turns always reported total=0 beside real in/out
-        // numbers; the v1440 rig convicted it). Belt-and-braces: a zero
-        // total beside real numbers recomputes from the parts.
-        out := &Usage{
-                InputTokens:     a.InputTokens + b.InputTokens,
-                OutputTokens:    a.OutputTokens + b.OutputTokens,
-                TotalTokens:     a.TotalTokens + b.TotalTokens,
-                ReasoningTokens: a.ReasoningTokens + b.ReasoningTokens,
-                FinishReason:    b.FinishReason,
-                OutputCut:       b.OutputCut,
-        }
-        if out.TotalTokens == 0 && (out.InputTokens > 0 || out.OutputTokens > 0) {
-                out.TotalTokens = out.InputTokens + out.OutputTokens
-        }
-        return out
+	if b == nil {
+		return a
+	}
+	if a == nil {
+		return b
+	}
+	// v1.14.1 THE LEDGER: the terminal state rides the LAST round — the
+	// turn ended however the final completion ended, not the first.
+	// v1.44.6 FIX: TotalTokens rides the merge (it was DROPPED here —
+	// multi-round turns always reported total=0 beside real in/out
+	// numbers; the v1440 rig convicted it). Belt-and-braces: a zero
+	// total beside real numbers recomputes from the parts.
+	out := &Usage{
+		InputTokens:     a.InputTokens + b.InputTokens,
+		OutputTokens:    a.OutputTokens + b.OutputTokens,
+		TotalTokens:     a.TotalTokens + b.TotalTokens,
+		ReasoningTokens: a.ReasoningTokens + b.ReasoningTokens,
+		FinishReason:    b.FinishReason,
+		OutputCut:       b.OutputCut,
+	}
+	if out.TotalTokens == 0 && (out.InputTokens > 0 || out.OutputTokens > 0) {
+		out.TotalTokens = out.InputTokens + out.OutputTokens
+	}
+	return out
 }
 
 // (v1.13.3 THE GUT: parseAction/parseActions/actionRe died with the
@@ -2599,8 +2608,8 @@ func mergeUsage(a, b *Usage) *Usage {
 // line for calls cut mid-string.)
 
 func repairJSON(s string) string {
-        fixed, _ := repairJSONReport(s)
-        return fixed
+	fixed, _ := repairJSONReport(s)
+	return fixed
 }
 
 // repairJSONReport repairs malformed model JSON AND reports whether the
@@ -2612,174 +2621,174 @@ func repairJSON(s string) string {
 // and no error. Callers refuse the inString-truncated class and tell the
 // model to re-send instead.
 func repairJSONReport(s string) (string, bool) {
-        var b strings.Builder
-        // open bracket stack: '{' or '[' for each currently-open container
-        var stack []byte
-        inStr, esc := false, false
-        for _, r := range s {
-                switch {
-                case inStr && esc:
-                        esc = false
-                        b.WriteRune(r)
-                case inStr && r == '\\':
-                        esc = true
-                        b.WriteRune(r)
-                case inStr && r == '"':
-                        inStr = false
-                        b.WriteRune(r)
-                case inStr:
-                        switch r {
-                        case '\n':
-                                b.WriteString(`\n`)
-                        case '\r':
-                                b.WriteString(`\r`)
-                        case '\t':
-                                b.WriteString(`\t`)
-                        default:
-                                b.WriteRune(r)
-                        }
-                case r == '"':
-                        inStr = true
-                        b.WriteRune(r)
-                case r == '{':
-                        stack = append(stack, '}')
-                        b.WriteRune(r)
-                case r == '[':
-                        stack = append(stack, ']')
-                        b.WriteRune(r)
-                case (r == '}' || r == ']') && len(stack) > 0:
-                        stack = stack[:len(stack)-1]
-                        b.WriteRune(r)
-                default:
-                        b.WriteRune(r)
-                }
-        }
-        out := b.String()
-        if inStr {
-                out += `"`
-        }
-        // close remaining containers innermost-first (stack is already in
-        // open order; appending from the END closes innermost-first)
-        for i := len(stack) - 1; i >= 0; i-- {
-                out += string(stack[i])
-        }
-        return out, inStr
+	var b strings.Builder
+	// open bracket stack: '{' or '[' for each currently-open container
+	var stack []byte
+	inStr, esc := false, false
+	for _, r := range s {
+		switch {
+		case inStr && esc:
+			esc = false
+			b.WriteRune(r)
+		case inStr && r == '\\':
+			esc = true
+			b.WriteRune(r)
+		case inStr && r == '"':
+			inStr = false
+			b.WriteRune(r)
+		case inStr:
+			switch r {
+			case '\n':
+				b.WriteString(`\n`)
+			case '\r':
+				b.WriteString(`\r`)
+			case '\t':
+				b.WriteString(`\t`)
+			default:
+				b.WriteRune(r)
+			}
+		case r == '"':
+			inStr = true
+			b.WriteRune(r)
+		case r == '{':
+			stack = append(stack, '}')
+			b.WriteRune(r)
+		case r == '[':
+			stack = append(stack, ']')
+			b.WriteRune(r)
+		case (r == '}' || r == ']') && len(stack) > 0:
+			stack = stack[:len(stack)-1]
+			b.WriteRune(r)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	out := b.String()
+	if inStr {
+		out += `"`
+	}
+	// close remaining containers innermost-first (stack is already in
+	// open order; appending from the END closes innermost-first)
+	for i := len(stack) - 1; i >= 0; i-- {
+		out += string(stack[i])
+	}
+	return out, inStr
 }
 
 func lenientJSON(s string) string {
-        s = strings.Map(func(r rune) rune {
-                switch r {
-                case '\u201c', '\u201d':
-                        return '"'
-                case '\u2018', '\u2019':
-                        return '\''
-                }
-                return r
-        }, s)
-        var b strings.Builder
-        inD, inS, esc := false, false, false
-        lastCh := byte(0) // last non-space byte EMITTED (key-position test)
-        runes := []rune(s)
-        emit := func(str string) {
-                b.WriteString(str)
-                for i := 0; i < len(str); i++ {
-                        if str[i] != ' ' && str[i] != '\t' && str[i] != '\n' && str[i] != '\r' {
-                                lastCh = str[i]
-                        }
-                }
-        }
-        for i := 0; i < len(runes); i++ {
-                r := runes[i]
-                if inD {
-                        emit(string(r))
-                        if esc {
-                                esc = false
-                        } else if r == '\\' {
-                                esc = true
-                        } else if r == '"' {
-                                inD = false
-                        }
-                        continue
-                }
-                if inS {
-                        if r == '\'' {
-                                // ' → ": escape inner straight doubles
-                                emit("\"")
-                                inS = false
-                        } else if r == '"' {
-                                emit("\\\"")
-                        } else {
-                                emit(string(r))
-                        }
-                        continue
-                }
-                switch r {
-                case '"':
-                        inD = true
-                        emit("\"")
-                case '\'':
-                        inS = true
-                        emit("\"")
-                case ',':
-                        // drop a trailing comma (next non-space is } or ])
-                        j := i + 1
-                        for j < len(runes) && (runes[j] == ' ' || runes[j] == '\t' || runes[j] == '\n' || runes[j] == '\r') {
-                                j++
-                        }
-                        if j < len(runes) && (runes[j] == '}' || runes[j] == ']') {
-                                continue
-                        }
-                        emit(",")
-                case '}', ']', '{', '[', ':':
-                        emit(string(r))
-                default:
-                        // bare-word key: an identifier followed by ':' where a
-                        // key is expected ({ or , before it)
-                        if isIdentRune(r) {
-                                j := i
-                                for j < len(runes) && isIdentRune(runes[j]) {
-                                        j++
-                                }
-                                k := j
-                                for k < len(runes) && (runes[k] == ' ' || runes[k] == '\t') {
-                                        k++
-                                }
-                                if k < len(runes) && runes[k] == ':' && (lastCh == '{' || lastCh == ',') {
-                                        emit("\"" + string(runes[i:j]) + "\"")
-                                        i = j - 1
-                                        continue
-                                }
-                        }
-                        emit(string(r))
-                }
-        }
-        return b.String()
+	s = strings.Map(func(r rune) rune {
+		switch r {
+		case '\u201c', '\u201d':
+			return '"'
+		case '\u2018', '\u2019':
+			return '\''
+		}
+		return r
+	}, s)
+	var b strings.Builder
+	inD, inS, esc := false, false, false
+	lastCh := byte(0) // last non-space byte EMITTED (key-position test)
+	runes := []rune(s)
+	emit := func(str string) {
+		b.WriteString(str)
+		for i := 0; i < len(str); i++ {
+			if str[i] != ' ' && str[i] != '\t' && str[i] != '\n' && str[i] != '\r' {
+				lastCh = str[i]
+			}
+		}
+	}
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+		if inD {
+			emit(string(r))
+			if esc {
+				esc = false
+			} else if r == '\\' {
+				esc = true
+			} else if r == '"' {
+				inD = false
+			}
+			continue
+		}
+		if inS {
+			if r == '\'' {
+				// ' → ": escape inner straight doubles
+				emit("\"")
+				inS = false
+			} else if r == '"' {
+				emit("\\\"")
+			} else {
+				emit(string(r))
+			}
+			continue
+		}
+		switch r {
+		case '"':
+			inD = true
+			emit("\"")
+		case '\'':
+			inS = true
+			emit("\"")
+		case ',':
+			// drop a trailing comma (next non-space is } or ])
+			j := i + 1
+			for j < len(runes) && (runes[j] == ' ' || runes[j] == '\t' || runes[j] == '\n' || runes[j] == '\r') {
+				j++
+			}
+			if j < len(runes) && (runes[j] == '}' || runes[j] == ']') {
+				continue
+			}
+			emit(",")
+		case '}', ']', '{', '[', ':':
+			emit(string(r))
+		default:
+			// bare-word key: an identifier followed by ':' where a
+			// key is expected ({ or , before it)
+			if isIdentRune(r) {
+				j := i
+				for j < len(runes) && isIdentRune(runes[j]) {
+					j++
+				}
+				k := j
+				for k < len(runes) && (runes[k] == ' ' || runes[k] == '\t') {
+					k++
+				}
+				if k < len(runes) && runes[k] == ':' && (lastCh == '{' || lastCh == ',') {
+					emit("\"" + string(runes[i:j]) + "\"")
+					i = j - 1
+					continue
+				}
+			}
+			emit(string(r))
+		}
+	}
+	return b.String()
 }
 
 func isIdentRune(r rune) bool {
-        return r == '_' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
+	return r == '_' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
 }
 
 func splitAnswer(s string) []string {
-        s = strings.TrimSpace(s)
-        if s == "" {
-                return []string{}
-        }
-        const seg = 220
-        var out []string
-        for len(s) > seg {
-                // split on a space near the boundary for cleaner rendering
-                cut := strings.LastIndexAny(s[:seg], " \n")
-                if cut < seg/2 {
-                        cut = seg
-                }
-                out = append(out, s[:cut])
-                s = s[cut:]
-        }
-        if len(s) > 0 {
-                out = append(out, s)
-        }
-        return out
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return []string{}
+	}
+	const seg = 220
+	var out []string
+	for len(s) > seg {
+		// split on a space near the boundary for cleaner rendering
+		cut := strings.LastIndexAny(s[:seg], " \n")
+		if cut < seg/2 {
+			cut = seg
+		}
+		out = append(out, s[:cut])
+		s = s[cut:]
+	}
+	if len(s) > 0 {
+		out = append(out, s)
+	}
+	return out
 }
 
 // ── Deep research pipeline (ported from research_templates.run_deep_research,
@@ -2791,176 +2800,176 @@ func splitAnswer(s string) []string {
 // the synthesis streams.
 
 func runDeepResearch(ctx context.Context, ch chan<- ChatChunk, errs chan<- error, req ChatRequest) {
-        ch <- ChatChunk{Type: "status", State: "running"}
-        question := lastUserMessage(req.Messages)
+	ch <- ChatChunk{Type: "status", State: "running"}
+	question := lastUserMessage(req.Messages)
 
-        emitStatus := func(stage, detail string) {
-                ch <- ChatChunk{Type: "status", State: "running", Text: stage, Message: detail}
-        }
-        // v0.38 TRACEABLE RESEARCH (user spec: "no tool pills or anything of
-        // the sort — a black box"): every research stage now emits the SAME
-        // tool_use/tool_result pill pairs the ReAct path uses — the research
-        // is fully traceable in the transcript, exactly like the GLM/nemotron
-        // web-search chains the user praised.
-        emitPill := func(name, summary, result string) {
-                ch <- ChatChunk{Type: "tool_use", Name: name, Summary: clamp(summary, 80), Args: summary}
-                ch <- ChatChunk{Type: "tool_result", Name: name, Text: result}
-        }
+	emitStatus := func(stage, detail string) {
+		ch <- ChatChunk{Type: "status", State: "running", Text: stage, Message: detail}
+	}
+	// v0.38 TRACEABLE RESEARCH (user spec: "no tool pills or anything of
+	// the sort — a black box"): every research stage now emits the SAME
+	// tool_use/tool_result pill pairs the ReAct path uses — the research
+	// is fully traceable in the transcript, exactly like the GLM/nemotron
+	// web-search chains the user praised.
+	emitPill := func(name, summary, result string) {
+		ch <- ChatChunk{Type: "tool_use", Name: name, Summary: clamp(summary, 80), Args: summary}
+		ch <- ChatChunk{Type: "tool_result", Name: name, Text: result}
+	}
 
-        // 1. Initial search.
-        emitStatus("initial_search", question)
-        ch <- ChatChunk{Type: "tool_use", Name: "web_search", Summary: clamp(question, 80)}
-        results, err := WebSearch(ctx, question, 8, req.TavilyKey)
-        if err != nil {
-                ch <- ChatChunk{Type: "error", Error: "web_search", Message: err.Error()}
-                sealTurn(ctx, ch, err, nil)
-                ch <- ChatChunk{Type: "status", State: "error"}
-                return
-        }
-        if len(results) > 0 {
-                ch <- ChatChunk{Type: "tool_result", Name: "web_search",
-                        Text: clamp(fmt.Sprintf("%d results — %s", len(results), results[0].Title), 600)}
-        } else {
-                ch <- ChatChunk{Type: "tool_result", Name: "web_search", Text: "(no results)"}
-        }
-        ch <- ChatChunk{Type: "sources", Sources: results}
-        allSources := results
+	// 1. Initial search.
+	emitStatus("initial_search", question)
+	ch <- ChatChunk{Type: "tool_use", Name: "web_search", Summary: clamp(question, 80)}
+	results, err := WebSearch(ctx, question, 8, req.TavilyKey)
+	if err != nil {
+		ch <- ChatChunk{Type: "error", Error: "web_search", Message: err.Error()}
+		sealTurn(ctx, ch, err, nil)
+		ch <- ChatChunk{Type: "status", State: "error"}
+		return
+	}
+	if len(results) > 0 {
+		ch <- ChatChunk{Type: "tool_result", Name: "web_search",
+			Text: clamp(fmt.Sprintf("%d results — %s", len(results), results[0].Title), 600)}
+	} else {
+		ch <- ChatChunk{Type: "tool_result", Name: "web_search", Text: "(no results)"}
+	}
+	ch <- ChatChunk{Type: "sources", Sources: results}
+	allSources := results
 
-        // 2. Read the top pages (parallel).
-        emitStatus("reading", fmt.Sprintf("reading %d pages", min(5, len(results))))
-        pages := readTopPages(ctx, results, 5)
-        for _, pr := range pages {
-                if pr.idx >= 0 && pr.idx < len(results) {
-                        emitPill("web_fetch", results[pr.idx].URL, pr.text)
-                }
-        }
+	// 2. Read the top pages (parallel).
+	emitStatus("reading", fmt.Sprintf("reading %d pages", min(5, len(results))))
+	pages := readTopPages(ctx, results, 5)
+	for _, pr := range pages {
+		if pr.idx >= 0 && pr.idx < len(results) {
+			emitPill("web_fetch", results[pr.idx].URL, pr.text)
+		}
+	}
 
-        // 3. Follow-up queries from the model.
-        emitStatus("followups", "generating follow-up queries")
-        followPrompt := buildResearchPrompt(question, results, pages, true)
-        followReq := req
-        followReq.SystemPrompt = "You are a research planner. Output ONLY a JSON array of 2-4 short search queries (strings) that would fill gaps in the material. No prose, no markdown fences."
-        followReq.Messages = []Message{{Role: "user", Content: followPrompt}}
-        followupsJSON, err := completeSync(ctx, followReq, nil)
-        if err == nil {
-                var queries []string
-                trimmed := strings.TrimPrefix(strings.TrimSuffix(strings.TrimSpace(followupsJSON), "```"), "```json")
-                if json.Unmarshal([]byte(trimmed), &queries) == nil {
-                        emitStatus("followup_search", fmt.Sprintf("%d follow-up searches", len(queries)))
-                        for _, q := range queries {
-                                if r, err := WebSearch(ctx, q, 3, req.TavilyKey); err == nil {
-                                        allSources = append(allSources, r...)
-                                        res := fmt.Sprintf("%d results", len(r))
-                                        if len(r) > 0 {
-                                                res += " — " + r[0].Title
-                                        }
-                                        emitPill("web_search", q, res)
-                                        ch <- ChatChunk{Type: "sources", Sources: r}
-                                }
-                        }
-                }
-        }
+	// 3. Follow-up queries from the model.
+	emitStatus("followups", "generating follow-up queries")
+	followPrompt := buildResearchPrompt(question, results, pages, true)
+	followReq := req
+	followReq.SystemPrompt = "You are a research planner. Output ONLY a JSON array of 2-4 short search queries (strings) that would fill gaps in the material. No prose, no markdown fences."
+	followReq.Messages = []Message{{Role: "user", Content: followPrompt}}
+	followupsJSON, err := completeSync(ctx, followReq, nil)
+	if err == nil {
+		var queries []string
+		trimmed := strings.TrimPrefix(strings.TrimSuffix(strings.TrimSpace(followupsJSON), "```"), "```json")
+		if json.Unmarshal([]byte(trimmed), &queries) == nil {
+			emitStatus("followup_search", fmt.Sprintf("%d follow-up searches", len(queries)))
+			for _, q := range queries {
+				if r, err := WebSearch(ctx, q, 3, req.TavilyKey); err == nil {
+					allSources = append(allSources, r...)
+					res := fmt.Sprintf("%d results", len(r))
+					if len(r) > 0 {
+						res += " — " + r[0].Title
+					}
+					emitPill("web_search", q, res)
+					ch <- ChatChunk{Type: "sources", Sources: r}
+				}
+			}
+		}
+	}
 
-        // 4. Synthesize with citations (streams).
-        emitStatus("synthesizing", "writing the report")
-        synthReq := req
-        synthReq.SystemPrompt = "You are a meticulous research analyst. Write a thorough, well-structured answer with inline citations like [1], [2] referring to the numbered sources. If sources conflict, say so. End with a short 'Sources' list. Never fabricate facts or URLs."
-        synthReq.Messages = []Message{{Role: "user", Content: buildResearchPrompt(question, allSources, pages, false)}}
-        u, _, err := netLadderStream(ctx, synthReq, ch, nil) // v1.39.3: laddered (the deep-research synthesis stream)
-        if err != nil {
-                sealTurn(ctx, ch, err, nil)
-                emitTurnError(ch, err)
-                errs <- err
-                return
-        }
-        sealTurn(ctx, ch, nil, u)
-        ch <- ChatChunk{Type: "status", State: "idle", Usage: u}
+	// 4. Synthesize with citations (streams).
+	emitStatus("synthesizing", "writing the report")
+	synthReq := req
+	synthReq.SystemPrompt = "You are a meticulous research analyst. Write a thorough, well-structured answer with inline citations like [1], [2] referring to the numbered sources. If sources conflict, say so. End with a short 'Sources' list. Never fabricate facts or URLs."
+	synthReq.Messages = []Message{{Role: "user", Content: buildResearchPrompt(question, allSources, pages, false)}}
+	u, _, err := netLadderStream(ctx, synthReq, ch, nil) // v1.39.3: laddered (the deep-research synthesis stream)
+	if err != nil {
+		sealTurn(ctx, ch, err, nil)
+		emitTurnError(ch, err)
+		errs <- err
+		return
+	}
+	sealTurn(ctx, ch, nil, u)
+	ch <- ChatChunk{Type: "status", State: "idle", Usage: u}
 }
 
 // pageRead is one fetched page for the research pipeline.
 type pageRead struct {
-        idx  int
-        text string
+	idx  int
+	text string
 }
 
 // readTopPages fetches the top N result pages in parallel (best-effort).
 func readTopPages(ctx context.Context, results []SearchResult, n int) []pageRead {
-        if n > len(results) {
-                n = len(results)
-        }
-        pageCh := make(chan pageRead, n)
-        var wg sync.WaitGroup
-        for i := 0; i < n; i++ {
-                wg.Add(1)
-                go func(i int, u string) {
-                        defer wg.Done()
-                        text, err := WebFetch(ctx, u) // v1.19.1: full page reads
-                        if err != nil {
-                                return
-                        }
-                        pageCh <- pageRead{idx: i, text: text}
-                }(i, results[i].URL)
-        }
-        wg.Wait()
-        close(pageCh)
-        pages := make([]pageRead, 0, n)
-        for p := range pageCh {
-                pages = append(pages, p)
-        }
-        return pages
+	if n > len(results) {
+		n = len(results)
+	}
+	pageCh := make(chan pageRead, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int, u string) {
+			defer wg.Done()
+			text, err := WebFetch(ctx, u) // v1.19.1: full page reads
+			if err != nil {
+				return
+			}
+			pageCh <- pageRead{idx: i, text: text}
+		}(i, results[i].URL)
+	}
+	wg.Wait()
+	close(pageCh)
+	pages := make([]pageRead, 0, n)
+	for p := range pageCh {
+		pages = append(pages, p)
+	}
+	return pages
 }
 
 // buildResearchPrompt assembles the research context for the model.
 func buildResearchPrompt(question string, results []SearchResult, pages []pageRead, planning bool) string {
-        var b strings.Builder
-        b.WriteString("QUESTION: " + question + "\n\nSEARCH RESULTS:\n")
-        b.WriteString(FormatSearchResults(results))
-        if len(pages) > 0 {
-                // v1.19.1 THE WHOLE TRUTH: page texts ride the prompt in FULL —
-                // no silent per-page cut. The only boundary is the assembly
-                // budget (the model's window is finite physics); when the
-                // budget selects, the note says exactly what shipped and the
-                // full texts still live in the tool-result events (pills/viewer).
-                const pageBudget = 200 << 10 // 200 KB of prompt assembly
-                used := 0
-                shipped, skipped := 0, 0
-                var sb strings.Builder
-                for _, p := range pages {
-                        if used+len(p.text) > pageBudget && shipped > 0 {
-                                skipped++
-                                continue
-                        }
-                        used += len(p.text)
-                        shipped++
-                        fmt.Fprintf(&sb, "--- [page %d] ---\n%s\n\n", p.idx+1, p.text)
-                }
-                b.WriteString("\n\nPAGE EXCERPTS:\n")
-                b.WriteString(sb.String())
-                if skipped > 0 {
-                        fmt.Fprintf(&b, "(%d of %d fetched pages ride this prompt within the %d KB assembly budget — the rest were skipped by size, never silently trimmed; their full text is in the transcript's tool results)\n\n", shipped, shipped+skipped, pageBudget>>10)
-                }
-        }
-        if planning {
-                b.WriteString("\nIdentify the most important GAPS in this material about the question.")
-        } else {
-                b.WriteString("\nWrite the final research report now.")
-        }
-        return b.String()
+	var b strings.Builder
+	b.WriteString("QUESTION: " + question + "\n\nSEARCH RESULTS:\n")
+	b.WriteString(FormatSearchResults(results))
+	if len(pages) > 0 {
+		// v1.19.1 THE WHOLE TRUTH: page texts ride the prompt in FULL —
+		// no silent per-page cut. The only boundary is the assembly
+		// budget (the model's window is finite physics); when the
+		// budget selects, the note says exactly what shipped and the
+		// full texts still live in the tool-result events (pills/viewer).
+		const pageBudget = 200 << 10 // 200 KB of prompt assembly
+		used := 0
+		shipped, skipped := 0, 0
+		var sb strings.Builder
+		for _, p := range pages {
+			if used+len(p.text) > pageBudget && shipped > 0 {
+				skipped++
+				continue
+			}
+			used += len(p.text)
+			shipped++
+			fmt.Fprintf(&sb, "--- [page %d] ---\n%s\n\n", p.idx+1, p.text)
+		}
+		b.WriteString("\n\nPAGE EXCERPTS:\n")
+		b.WriteString(sb.String())
+		if skipped > 0 {
+			fmt.Fprintf(&b, "(%d of %d fetched pages ride this prompt within the %d KB assembly budget — the rest were skipped by size, never silently trimmed; their full text is in the transcript's tool results)\n\n", shipped, shipped+skipped, pageBudget>>10)
+		}
+	}
+	if planning {
+		b.WriteString("\nIdentify the most important GAPS in this material about the question.")
+	} else {
+		b.WriteString("\nWrite the final research report now.")
+	}
+	return b.String()
 }
 
 // lastUserMessage extracts the final user message (the research question).
 func lastUserMessage(msgs []Message) string {
-        for i := len(msgs) - 1; i >= 0; i-- {
-                if msgs[i].Role == "user" {
-                        return msgs[i].Content
-                }
-        }
-        return ""
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == "user" {
+			return msgs[i].Content
+		}
+	}
+	return ""
 }
 
 func min(a, b int) int {
-        if a < b {
-                return a
-        }
-        return b
+	if a < b {
+		return a
+	}
+	return b
 }
