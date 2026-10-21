@@ -34,6 +34,38 @@ streams clean (the "every word appears twice" bug), and the provider's own
 `reasoning_tokens` share of the completion rides the usage ledger end-to-end
 (the 🧠 stat on the usage panel).
 
+**The seen signal** (v1.48 PLAN-V148 — every phase live-convicted with a
+pre-fix flip): **the single echo** — every user message reached the model
+TWICE on every provider since the brain-history build (the turn persisted
+the user event before history assembled, then appended it again; the brain
+appended it a third time on its path) — `trimInFlightUser` now drops the
+log's own trailing copy (byte-equal match only; no history byte is ever
+dropped) at both construction sites, and a stub-provider probe counts the
+real wire payload (`:2` pre-fix, `:1` post). **The live stars** —
+connecting a workspace never refreshed the orbiting stars until the icon
+was physically moved: the worker clone cache only re-sent entities when
+the position-based checksum changed, so a session bound at rest left a
+`sessionId:''` clone and the painter skipped the icon; the sig now folds a
+memoized per-entity session hash and the count-change signal forces one
+clone-bearing frame. **The direct plus** — the ＋ badge on a workspace row
+adds it to the chat in ONE press (its own click, `stopPropagation`, the
+same bind chain the expanded pill runs). **The informative pill** — the
+workspace tool's collapsed pill speaks its verb + operand
+(`grep | readme`, `view | issues`, `pr_diff | #12`) instead of the static
+`workspace | repo` fallback: the full verb table off the tool's own param
+grammar. **The serve bridge** — OpenCode's FREE models at last, the honest
+way: the hosted API's free tier is walled below-HTTP to OpenCode's own
+clients (byte-faithful CLI-identity replays still 403), so the engine
+manages the GENUINE client itself (`engine/internal/ocserve`: the pinned
+1.19.3 CLI, the gate-law permission config — execution + writes denied —
+one serve session per chat, THE RECYCLE LAW on the free-tier wall,
+persona/context riding the message text, reasoning deltas → thinking
+events, serve's own tokens + reasoning share on the usage ledger). On the
+desktop engine `big-pickle` and friends stream live through the engine's
+own WS protocol; where the bridge cannot run (Android — the CLI is
+glibc-linked), the honest copy names the wall, the desktop truth, and the
+alternatives.
+
 **Two new native hands + a retired bridge** (v1.47 PLAN-V147): the
 engine's tool registry grew to 31. `djournal` — the personal journal
 (the authentic Go port of `brain/tools/dt_journal.py`: moods, tags,
