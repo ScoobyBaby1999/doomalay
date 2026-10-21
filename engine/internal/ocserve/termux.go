@@ -535,7 +535,7 @@ func (m *Manager) stopTermux(ctx context.Context) {
 func SpawnerIsTermux() bool { return spawnerKindFor() == spawnerTermux }
 
 // AndroidClientInfo answers the pinned guest's version + download-size
-// hint (the card's honest "one-time ~52MB" copy).
+// hint (the card's honest "one-time ~72.5MB" copy).
 func AndroidClientInfo() (version, sizeHint string) {
         return androidClientVersion, androidZipSizeHint
 }

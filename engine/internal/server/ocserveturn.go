@@ -157,7 +157,7 @@ func (s *Server) ocServeOpeningText(sess *store.Session, userText string) string
 // with the honest walled-tier message).
 func (s *Server) runOcServeTurn(ctx context.Context, pipe *chatPipe, sessionID string, sess *store.Session, userText string, terminal *bool) bool {
         // v1.49.2 THE OPEN HANDSHAKE: an in-flight install never blocks the
-        // turn on the manager mutex (a 52MB download is minutes on mobile) and
+        // turn on the manager mutex (a 72.5MB download is minutes on mobile) and
         // never silently degrades to the walled 403 — the turn answers the
         // honest in-progress terminal so the user knows exactly what's
         // happening.

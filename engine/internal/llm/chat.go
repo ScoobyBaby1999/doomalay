@@ -920,7 +920,7 @@ func friendlyHTTPError(status int, body string, provider string) string {
         // the copy names the phone's own path, not just the desktop's.
         if strings.Contains(b, "FreeTierError") || strings.Contains(b, "free tier can only be used") {
                 if runtime.GOOS == "android" {
-                        return "OpenCode's free models are walled to their own client — your key and the app are fine. On this phone the free models run through the POCKET BRIDGE: the OpenCode provider card → Install OpenCode (it drives Termux for you, one-time ~52MB). Meanwhile use the paid zen models (opencode.ai/settings/billing) or switch provider (NVIDIA / PrivateMode work great right now)"
+                        return "OpenCode's free models are walled to their own client — your key and the app are fine. On this phone the free models run through the POCKET BRIDGE: the OpenCode provider card → Install OpenCode (it drives Termux for you, one-time ~72.5MB). Meanwhile use the paid zen models (opencode.ai/settings/billing) or switch provider (NVIDIA / PrivateMode work great right now)"
                 }
                 return "OpenCode's free models are walled to their own client — your key and the app are fine. On the DESKTOP engine the free models run through the built-in OpenCode bridge; on this device use the paid zen models (a payment method at opencode.ai/settings/billing) or switch provider (NVIDIA / PrivateMode work great right now)"
         }

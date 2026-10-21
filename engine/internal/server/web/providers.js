@@ -393,12 +393,12 @@
         } else if (bs === 'up') {
           bridgeHTML = bBox('<span style="color:var(--accent-2);font-weight:600">✓ Pocket bridge live</span> — the free OpenCode models work through Termux' + (ocBridge.port ? ' (port ' + ocBridge.port + ')' : '') + '.');
         } else if (bs === 'installing') {
-          bridgeHTML = bBox('⟳ <b>Installing the native OpenCode client</b> (one-time ' + (ocBridge.size_hint || '~52MB') + ' download through Termux)… this box updates itself live.');
+          bridgeHTML = bBox('⟳ <b>Installing the native OpenCode client</b> (one-time ' + (ocBridge.size_hint || '~72.5MB') + ' download through Termux)… this box updates itself live.');
           ocBridgeStartPoll();
         } else if (bs === 'install_failed') {
           bridgeHTML = bBox('✕ Install failed — ' + escHTMLInline(ocBridge.last_error || 'see the engine log') + '<br><button data-oc-install="1" style="' + bBtn + '">retry install</button>');
         } else if (bs === 'ready') {
-          bridgeHTML = bBox('<b>Free models on this phone</b> — one tap installs the native OpenCode client through Termux (one-time ' + (ocBridge.size_hint || '~52MB') + ') and starts it.<br><button data-oc-install="1" style="' + bBtn + '">Install OpenCode</button>');
+          bridgeHTML = bBox('<b>Free models on this phone</b> — one tap installs the native OpenCode client through Termux (one-time ' + (ocBridge.size_hint || '~72.5MB') + ') and starts it.<br><button data-oc-install="1" style="' + bBtn + '">Install OpenCode</button>');
         } else if (bs === 'termux_missing' || bs === 'not_bootstrapped') {
           bridgeHTML = bBox('<b>Free models need Termux</b> (one-time setup): ' + (bs === 'termux_missing' ? 'install Termux from F-Droid, ' : '') + 'paste the one setup line in it, come back and tap Install.<br><button data-oc-termux="1" style="' + bBtn + '">open the Termux setup</button>');
         } else if (bs === 'walled') {
