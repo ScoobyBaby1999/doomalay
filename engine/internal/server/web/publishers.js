@@ -407,6 +407,19 @@
         if (safe[k] !== undefined) patch[k] = safe[k];
       });
       patch.preamble_sel = '';
+      // v1.54 THE TRUST LADDER: personas imported from a bundle land
+      // INACTIVE — the bundle's claimed mode NEVER survives the border
+      // (R7's no-auto-activation law; a malicious "always" is refused).
+      // A malformed list never rides (delete → the PATCH skips it).
+      if (typeof patch.personas === 'string') {
+        try {
+          var plist = JSON.parse(patch.personas);
+          if (Array.isArray(plist)) {
+            plist.forEach(function (p) { if (p && typeof p === 'object') p.mode = 'inactive'; });
+            patch.personas = JSON.stringify(plist);
+          } else { delete patch.personas; }
+        } catch (e) { delete patch.personas; }
+      }
       try { if (Object.keys(patch).length > 1) await ctx.io.patchJSON('/api/sessions/' + encodeURIComponent(nsid), patch); }
       catch (e) { ctx.warnings.push('a chat\'s persona/preamble settings were refused — skipped'); }
       if (body.tweaks && Object.keys(body.tweaks).length) {
@@ -422,6 +435,11 @@
         catch (e) { ctx.warnings.push('a chat asset (' + ref.kind + ') was refused — skipped'); }
       }
       if (body.history && Array.isArray(body.history.events) && body.history.events.length) {
+        // v1.54 THE HONEST HISTORY: the replay is best-effort POST-BIRTH —
+        // each event post + each hide mask degrades to a warning, never a
+        // throw (the v1540 rig convicted the old shape: a mid-replay throw
+        // escaped before the undo journal existed, leaking the born session).
+        // The birth is the commitment; history is cargo.
         var evs = body.history.events;
         var seqMap = {};
         var hides = [];
@@ -429,9 +447,13 @@
           var ev = evs[v];
           if (!ev || typeof ev.type !== 'string') continue;
           if (ev.type === 'hide') { hides.push(ev); continue; }
-          var out = await ctx.io.postJSON('/api/sessions/' + encodeURIComponent(nsid) + '/events', { type: ev.type, text: String(ev.text || '') });
-          var newSeq = out && (out.Seq !== undefined ? out.Seq : out.seq);
-          if (newSeq) seqMap[ev.seq] = newSeq;
+          try {
+            var out = await ctx.io.postJSON('/api/sessions/' + encodeURIComponent(nsid) + '/events', { type: ev.type, text: String(ev.text || '') });
+            var newSeq = out && (out.Seq !== undefined ? out.Seq : out.seq);
+            if (newSeq) seqMap[ev.seq] = newSeq;
+          } catch (e) {
+            ctx.warnings.push('a history event of "' + (body.session && body.session.title || oldSid) + '" was refused — the replay continues');
+          }
         }
         for (var h = 0; h < hides.length; h++) {
           var hv = hides[h];

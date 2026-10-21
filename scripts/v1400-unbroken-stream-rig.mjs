@@ -490,7 +490,7 @@ console.log('S9 — THE SOURCE PINS:');
   const llmChat = fs.readFileSync(__ROOT + '/engine/internal/llm/chat.go', 'utf8');
   ok('S9: the suspended loop exists (the no-give-up law)', /func netSuspendedLoop/.test(llmChat));
   ok('S9: WakeNet broadcast exists', /func WakeNet/.test(llmChat));
-  ok('S9: the plain path is laddered + seam-capable', /emittedCutError/.test(llmChat) && /seamNudgeText/.test(llmChat));
+  ok('S9: the plain path is laddered + seam-capable', /emittedCutError/.test(llmChat) && /SeamNudgeText/.test(llmChat)); // v1.50 renamed seamNudgeText → SeamNudgeText
   const nt = fs.readFileSync(__ROOT + '/engine/internal/llm/nativetools.go', 'utf8');
   ok('S9: the nativetools seam exists (round_end + notice + continuation)', /round_end/.test(nt) && /cut mid-reply/.test(nt));
   const srvGo = fs.readFileSync(__ROOT + '/engine/internal/server/chat.go', 'utf8');

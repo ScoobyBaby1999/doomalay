@@ -53,6 +53,13 @@
 
   function PV() {
     var c = window.ChatPanel && window.ChatPanel.current();
+    if (c && c.panel && (!c.panel.isOpen || c.panel.isOpen())) return c.panel;
+    // v1.54 THE LIBRARY SHIP: the overlay host twin (hubpublish's law) —
+    // the item detail opened from an overlay publish rides the overlay.
+    if (window.HubPublish && window.HubPublish._overlayHost) {
+      var host = window.HubPublish._overlayHost();
+      if (host && host.isOpen()) return host;
+    }
     return (c && c.panel) || null;
   }
   function view(title, renderHTML, wire, onClose) {
@@ -433,6 +440,19 @@
     }
   }
 
+  // v1.54: the bundle card's two tiny helpers (kept local — hubitem owns
+  // its own rendering; no cross-module dependency for two one-liners).
+  function fmtSizeText(n) {
+    if (n >= 1048576) return (Math.round(n / 104857.6) / 10) + ' MB';
+    if (n >= 1024) return (Math.round(n / 102.4) / 10) + ' KB';
+    return n + ' B';
+  }
+  function escapeHTML(s) {
+    return s.replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
   // the payload body — mode per type (v0.58 pt 8: templates get the ported
   // stage tree + a raw toggle; skills markdown; themes as before). The
   // toggle is (re)wired here — renderPayload owns everything inside #hi-payload
@@ -441,6 +461,29 @@
     var body = el.querySelector('#hi-payload');
     if (!body || cur.payload == null) return;
     var text = String(cur.payload || '');
+    // v1.54 THE LIBRARY SHIP: canvas/chat payloads are BUNDLES (zips) that
+    // never ride the JSON (the payload-bypass law) — the detail renders the
+    // bundle CARD (type + size + description + the honest "download lands
+    // it" line), never a payload dump.
+    if (cur.type === 'canvas' || cur.type === 'chat') {
+      var it = cur.item || {};
+      var size = it.size ? fmtSizeText(it.size) : 'bundle';
+      body.innerHTML =
+        '<div class="hi-bundlecard" style="border:1px solid var(--border);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:8px;background:var(--surface-1)">' +
+          '<div style="display:flex;align-items:center;gap:10px">' +
+            '<span style="font-size:22px">' + (cur.type === 'canvas' ? '🗺' : '💬') + '</span>' +
+            '<span style="font-weight:600;color:var(--text-1)">' + (cur.type === 'canvas' ? 'a whole world' : 'a conversation') + '</span>' +
+            '<span style="margin-left:auto;color:var(--text-3);font-size:var(--ui-tiny-fs)">' + size + '</span>' +
+          '</div>' +
+          '<div style="color:var(--text-2);font-size:var(--ui-small-fs);line-height:1.5">' +
+            (cur.type === 'canvas'
+              ? 'the .doomcanvas bundle carries the layout, its chats (with optional history), the look, the portals and any child worlds. downloading lands it as a NEW world on this device.'
+              : 'the .doomchat bundle carries the conversation (session + optional history) and its look assets. downloading materializes a new chat icon on the current canvas.') +
+          '</div>' +
+          (it.upstream ? '<div style="color:var(--text-3);font-size:var(--ui-tiny-fs)">ported from ' + escapeHTML(String(it.upstream)) + '</div>' : '') +
+        '</div>';
+      return;
+    }
     if (cur.type === 'template') {
       var stages = parseStages(text);
       if (stages && stages.length) {
@@ -581,6 +624,17 @@
         // inside LookIO keeps a malformed payload harmless.
         if (cur.type === 'theme' && window.LookIO && window.LookIO.importText) {
           window.LookIO.importText(cur.payload);
+        }
+        // v1.54 THE LIBRARY SHIP: a downloaded CANVAS is a .doomcanvas —
+        // the payload never rides the JSON (the payload-bypass law), it
+        // streams; the import lands a NEW world (switchTo + provenance).
+        if (cur.type === 'canvas' && window.Hub && window.Hub.applyHubSideEffects) {
+          window.Hub.applyHubSideEffects('canvas', cur.item, '');
+        }
+        // v1.54: a downloaded CHAT is a .doomchat — stream + import; the
+        // icon materializes on the current canvas and the panel opens.
+        if (cur.type === 'chat' && window.Hub && window.Hub.applyHubSideEffects) {
+          window.Hub.applyHubSideEffects('chat', cur.item, '');
         }
         cur.panel.replaceView(buildView(), { keepScroll: true });
       })
@@ -733,6 +787,11 @@
     var state = c.state;
     var go = function () {
       if (!state.sessionId) return;
+      // v1.54 THE TRUST LADDER: the payload is untrusted input — a string
+      // within the engine's own cap (64KB, the preambles law) or an honest
+      // reject. Never a silent apply of something oversized or non-text.
+      if (typeof payload !== 'string' || !payload.trim()) { toast('the persona payload is empty — nothing to import'); return; }
+      if (payload.length > 65536) { toast('the persona payload is too large (64KB cap) — refused'); return; }
       // the badge promise: a resolved spec (or null) by the time the
       // personas list is built. Image badges fetch their bytes first.
       var badgeP = Promise.resolve(null);
@@ -825,6 +884,11 @@
     var state = c.state;
     var go = function () {
       if (!state.sessionId) return;
+      // v1.54 THE TRUST LADDER: the same cap + type gate as personas (the
+      // engine's own preambles law: 64KB text) — an honest reject, never
+      // a silent apply of oversized input.
+      if (typeof payload !== 'string' || !payload.trim()) { toast('the preamble payload is empty — nothing to import'); return; }
+      if (payload.length > 65536) { toast('the preamble payload is too large (64KB cap) — refused'); return; }
       var parsed = (window.Persona && window.Persona.parsePreambleFile)
         ? window.Persona.parsePreambleFile(payload || '') : { name: '', body: payload || '' };
       fetch('/api/sessions/' + state.sessionId)
@@ -840,17 +904,18 @@
             name: parsed.name || item.name || 'Preamble',
             text: parsed.body || ''
           });
+          // v1.54 THE UNSELECTED LAW: a downloaded preamble lands ADDED but
+          // NOT active — the R7 no-auto-activation law (a hub file never
+          // rewrites the live system-prompt machinery by landing; the user
+          // switches it on from its editor, exactly like personas).
           return fetch('/api/sessions/' + state.sessionId, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              preambles: JSON.stringify(list),
-              preamble_sel: item.id // the import IS the use (a template lands ready)
-            })
+            body: JSON.stringify({ preambles: JSON.stringify(list) })
           });
         })
         .then(function (r) {
-          if (r && r.ok) toast('preamble added + set active — edit it from Persona → Preamble');
+          if (r && r.ok) toast('preamble added — switch it on from Persona → Preamble');
           // v1.36.5 THE LIVING LEXICON: the file's custom placeholder
           // DEFINITIONS materialize into this chat (best-effort — the
           // preamble landed already; a definition install failure never

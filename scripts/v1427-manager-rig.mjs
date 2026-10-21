@@ -314,7 +314,10 @@ function openManager() {
   openManager();
   await sleep(900);
   const browseSub = pstr("(function(){var s=document.getElementById('wm-browse-sub');return s?s.textContent:'none'})()");
-  ok('T10 the browse row is honest about the wave', browseSub.indexOf('next wave') >= 0, browseSub);
+  // v1.54 THE LIBRARY SHIP pin update: the canvas type is REGISTERED —
+  // the forward-wired subtitle flipped exactly as planned ("shared
+  // worlds, ready to download" — the v1427 code's own next-wave words).
+  ok('T10 the browse row is honest about the wave (v1.54: FLIPPED — the canvas library is live)', browseSub.indexOf('shared worlds') >= 0 || browseSub.indexOf('ready to download') >= 0, browseSub);
   abEval("(function(){var b=document.getElementById('wm-browse');if(b)b.click();return 'clicked'})()");
   await sleep(1600);
   ok('T10 the hub opens (a PANEL view — the dock-library law)', await waitFn("!!document.getElementById('hub-topdock')", 10000));

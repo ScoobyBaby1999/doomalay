@@ -48,7 +48,7 @@
   // templates are stage-JSON; themes are .doomtheme bundles. The old form
   // labeled everything but personas "(.json)".
   function payloadExt(type) {
-    return { persona: '.md', skill: '.md', template: '.json', theme: '.doomtheme', preamble: '.md' }[type] || '.json';
+    return { persona: '.md', skill: '.md', template: '.json', theme: '.doomtheme', preamble: '.md', canvas: '.doomcanvas', chat: '.doomchat' }[type] || '.json';
   }
   function payloadPlaceholder(type) {
     if (type === 'persona') return 'the persona markdown — the text the model receives';
@@ -56,6 +56,12 @@
     if (type === 'template') return 'the template JSON — {"name", "stages": [{name, role, instructions}\u2026], "markdown"}';
     // v1.22.0 THE MIRROR: the preamble payload is the portable file
     if (type === 'preamble') return 'the preamble markdown — name/description/placeholders frontmatter, then the body written in {placeholders}';
+    // v1.54 THE LIBRARY SHIP: the bundle types arrive as BINARY prefills
+    // (the publish sheet builds the zip and hands the bytes here) — this
+    // placeholder only shows for a blob-less manual open, which the entry
+    // points never do today.
+    if (type === 'canvas') return 'a .doomcanvas bundle — publish it from the worlds manager\u2019s publish sheet';
+    if (type === 'chat') return 'a .doomchat bundle — publish it from the chat panel\u2019s export view';
     return 'the theme bundle JSON — prefills from your current look, or export one from Colors · Import / Export Theme';
   }
 
@@ -70,7 +76,45 @@
 
   function PV() {
     var c = window.ChatPanel && window.ChatPanel.current();
+    if (c && c.panel && (!c.panel.isOpen || c.panel.isOpen())) return c.panel;
+    // v1.54 THE LIBRARY SHIP: THE OVERLAY HOST — the canvas/chat publish
+    // doors open from the worlds manager + the export view (overlay
+    // surfaces). A publish form with NO chat-panel host rides the
+    // SANCTIONED overlay instead (the two-surface law): the same
+    // {pushView, popView, replaceView, bodyEl} contract, backed by
+    // ConnectOverlay pages. Zero app.js changes; the panel path stays
+    // byte-identical whenever a chat panel is open.
+    if (window.ConnectOverlay && window.ConnectOverlay.isOpen) {
+      try { if (window.ConnectOverlay.isOpen()) return overlayHost(); } catch (e) {}
+    }
     return (c && c.panel) || null;
+  }
+
+  // the overlay host shim (cached — one stable host per overlay session;
+  // bodyEl tracks the live content element across page pushes).
+  var _overlayHost = null;
+  function overlayHost() {
+    if (_overlayHost) return _overlayHost;
+    var mount = function (view) {
+      var el = window.ConnectOverlay.getContentEl();
+      _overlayHost.bodyEl = el || null;
+      if (el && view.onMount) view.onMount(el);
+    };
+    _overlayHost = {
+      isOpen: function () { return !!(window.ConnectOverlay.isOpen && window.ConnectOverlay.isOpen()); },
+      bodyEl: null,
+      pushView: function (view) {
+        window.ConnectOverlay.pushPage(view.render(), { onSwap: function () { mount(view); } });
+      },
+      popView: function () {
+        if (window.ConnectOverlay.backOne) window.ConnectOverlay.backOne();
+      },
+      replaceView: function (view) {
+        window.ConnectOverlay.replaceContent(view.render());
+        mount(view);
+      }
+    };
+    return _overlayHost;
   }
   function view(title, renderHTML, wire) {
     return {
@@ -90,6 +134,32 @@
       opts.body = JSON.stringify(body);
     }
     return fetch(path, opts).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (d) {
+        if (!r.ok) {
+          var e = new Error((d && d.error) || ('HTTP ' + r.status));
+          e.status = r.status;
+          throw e;
+        }
+        return d;
+      });
+    });
+  }
+
+  // v1.54 THE LIBRARY SHIP: fmtBytes — the blob chip's size line.
+  function fmtBytes(n) {
+    if (n >= 1048576) return (Math.round(n / 104857.6) / 10) + ' MB';
+    if (n >= 1024) return (Math.round(n / 102.4) / 10) + ' KB';
+    return n + ' B';
+  }
+
+  // v1.54: the MULTIPART publish — meta JSON part + the raw payload part
+  // (a Blob-backed FormData; the browser streams it, the engine reads
+  // bytes — no base64 string is ever built). Same error contract as api().
+  function apiMultipart(path, meta, payloadBytes) {
+    var fd = new FormData();
+    fd.append('meta', new Blob([JSON.stringify(meta)], { type: 'application/json' }));
+    fd.append('payload', new Blob([payloadBytes], { type: 'application/octet-stream' }), 'bundle.bin');
+    return fetch(path, { method: 'POST', body: fd }).then(function (r) {
       return r.json().catch(function () { return {}; }).then(function (d) {
         if (!r.ok) {
           var e = new Error((d && d.error) || ('HTTP ' + r.status));
@@ -184,8 +254,15 @@
       // v0.44: a full gradient spec — "none" still sends the picked
       // gradient (the card stays deterministic)
       design: preDesign,
-      pngBase64: '',
+      pngBase64: prefill.pngBase64 || '',
       payload: prefill.payload || '',
+      // v1.54 THE LIBRARY SHIP: the BINARY payload — a Uint8Array built by
+      // the publish sheet (the .doomcanvas/.doomchat bytes). When set, the
+      // payload textarea is REPLACED by a read-only bundle chip and the
+      // POST rides multipart/form-data (meta JSON + the raw payload part —
+      // no base64 inflation in the WebView).
+      payloadBlob: prefill.payloadBlob || null,
+      payloadLabel: prefill.payloadLabel || '',
       // v0.60 pt C.8: REPO PUBLISHING — the files section (companion files
       // at items/<id>/<path>; folders allowed in the paths).
       files: (prefill.files || []).slice(),
@@ -398,9 +475,20 @@
                   ' placeholder="auto" value="' + (c.stageCount > 0 ? c.stageCount : '') + '">' +
                 '<div class="hp-stagehint" id="hp-stagehint">' + stageHint() + '</div>'
               : '') +
-            '<textarea id="hp-payload" class="hp-textarea hp-payload" placeholder="' +
+            (c.payloadBlob
+              // v1.54: the BINARY payload chip — the bytes are already built
+              // (the publish sheet's own build), they ride the POST as-is;
+              // no textarea, no editing, no base64 in the DOM.
+              ? '<div id="hp-blobchip" style="display:flex;align-items:center;gap:10px;border:1px solid var(--border);border-radius:10px;padding:12px 14px;background:var(--surface-2)">' +
+                  '<span style="font-size:18px">📦</span>' +
+                  '<span style="flex:1;display:flex;flex-direction:column;gap:2px">' +
+                    '<span style="font-weight:600;color:var(--text-1)">' + esc(c.payloadLabel || ('the ' + payloadExt(c.type) + ' bundle')) + '</span>' +
+                    '<span style="color:var(--text-3);font-size:var(--ui-tiny-fs)">' + fmtBytes(c.payloadBlob.length) + ' — built from ' + (c.type === 'canvas' ? 'the world' : 'the conversation') + ', the bytes ride the publish as-is</span>' +
+                  '</span>' +
+                '</div>'
+              : '<textarea id="hp-payload" class="hp-textarea hp-payload" placeholder="' +
               escAttr(payloadPlaceholder(c.type)) + '">' +
-              esc(c.payload) + '</textarea>' +
+              esc(c.payload) + '</textarea>') +
           '</div>' +
         '</div>' +
 
@@ -847,7 +935,10 @@
       .then(function (b64) { bd.badge_png_base64 = b64 || ''; return bd; })
       .catch(function () { bd.badge_png_base64 = ''; return bd; });
     bP.then(function (bd) {
-    return api('POST', '/api/hub/' + encodeURIComponent(cur.type) + '/publish', {
+    // v1.54 THE LIBRARY SHIP: the BINARY path — a blob payload rides
+    // multipart/form-data (meta JSON + raw bytes); everything else rides
+    // the classic JSON body byte-identically.
+    var meta = {
       name: cur.name,
       description: cur.desc,
       tags: cur.tags,
@@ -855,22 +946,18 @@
       payload: cur.payload,
       pngBase64: cur.pngBase64 || '',
       icon: cur.icon || '',
-      // v0.61 (icons): the uploaded square icon — raster (CropUI ≤256) or
-      // SVG text. Either rides the commit as items/<id>/icon.<ext>.
       icon_png_base64: cur.iconPNG || '',
       icon_svg: cur.iconSVG || '',
-      // v0.84.2: the persona badge (spec + optional image bytes committed
-      // at items/<id>/badge.png).
       badge: bd.badge || null,
       badge_png_base64: bd.badge_png_base64 || '',
       collection: cur.collection || '',
-      // v0.77.6: THE UPSTREAM CREDIT — "ported from" rides the publish;
-      // the bylines + every bot-facing tool surface it so a port never
-      // reads as the publisher's original work.
       upstream: cur.upstream || '',
       stageCount: cur.type === 'template' ? (cur.stageCount || 0) : 0,
       files: files
-    });
+    };
+    return cur.payloadBlob
+      ? apiMultipart('/api/hub/' + encodeURIComponent(cur.type) + '/publish', meta, cur.payloadBlob)
+      : api('POST', '/api/hub/' + encodeURIComponent(cur.type) + '/publish', meta);
     }).then(function (d) {
       var item = d.item, repo = d.repo;
       toast(cur.editOf ? ('updated — ' + item.name) : ('published to ' + repo));
@@ -913,5 +1000,10 @@
     }));
   }
 
-  window.HubPublish = { open: open };
+  window.HubPublish = {
+    open: open,
+    // v1.54: the overlay host (hubitem's detail rides the same surface a
+    // publish started on — the two-surface law, one host truth).
+    _overlayHost: overlayHost
+  };
 })();

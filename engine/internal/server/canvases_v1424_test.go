@@ -490,37 +490,37 @@ func TestV1424_SavedAtProbe(t *testing.T) {
 // the stored state's size (the manager rows' size line). A shell row (no
 // state) probes 0 — poison tolerance, the saved_at law's twin.
 func TestV1427_StateBytesProbe(t *testing.T) {
-        s := newLongHaulServer(t)
-        v1424Send(t, s, "POST", "/api/canvases", map[string]any{"id": "sz", "state": v1424State(1)})
-        _, body, _ := v1424Get(t, s, "/api/canvases")
-        rows, _ := body["canvases"].([]any)
-        var withState float64 = -1
-        for _, r := range rows {
-                if r.(map[string]any)["id"] == "sz" {
-                        withState = r.(map[string]any)["state_bytes"].(float64)
-                }
-        }
-        if withState <= 0 {
-                t.Fatalf("state_bytes must be > 0 for a stored state, got %v", withState)
-        }
-        // shell row (no state) probes 0
-        v1424Send(t, s, "POST", "/api/canvases", map[string]any{"id": "shelldb"})
-        _, body, _ = v1424Get(t, s, "/api/canvases")
-        for _, r := range body["canvases"].([]any) {
-                rm := r.(map[string]any)
-                if rm["id"] == "shelldb" && rm["state_bytes"].(float64) != 0 {
-                        t.Fatalf("shell row state_bytes must be 0: %v", rm)
-                }
-        }
-        // a rename-only PUT keeps the state (its bytes still present)
-        v1424Send(t, s, "PUT", "/api/canvases/sz", map[string]any{"name": "renamed"})
-        _, body, _ = v1424Get(t, s, "/api/canvases")
-        for _, r := range body["canvases"].([]any) {
-                rm := r.(map[string]any)
-                if rm["id"] == "sz" && (rm["name"] != "renamed" || rm["state_bytes"].(float64) <= 0) {
-                        t.Fatalf("rename must keep state bytes: %v", rm)
-                }
-        }
+	s := newLongHaulServer(t)
+	v1424Send(t, s, "POST", "/api/canvases", map[string]any{"id": "sz", "state": v1424State(1)})
+	_, body, _ := v1424Get(t, s, "/api/canvases")
+	rows, _ := body["canvases"].([]any)
+	var withState float64 = -1
+	for _, r := range rows {
+		if r.(map[string]any)["id"] == "sz" {
+			withState = r.(map[string]any)["state_bytes"].(float64)
+		}
+	}
+	if withState <= 0 {
+		t.Fatalf("state_bytes must be > 0 for a stored state, got %v", withState)
+	}
+	// shell row (no state) probes 0
+	v1424Send(t, s, "POST", "/api/canvases", map[string]any{"id": "shelldb"})
+	_, body, _ = v1424Get(t, s, "/api/canvases")
+	for _, r := range body["canvases"].([]any) {
+		rm := r.(map[string]any)
+		if rm["id"] == "shelldb" && rm["state_bytes"].(float64) != 0 {
+			t.Fatalf("shell row state_bytes must be 0: %v", rm)
+		}
+	}
+	// a rename-only PUT keeps the state (its bytes still present)
+	v1424Send(t, s, "PUT", "/api/canvases/sz", map[string]any{"name": "renamed"})
+	_, body, _ = v1424Get(t, s, "/api/canvases")
+	for _, r := range body["canvases"].([]any) {
+		rm := r.(map[string]any)
+		if rm["id"] == "sz" && (rm["name"] != "renamed" || rm["state_bytes"].(float64) <= 0) {
+			t.Fatalf("rename must keep state bytes: %v", rm)
+		}
+	}
 }
 
 func TestV1424_CreatedAtImmutableOnUpsert(t *testing.T) {
@@ -557,5 +557,52 @@ func TestV1424_PutInvalidIDRejected(t *testing.T) {
 	s.mux.ServeHTTP(w2, req2)
 	if w2.Code != 400 {
 		t.Fatalf("backslashed id must 400, got %d", w2.Code)
+	}
+}
+
+// TestV1540_ImportedProbe — the list's $.imported.from JSON1 probe (the
+// v1.54 provenance chip's backing): an imported world's row carries the
+// source name; a home-grown world's row carries "".
+func TestV1540_ImportedProbe(t *testing.T) {
+	s := newLongHaulServer(t)
+	// a home-grown world (no imported stamp)
+	code, body := v1424Send(t, s, "POST", "/api/canvases", map[string]any{
+		"name":  "Home Grown",
+		"state": v1424State(1),
+	})
+	if code != 200 && code != 201 {
+		t.Fatalf("create code = %d", code)
+	}
+	// an imported world (the v1.42.8 stamp shape)
+	st := v1424State(2)
+	st["imported"] = map[string]any{"from": "Aurora World", "author": "alice", "at": "2026-10-21T00:00:00Z", "appVersion": "1.42.8"}
+	code, _ = v1424Send(t, s, "POST", "/api/canvases", map[string]any{
+		"name":  "Downloaded World",
+		"state": st,
+	})
+	if code != 200 && code != 201 {
+		t.Fatalf("create 2 code = %d", code)
+	}
+	code, body, _ = v1424Get(t, s, "/api/canvases")
+	if code != 200 {
+		t.Fatalf("list code = %d", code)
+	}
+	rows, _ := body["canvases"].([]any)
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d", len(rows))
+	}
+	seen := map[string]string{}
+	for _, r := range rows {
+		m, _ := r.(map[string]any)
+		if m == nil {
+			continue
+		}
+		seen[m["name"].(string)], _ = m["imported"].(string)
+	}
+	if seen["Home Grown"] != "" {
+		t.Fatalf("home-grown row carries imported = %q", seen["Home Grown"])
+	}
+	if seen["Downloaded World"] != "Aurora World" {
+		t.Fatalf("imported row carries imported = %q, want Aurora World", seen["Downloaded World"])
 	}
 }

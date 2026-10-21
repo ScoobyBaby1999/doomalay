@@ -172,6 +172,12 @@
     var badge = isActive
       ? '<span style="color:var(--ok);font-size:var(--ui-tiny-fs);border:1px solid var(--border);border-radius:999px;padding:1px 7px;flex:none">' + (portal ? 'you are here' : 'active') + '</span>'
       : '';
+    // v1.54 THE LIBRARY SHIP: the provenance chip — an imported world
+    // remembers where it came from ($.imported.from, the v1.42.8 stamp,
+    // now surfaced by the engine's list probe). Theme-law tokens only.
+    if (r.imported) {
+      badge += ' <span style="color:var(--text-3);font-size:var(--ui-tiny-fs);border:1px solid var(--border);border-radius:999px;padding:1px 7px;flex:none">◇ ' + esc(r.imported) + '</span>';
+    }
     var meta = (r.icon_count || 0) + ' icons · ' + fmtSize(r.state_bytes) + ' · ' + fmtAgo(r.saved_at || r.updated_at);
     return '<div data-wm-id="' + esc(r.id) + '" style="display:flex;align-items:center;gap:10px;padding:9px 2px;border-bottom:1px solid var(--border);cursor:' + (dead ? 'default' : 'pointer') + ';touch-action:manipulation;' + (dead ? 'opacity:0.55' : '') + '">' +
       thumb +
@@ -551,6 +557,27 @@
     return Math.max(0, total);
   }
 
+  // v1.54 THE LIBRARY SHIP: the manifest summary — the publish form's
+  // auto-written description (the plan's "description + toggle-tree
+  // summary auto-written"). The truth is the TREE + the picks (the same
+  // source the size line reads); the user can edit it before publishing.
+  function pubSummaryText(collected, picks, bytes) {
+    var parts = [];
+    var layout = null;
+    (collected.tree || []).forEach(function (t) { if (t.id === 'layout') layout = t; });
+    if (layout && layout.detail) parts.push(layout.detail); // "N icons · M dots"
+    var nchats = Object.keys(picks.chats || {}).filter(function (k) { return picks.chats[k]; }).length;
+    if (nchats) parts.push(nchats + ' chat' + (nchats === 1 ? '' : 's'));
+    var nkids = Object.keys(picks.children || {}).filter(function (k) { return picks.children[k]; }).length;
+    if (nkids) parts.push(nkids + ' child world' + (nkids === 1 ? '' : 's'));
+    var nassets = Object.keys(picks.assets || {}).filter(function (k) { return picks.assets[k]; }).length;
+    if (nassets) parts.push(nassets + ' asset' + (nassets === 1 ? '' : 's'));
+    parts.push(fmtSize(bytes));
+    var req = (collected && collected.requires) || [];
+    var tail = req.length ? ' — needs keys: ' + req.join(', ') : '';
+    return 'a whole world — ' + parts.join(' · ') + tail;
+  }
+
   // the publish sheet — a pushed page (the two-surface law): the
   // toggle tree + the LIVE size + the export. Zero body appenders.
   function openPublishSheet(row, collected) {
@@ -591,6 +618,10 @@
       '<div id="wm-pub-size" style="color:var(--text-2);font-size:var(--ui-small-fs);font-weight:600"></div>' +
       warnHTML +
       '<button id="wm-pub-export" style="display:flex;align-items:center;justify-content:center;gap:8px;width:100%;background:rgba(var(--accent-rgb),0.14);color:var(--accent);border:1px solid rgba(var(--accent-rgb),0.32);border-radius:12px;padding:12px 14px;font-size:var(--ui-small-fs);font-weight:600;cursor:pointer;touch-action:manipulation">⤓ export .doomcanvas</button>' +
+      // v1.54 THE LIBRARY SHIP: publish the SAME bundle to the library —
+      // the hub's canvas type (registered this wave) carries it as a
+      // .doomcanvas item; the form prefills name/description/card art.
+      '<button id="wm-pub-hub" style="display:flex;align-items:center;justify-content:center;gap:8px;width:100%;background:var(--surface-2);color:var(--text-1);border:1px solid var(--border);border-radius:12px;padding:12px 14px;font-size:var(--ui-small-fs);font-weight:600;cursor:pointer;touch-action:manipulation">⤒ publish to the library</button>' +
       '<div id="wm-pub-note" style="color:var(--text-3);font-size:var(--ui-tiny-fs)"></div>' +
       '</div>';
     window.ConnectOverlay.pushPage(html, {
@@ -630,6 +661,46 @@
             setNote('exported — ' + fmtSize(window.CanvasBundle.lastBuilt.bytes.length) + ' written');
             toast('world exported');
           }).catch(function (e) { setNote('export failed — ' + (e && e.message)); });
+        });
+        // v1.54 THE LIBRARY SHIP: the library door — build the SAME bundle
+        // (the preview is the truth), then hand the BYTES to the publisher
+        // (the multipart path — no base64). The auto-description carries
+        // the manifest summary (icons · chats · portals · children · size);
+        // the card art pre-fills from the canvas thumbnail.
+        var hb = document.getElementById('wm-pub-hub');
+        if (hb) hb.addEventListener('click', function () {
+          if (!(window.HubPublish && window.HubPublish.open)) { setNote('the publisher is unavailable'); return; }
+          setNote('building…');
+          window.CanvasBundle.build(collected, picks).then(function () {
+            var bytes = window.CanvasBundle.lastBuilt.bytes;
+            var desc = pubSummaryText(collected, picks, bytes.length);
+            var prefill = {
+              name: row.name,
+              desc: desc,
+              payloadBlob: bytes,
+              payloadLabel: row.name + ' — ' + fmtSize(bytes.length)
+            };
+            // the card art: the world's own thumbnail (≤64KB PNG), if any
+            var turl = '/api/canvases/' + encodeURIComponent(row.id) + '/thumb';
+            return fetch(turl).then(function (r) { return r.ok ? r.blob() : null; })
+              .then(function (blob) {
+                if (!blob) return prefill;
+                return new Promise(function (resolve) {
+                  var fr = new FileReader();
+                  fr.onload = function () {
+                    var m = /^data:([^;,]+);base64,(.*)$/.exec(String(fr.result || ''));
+                    if (m && m[2]) prefill.pngBase64 = m[2];
+                    resolve(prefill);
+                  };
+                  fr.onerror = function () { resolve(prefill); };
+                  fr.readAsDataURL(blob);
+                });
+              })
+              .catch(function () { return prefill; });
+          }).then(function (prefill) {
+            setNote('');
+            window.HubPublish.open('canvas', prefill);
+          }).catch(function (e) { setNote('publish failed — ' + (e && e.message)); });
         });
         recompute();
       }
@@ -805,6 +876,10 @@
   window.WorldsManager = {
     open: open,
     nextName: nextName,
+    // v1.54 THE LIBRARY SHIP: a hub canvas download can land a world while
+    // the manager sits closed — refresh() re-reads the rows so the next
+    // open (or a live repaint) shows the imported world without a boot.
+    refresh: refresh,
     probe: function () {
       return {
         open: !!(myPage && window.ConnectOverlay && window.ConnectOverlay.isOpen()),

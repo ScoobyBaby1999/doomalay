@@ -136,7 +136,9 @@ function openManagerByFinger() {
   ok('W1 the Far Side row is honest (name + icons + size)', farText.indexOf('Far Side') >= 0 && farText.indexOf('1 icons') >= 0 && /B|KB|MB/.test(farText), farText.slice(0, 100));
   await sleep(500);
   ok('W1 the storage footer', /canvas/i.test(pstr("(function(){var s=document.getElementById('wm-storage');return s?s.textContent:''})()")));
-  ok('W1 the browse row speaks the truth about the wave', pstr("(function(){var s=document.getElementById('wm-browse-sub');return s?s.textContent:''})()").indexOf('next wave') >= 0);
+  // v1.54 THE LIBRARY SHIP pin update: the subtitle FLIPPED (the canvas
+  // library is live — the forward-wiring's own anticipated state).
+  ok('W1 the browse row speaks the truth about the wave (v1.54: FLIPPED — the canvas library is live)', pstr("(function(){var s=document.getElementById('wm-browse-sub');return s?s.textContent:''})()").indexOf('ready to download') >= 0);
 
   // ── W2 the jump story ────────────────────────────────────────────
   abEval("(function(){var r=document.querySelector('[data-wm-id=home]');if(r)r.click();return 'tapped'})()");

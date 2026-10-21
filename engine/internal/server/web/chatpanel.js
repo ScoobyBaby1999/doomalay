@@ -2155,7 +2155,12 @@
             fmtRow('▦', 'CSV', 'data-x="csv" data-url="' + base + '/export.csv' + qs + '"', ' style="color:var(--text-1)"') +
             fmtRow('🧾', 'JSON', 'data-x="json" data-url="' + base + '/export.json' + qs + '"') +
             fmtRow('📄', 'Plain text', 'data-x="txt" data-url="' + base + '/export.txt' + qs + '"') +
-            fmtRow('🌐', 'HTML', 'data-x="html" data-url="' + base + '/export.html' + qs + '"')) +
+            fmtRow('🌐', 'HTML', 'data-x="html" data-url="' + base + '/export.html' + qs + '"') +
+            // v1.54 THE LIBRARY SHIP: the chat publish door — the .doomchat
+            // sheet (toggle tree: history + assets; export or publish to
+            // the library's chat type). The disabled-with-no-session law
+            // rides the same noSession gate as every export row.
+            fmtRow('💬', 'Publish .doomchat', 'data-x="publish"')) +
             '<div class="pv-sub-row">' +
               '<span class="pv-sub-label">exported latest</span>' +
               '<span class="pv-sub-value" id="ex-latest-val">' + (latest > 0 ? 'last ' + latest : 'full log') + '</span>' +
@@ -2179,6 +2184,16 @@
               // formats also carry the FULL log (thinking, tools, sources,
               // metadata header) instead of just the on-screen messages.
               var x = b.getAttribute('data-x');
+              if (x === 'publish') {
+                // v1.54 THE LIBRARY SHIP: the .doomchat door — the publish
+                // sheet (history/assets toggles + export + the library).
+                if (window.ChatBundle && window.ChatBundle.openPublishSheet) {
+                  window.ChatBundle.openPublishSheet(panel, { sid: sid, title: icon.name });
+                } else {
+                  window.DoomToast('the chat publisher is unavailable');
+                }
+                return;
+              }
               dl(b.getAttribute('data-url'));
             });
           });

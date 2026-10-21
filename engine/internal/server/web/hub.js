@@ -49,7 +49,9 @@
 
   // the library pills' glyphs — future registry types fall back to 📚
   // v0.60 pt C.5: script (⌨ terminal) + doc (📖 book) join the set.
-  var LIB_ICONS = { persona: '🎭', template: '🧩', skill: '🛠', theme: '🎨', script: '⌨', doc: '📖' };
+  // v1.54 THE LIBRARY SHIP: canvas (🗺 whole worlds) + chat (💬 single
+  // conversations) join the set.
+  var LIB_ICONS = { persona: '🎭', template: '🧩', skill: '🛠', theme: '🎨', script: '⌨', doc: '📖', canvas: '🗺', chat: '💬' };
   function libIcon(type) { return LIB_ICONS[type] || '📚'; }
 
   // v0.58 (user spec pts 1 + 8): each browsed library has ONE tone pair that
@@ -58,7 +60,7 @@
   // template tints; skills ride accent-3; themes ride accent-2) — the CSS
   // maps .hub-root[data-tone] → --hub-tone / --hub-tone-rgb.
   function mineLabel(type) {
-    return { persona: 'my personas', skill: 'my skills', template: 'my templates', theme: 'my themes', script: 'my scripts', doc: 'my docs' }[type] || 'my items';
+    return { persona: 'my personas', skill: 'my skills', template: 'my templates', theme: 'my themes', script: 'my scripts', doc: 'my docs', canvas: 'my worlds', chat: 'my chats' }[type] || 'my items';
   }
 
   // The served Item carries no local-state flags — the web tracks what
@@ -1041,6 +1043,10 @@
   // engine-side (a failed fetch never blocks the persona itself).
   function importPersonaInto(sessionId, item, payload) {
     if (!sessionId || !window.ChatPanel || !window.ChatPanel.current()) return;
+    // v1.54 THE TRUST LADDER (the hubitem twin's law, verbatim): a string
+    // within the 64KB engine cap or an honest refuse.
+    if (typeof payload !== 'string' || !payload.trim()) { toast('the persona payload is empty — nothing to import'); return; }
+    if (payload.length > 65536) { toast('the persona payload is too large (64KB cap) — refused'); return; }
     var b = item && item.badge;
     var badgeP = Promise.resolve(null);
     if (b && (b.kind === 'solid' || b.kind === 'gradient')) {
@@ -1169,6 +1175,9 @@
   // preamble needs.
   function importPreambleInto(sessionId, item, payload) {
     if (!sessionId) return;
+    // v1.54 THE TRUST LADDER (the hubitem twin's law, verbatim).
+    if (typeof payload !== 'string' || !payload.trim()) { toast('the preamble payload is empty — nothing to import'); return; }
+    if (payload.length > 65536) { toast('the preamble payload is too large (64KB cap) — refused'); return; }
     var parsed = (window.Persona && window.Persona.parsePreambleFile)
       ? window.Persona.parsePreambleFile(payload || '') : { name: '', body: payload || '' };
     // v1.36.5 THE LIVING LEXICON: keys COVERED by the file's definitions
@@ -1189,13 +1198,16 @@
           if (list[i].id === item.id) return null; // already imported
         }
         list.push({ id: item.id, name: parsed.name || item.name || 'Preamble', text: parsed.body || '' });
+        // v1.54 THE UNSELECTED LAW (the hubitem twin): a bundle's preamble
+        // member lands ADDED, not active — R7's no-auto-activation law.
         return fetch('/api/sessions/' + sessionId, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ preambles: JSON.stringify(list), preamble_sel: item.id })
+          body: JSON.stringify({ preambles: JSON.stringify(list) })
         });
       })
       .then(function (r) {
+        if (r && r.ok) toast('preamble added — switch it on from Persona → Preamble');
         if (parsed.definitions && window.Persona && window.Persona.materializeDefinitions) {
           window.Persona.materializeDefinitions(sessionId, parsed.definitions)
             .then(function (added) {
@@ -1224,6 +1236,70 @@
     if (type === 'theme' && window.LookIO && window.LookIO.importText) {
       window.LookIO.importText(payload);
     }
+    // v1.54 THE LIBRARY SHIP: a canvas member is a .doomcanvas — the
+    // payload rides the STREAM route (big types never carry payloads in
+    // JSON); the import lands it as a new world (switchTo + provenance).
+    if (type === 'canvas') importCanvasFromHub(item);
+    // v1.54: a chat member is a .doomchat — stream + import + the icon
+    // materializes on the CURRENT canvas (openChatBySession's branch).
+    if (type === 'chat') importChatFromHub(item);
+  }
+
+  // v1.54 THE LIBRARY SHIP: fetch a big-type payload through the stream
+  // route (arrayBuffer — no base64 anywhere) and hand the bytes to the
+  // callback. Honest errors surface as notes (the hub's own idiom).
+  function fetchHubPayloadBytes(type, item, cb) {
+    var repo = encodeURIComponent(item.repo || (item.Repo) || '');
+    var url = '/api/hub/' + encodeURIComponent(type) + '/payload/' + repo + '/' + encodeURIComponent(item.id || item.ID);
+    fetch(url).then(function (r) {
+      if (!r.ok) throw new Error('payload stream failed (' + r.status + ')');
+      return r.arrayBuffer();
+    }).then(function (buf) {
+      cb(new Uint8Array(buf), null);
+    }).catch(function (e) {
+      cb(null, e && e.message ? e.message : 'payload stream failed');
+    });
+  }
+
+  // a canvas download: bytes → CanvasBundle.importBundle (the landing —
+  // switchTo + thumb + provenance — is already inside importBundle).
+  function importCanvasFromHub(item) {
+    if (!(window.CanvasBundle && window.CanvasBundle.importBundle)) { toast('canvas import is unavailable'); return; }
+    fetchHubPayloadBytes('canvas', item, function (bytes, err) {
+      if (err) { toast(err); return; }
+      window.CanvasBundle.importBundle(bytes).then(function (res) {
+        if (res && res.ok) {
+          toast('world "' + (item.name || item.Name) + '" landed' +
+            (res.created && res.created.chats ? ' — ' + res.created.chats + ' chat' + (res.created.chats === 1 ? '' : 's') : '') +
+            (res.warnings && res.warnings.length ? ' (' + res.warnings.length + ' warning' + (res.warnings.length === 1 ? '' : 's') + ')' : ''));
+          if (window.WorldsManager && window.WorldsManager.refresh) window.WorldsManager.refresh();
+        } else {
+          toast('import rolled back: ' + ((res && res.why) || 'unknown'));
+        }
+      }).catch(function (e) {
+        toast('import failed: ' + (e && e.message ? e.message : e));
+      });
+    });
+  }
+
+  // a chat download: bytes → ChatBundle.importChat → the icon materializes
+  // on the current canvas + the panel opens (openChatBySession's branch).
+  function importChatFromHub(item) {
+    if (!(window.ChatBundle && window.ChatBundle.importChat)) { toast('chat import is unavailable'); return; }
+    if (!(window.doomalay && window.doomalay.openChatBySession)) { toast('no canvas is open to land the chat on'); return; }
+    fetchHubPayloadBytes('chat', item, function (bytes, err) {
+      if (err) { toast(err); return; }
+      window.ChatBundle.importChat(bytes).then(function (res) {
+        if (res && res.ok) {
+          toast('chat "' + (item.name || item.Name) + '" landed on this canvas');
+          window.doomalay.openChatBySession(res.nsid);
+        } else {
+          toast('chat import rolled back: ' + ((res && res.why) || 'unknown'));
+        }
+      }).catch(function (e) {
+        toast('chat import failed: ' + (e && e.message ? e.message : e));
+      });
+    });
   }
 
   // the download FAB's title, from the registry state (fallbackTotal =
@@ -1985,7 +2061,7 @@
   }
 
   function shortType(t) {
-    return { persona: 'persona', template: 'template', skill: 'skill', theme: 'theme', script: 'script', doc: 'doc' }[t] || t;
+    return { persona: 'persona', template: 'template', skill: 'skill', theme: 'theme', script: 'script', doc: 'doc', canvas: 'world', chat: 'chat' }[t] || t;
   }
 
   // The card's background layer: a v0.44 design SPEC (the shared
@@ -2822,6 +2898,10 @@
     isHearted: isHearted,
     toast: toast,
     idGradient: idGradient,
+    // v1.54 THE LIBRARY SHIP: the big-payload side effects (canvas/chat
+    // imports) — hubitem's doDownload dispatch and the bundle runner share
+    // ONE door (the OOP law: no twin drift between the two download paths).
+    applyHubSideEffects: applyHubSideEffects,
     // v0.67.5: the bundle-download registry (read + trigger) — tests and
     // the chat-side tooling can observe/arm the persistent state.
     bundleDL: function (id) { return id ? bdlEntry(id) : bdlLoad(); },

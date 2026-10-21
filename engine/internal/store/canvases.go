@@ -42,6 +42,9 @@ type Canvas struct {
 // probes; HasThumb says whether /thumb has bytes. StateBytes (v1.42.7
 // THE MANAGER) is the stored state's size — the manager rows' size line
 // (additive JSON: every existing consumer reads named fields, none breaks).
+// Imported (v1.54 THE LIBRARY SHIP) is the state's $.imported.from probe —
+// the provenance chip on the manager rows (an imported world remembers
+// where it came from; "" = a home-grown world).
 type CanvasRow struct {
         ID         string  `json:"id"`
         Name       string  `json:"name"`
@@ -49,6 +52,7 @@ type CanvasRow struct {
         IconCount  int64   `json:"icon_count"`
         HasThumb   bool    `json:"has_thumb"`
         StateBytes int64   `json:"state_bytes"`
+        Imported   string  `json:"imported"`
         CreatedAt  float64 `json:"created_at"`
         UpdatedAt  float64 `json:"updated_at"`
         SavedAt    float64 `json:"saved_at"`
@@ -70,6 +74,7 @@ func (db *DB) ListCanvases() ([]*CanvasRow, error) {
                        COALESCE(json_array_length(state, '$.icons'), 0),
                        thumb IS NOT NULL,
                        COALESCE(length(state), 0),
+                       COALESCE(json_extract(state, '$.imported.from'), ''),
                        created_at, updated_at,
                        COALESCE(CAST(json_extract(state, '$.savedAt') AS REAL), 0)
                 FROM canvases
@@ -81,7 +86,7 @@ func (db *DB) ListCanvases() ([]*CanvasRow, error) {
         out := []*CanvasRow{}
         for rows.Next() {
                 r := &CanvasRow{}
-                if err := rows.Scan(&r.ID, &r.Name, &r.Sort, &r.IconCount, &r.HasThumb, &r.StateBytes, &r.CreatedAt, &r.UpdatedAt, &r.SavedAt); err != nil {
+                if err := rows.Scan(&r.ID, &r.Name, &r.Sort, &r.IconCount, &r.HasThumb, &r.StateBytes, &r.Imported, &r.CreatedAt, &r.UpdatedAt, &r.SavedAt); err != nil {
                         return nil, err
                 }
                 out = append(out, r)
