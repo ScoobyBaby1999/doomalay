@@ -39,17 +39,20 @@ func (s *Server) ocServeDataDir() string {
 // the bridge is not available on this device (no binary, Android, no key)
 // — the caller falls through to the normal direct path, whose honest
 // error names the wall.
+//
+// v1.55.1 THE NO-LONG-HOLD LAW: ocServeMu guards ONLY the manager pointer
+// (held for microseconds — the bridge status route's peeks and every other
+// reader stay live through an install). The SLOW work (provisioning,
+// download, spawn, boot) runs under ocServeStartMu, so the only goroutines
+// that ever wait on an install are the ones that genuinely need the bridge
+// (a turn mid-self-heal, the installer itself) — never the API surface.
 func (s *Server) ocServeManager(ctx context.Context) *ocserve.Manager {
+        // fast path: a healthy manager is answered without the start lock
         s.ocServeMu.Lock()
-        defer s.ocServeMu.Unlock()
-        if s.ocServe != nil {
-                if !s.ocServe.Healthy() {
-                        if err := s.ocServe.Start(ctx); err != nil {
-                                log.Printf("ocserve: restart failed: %v", err)
-                                return nil
-                        }
-                }
-                return s.ocServe
+        m := s.ocServe
+        s.ocServeMu.Unlock()
+        if m != nil && m.Healthy() {
+                return m
         }
         dir := s.ocServeDataDir()
         if dir == "" {
@@ -62,25 +65,45 @@ func (s *Server) ocServeManager(ctx context.Context) *ocserve.Manager {
         if strings.TrimSpace(key) == "" {
                 return nil
         }
-        m := ocserve.New(dir, key, func(format string, args ...any) {
-                log.Printf(format, args...)
-        })
-        // v1.49.1 THE GUEST ROOM: the Android spawner needs the Termux bridge
-        // client (the jailed exec); nil on every build without the bridge
-        // configured keeps the desktop exec-child law.
-        if s.termux != nil {
-                m.SetTermux(s.termux)
+        // the slow path — serialized (the start mutex; NOT ocServeMu)
+        s.ocServeStartMu.Lock()
+        defer s.ocServeStartMu.Unlock()
+        // re-peek under the start lock: a racing starter may have finished
+        s.ocServeMu.Lock()
+        m = s.ocServe
+        s.ocServeMu.Unlock()
+        if m == nil {
+                m = ocserve.New(dir, key, func(format string, args ...any) {
+                        log.Printf(format, args...)
+                })
+                // v1.49.1 THE GUEST ROOM: the Android spawner needs the Termux bridge
+                // client (the jailed exec); nil on every build without the bridge
+                // configured keeps the desktop exec-child law.
+                if s.termux != nil {
+                        m.SetTermux(s.termux)
+                }
+                // the external-serve override (the rigs + tests): a serve that is
+                // already up wins over spawning our own child
+                if v := strings.TrimSpace(os.Getenv("OPENCODE_SERVE_URL")); v != "" {
+                        m.SetBaseURL(v)
+                }
+                // the manager is visible IMMEDIATELY (its InstallProgress is the
+                // live ping the status route renders while the install runs)
+                s.ocServeMu.Lock()
+                if s.ocServe == nil {
+                        s.ocServe = m
+                } else {
+                        m = s.ocServe // a racing creator won the pointer
+                }
+                s.ocServeMu.Unlock()
         }
-        // the external-serve override (the rigs + tests): a serve that is
-        // already up wins over spawning our own child
-        if v := strings.TrimSpace(os.Getenv("OPENCODE_SERVE_URL")); v != "" {
-                m.SetBaseURL(v)
+        if m.Healthy() {
+                return m
         }
         if err := m.Start(ctx); err != nil {
                 log.Printf("ocserve: bridge unavailable: %v", err)
                 return nil
         }
-        s.ocServe = m
         return m
 }
 

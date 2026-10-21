@@ -97,12 +97,38 @@
     // jailed exec — the user types nothing after the bootstrap).
     var ocBridge = null;
     var ocBridgePoll = null;
+    // v1.55.1 THE HONEST LADDER: the poll never stacks requests — an
+    // in-flight poll is skipped (single-flight), every poll ABORTS the
+    // previous one (AbortController), and the 4s cap now REALLY cancels
+    // the underlying fetch. The v155-A audit convicted the old poll: a
+    // 2s interval with no abort + a wedged engine handler exhausted the
+    // WebView's 6-connections-per-host pool in ~12s and /api/models +
+    // /api/keys starved — the provider screen rendered "No providers"
+    // while an install ran.
+    var ocPollCtrl = null;
+    var ocPollInFlight = false;
     function fetchOcBridge(then) {
-      withTimeout(fetch('/api/opencode/bridge').then(function (r) { return r.json(); }), 4000, null)
+      if (ocPollInFlight) { if (then) pendingPollThen.push(then); return; }
+      ocPollInFlight = true;
+      if (ocPollCtrl) { try { ocPollCtrl.abort(); } catch (e) {} }
+      ocPollCtrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+      var opts = ocPollCtrl ? { signal: ocPollCtrl.signal } : {};
+      var settled = false;
+      var finish = function (v) {
+        if (settled) return; settled = true;
+        ocPollInFlight = false;
+        if (then) then(v);
+        var q = pendingPollThen.slice(); pendingPollThen.length = 0;
+        q.forEach(function (cb) { try { cb(); } catch (e) {} });
+      };
+      withTimeout(fetch('/api/opencode/bridge', opts)
+        .then(function (r) { return r.json(); }), 4000, null)
         .then(function (b) {
-          if (b) { ocBridge = b; ocBridgeLatest = b; if (then) then(); }
-        }).catch(function () {});
+          if (b) { ocBridge = b; ocBridgeLatest = b; }
+          finish(b);
+        }).catch(function () { finish(null); });
     }
+    var pendingPollThen = [];
     function ocBridgeInstall() {
       fetch('/api/opencode/bridge/install', { method: 'POST' })
         .then(function (r) { return r.json(); })

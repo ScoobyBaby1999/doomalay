@@ -38,11 +38,24 @@ type ocBridgeSnapshot struct {
         mu      sync.Mutex
         running bool
         lastErr string
+        // v1.55.1: which install attempt we're on (the failed→retry pill
+        // shows it; incremented on every REAL start).
+        attempt int
 }
 
 func (s *Server) ocBridgeSetRunning(on bool) {
         s.ocBridge.mu.Lock()
         s.ocBridge.running = on
+        s.ocBridge.mu.Unlock()
+}
+
+// ocBridgeStartAttempt arms a fresh install: bumps the attempt counter
+// and clears the last error (the pill ladder renders the attempt).
+func (s *Server) ocBridgeStartAttempt() {
+        s.ocBridge.mu.Lock()
+        s.ocBridge.running = true
+        s.ocBridge.lastErr = ""
+        s.ocBridge.attempt++
         s.ocBridge.mu.Unlock()
 }
 
@@ -56,6 +69,12 @@ func (s *Server) ocBridgeState() (running bool, lastErr string) {
         s.ocBridge.mu.Lock()
         defer s.ocBridge.mu.Unlock()
         return s.ocBridge.running, s.ocBridge.lastErr
+}
+
+func (s *Server) ocBridgeAttemptNow() int {
+        s.ocBridge.mu.Lock()
+        defer s.ocBridge.mu.Unlock()
+        return s.ocBridge.attempt
 }
 
 // ocBridgeKeyPresent: the vault carries the OpenCode key (never leaks it).
@@ -90,6 +109,11 @@ func (s *Server) ocBridgeLadder() (state, detail string, termuxInstalled, termux
 }
 
 // handleOcBridgeStatus is GET /api/opencode/bridge — the honest ladder.
+//
+// v1.55.1 THE HONEST LADDER: the route NEVER blocks on an install (the
+// manager peek is a microsecond pointer read — THE NO-LONG-HOLD LAW), and
+// while an install runs it answers the LIVE progress (stage + bytes +
+// percent + attempt) so the provider pill pings the download for real.
 func (s *Server) handleOcBridgeStatus(w http.ResponseWriter, r *http.Request) {
         clientVersion, sizeHint := ocserve.AndroidClientInfo()
         out := map[string]any{
@@ -98,6 +122,13 @@ func (s *Server) handleOcBridgeStatus(w http.ResponseWriter, r *http.Request) {
                 "size_hint":       sizeHint,
                 "key_present":     s.ocBridgeKeyPresent(),
                 "port":            0,
+                // v1.55.1: the live progress fields (always present — the pill
+                // renders shape-stable; stage "" = no install knowledge yet)
+                "stage":           "",
+                "progress_bytes":  int64(0),
+                "progress_total":  int64(0),
+                "progress_percent": 0,
+                "attempt":         s.ocBridgeAttemptNow(),
         }
         if !ocserve.SpawnerIsTermux() {
                 out["state"] = "desktop"
@@ -112,17 +143,33 @@ func (s *Server) handleOcBridgeStatus(w http.ResponseWriter, r *http.Request) {
         running, lastErr := s.ocBridgeState()
         // THE ORDER LAW: a HEALTHY serve is the most decisive truth (a
         // transient bridge-status hiccup must never mask a live serve — the
-        // serve IS the bridge), an in-flight install comes next, then the
-        // gates, then the failure/ready tail.
+        // serve IS the bridge), an in-flight install comes next (with its
+        // LIVE progress), then the gates, then the failure/ready tail.
+        m := s.ocServeManagerNow()
         switch {
-        case s.ocServeManagerNow() != nil && s.ocServeManagerNow().Healthy():
-                m := s.ocServeManagerNow()
+        case m != nil && m.Healthy():
                 state = "up"
                 detail = "The pocket bridge is live — the free OpenCode models work"
                 out["port"] = m.Port()
         case running:
                 state = "installing"
                 detail = "Installing the native OpenCode client through Termux (one-time " + sizeHint + " download)…"
+                if m != nil {
+                        pr := m.Progress()
+                        out["stage"] = pr.Stage
+                        out["progress_bytes"] = pr.Bytes
+                        out["progress_total"] = pr.Total
+                        if pr.Total > 0 && pr.Bytes > 0 {
+                                pct := int(100 * pr.Bytes / pr.Total)
+                                if pct > 99 {
+                                        pct = 99 // never claim done before the marker lands
+                                }
+                                if pct < 1 {
+                                        pct = 1
+                                }
+                                out["progress_percent"] = pct
+                        }
+                }
         case state == "walled" || state == "unconfigured" || state == "termux_missing" || state == "not_bootstrapped":
                 // a gate is closed — the ladder state IS the answer
         case lastErr != "":
@@ -176,7 +223,7 @@ func (s *Server) handleOcBridgeInstall(w http.ResponseWriter, r *http.Request) {
                 return
         }
         s.ocBridgeSetError("")
-        s.ocBridgeSetRunning(true)
+        s.ocBridgeStartAttempt() // v1.55.1: attempt++ + running=true (the pill ladder)
         go func() {
                 defer s.ocBridgeSetRunning(false)
                 // the detached ctx (the install's own law): the jailed exec's

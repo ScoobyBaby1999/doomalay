@@ -142,6 +142,17 @@ type Server struct {
         ocServeMu       sync.Mutex
         ocServeSessions map[string]string
         ocServeSessMu   sync.Mutex
+        // v1.55.1 THE HONEST LADDER: the START serializer. ocServeMu now
+        // guards only the manager POINTER (microsecond windows — the
+        // bridge status route may peek it freely); every SLOW thing
+        // (binary download, Termux provisioning, spawn, health boot)
+        // happens under ocServeStartMu instead, so a 72.5MB install can
+        // never starve /api/models, /api/keys, or the status poll (the
+        // v155-A audit convicted the old all-hold: every bridge GET
+        // blocked on an in-flight install until the WebView's 6-slot
+        // connection pool exhausted and the provider screen rendered
+        // "No providers").
+        ocServeStartMu  sync.Mutex
 
         // v1.49.2 THE OPEN HANDSHAKE: the install's single-flight truth
         // (the status ladder + the turn's honest in-progress terminal ride

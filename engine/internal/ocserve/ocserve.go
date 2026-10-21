@@ -125,6 +125,46 @@ type Manager struct {
         // untouched when the spawner kind says exec).
         termux TermuxClient
         tprov  *termuxProvisioner
+
+        // v1.55.1 THE HONEST LADDER: the live install progress (stage +
+        // bytes/total of the download). Readable WITHOUT touching any long-held
+        // lock via Progress() — the bridge status route pings it every poll and
+        // the provider pill renders the download for real.
+        progMu   sync.Mutex
+        progress InstallProgress
+}
+
+// InstallProgress is the live install snapshot (v1.55.1): which stage the
+// pocket-bridge provisioning is in, and how many bytes of the pinned zip
+// have landed out of the expected total. Stage names are a stable contract
+// for the PWA pill: "" (idle) | "boot" | "deps" | "download" | "verify" |
+// "unpack" | "configure" | "installed".
+type InstallProgress struct {
+        Stage string `json:"stage"`
+        Bytes int64  `json:"bytes"`
+        Total int64  `json:"total"`
+}
+
+// Progress answers the current install snapshot (always safe — a tiny
+// mutex, never the spawn/start path).
+func (m *Manager) Progress() InstallProgress {
+        m.progMu.Lock()
+        defer m.progMu.Unlock()
+        return m.progress
+}
+
+// setProgress records one provisioning tick (the provisioner's report
+// hook lands here).
+func (m *Manager) setProgress(stage string, bytes, total int64) {
+        m.progMu.Lock()
+        m.progress = InstallProgress{Stage: stage, Bytes: bytes, Total: total}
+        m.progMu.Unlock()
+}
+
+// SetProgressForTest arms the progress snapshot directly (the rigs + the
+// server pins render a live install window without provisioning).
+func (m *Manager) SetProgressForTest(stage string, bytes, total int64) {
+        m.setProgress(stage, bytes, total)
 }
 
 // Config is the exact permission file the gate law prescribes for the 2.x

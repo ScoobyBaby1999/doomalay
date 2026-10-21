@@ -83,7 +83,14 @@ const (
 var (
         androidServeBootWait  = 45 * time.Second
         androidHealthInterval = 500 * time.Millisecond
+        // v1.55.1: the download progress poll cadence (the sidecar `cat`).
+        androidProgressInterval = 2 * time.Second
 )
+
+// androidZipSizeApproxBytes is the download's EXPECTED size (the pinned
+// release's own size, ~72.5MB) — the percent denominator for the live pill.
+// A larger actual file clamps at 99% until the marker lands (never lies).
+const androidZipSizeApproxBytes int64 = 76_021_760 // 72.5 MiB
 
 // ErrTermuxMissing: the first gate is absent — Termux isn't installed.
 var ErrTermuxMissing = errors.New("the OpenCode bridge on Android needs Termux — install Termux from F-Droid (the app's Termux screen has the link), then come back and tap Install OpenCode")
@@ -128,6 +135,12 @@ const (
         tmServeLog  = "$HOME/.doomalay/opencode-serve/serve.log"
         tmServePid  = "$HOME/.doomalay/opencode-serve/serve.pid"
         tmPortFile  = "$HOME/.doomalay/opencode-serve/bridge.port"
+        // v1.55.1 THE HONEST LADDER: the download's live sidecars — dl.bytes is
+        // the stat loop's byte checkpoint (the engine's progress poll reads it
+        // every 2s → the provider pill pings the download), dl.status carries the
+        // ok/fail marker out of the backgrounded curl.
+        tmDlBytes  = "$HOME/.doomalay/cache/dl.bytes"
+        tmDlStatus = "$HOME/.doomalay/cache/dl.status"
 )
 
 // ── the command builders (each one a named pin — the tests byte-match) ──
@@ -151,9 +164,32 @@ func tmCmdDeps() string {
                 `command -v rg >/dev/null 2>&1 || pkg install -y ripgrep >/dev/null 2>&1; true`
 }
 
+// tmCmdDownload — v1.55.1 THE CHECKPOINT LAW: `-C -` makes the PARTIAL ZIP
+// the checkpoint (a retry resumes from its byte offset — progress is never
+// lost), `--retry 5 --retry-all-errors` rides through transient mobile
+// drops, and the stat loop keeps dl.bytes live for the engine's progress
+// poll (the provider pill's ping). The ok/fail marker rides dl.status out
+// of the backgrounded curl (the command's own exit is the stat loop's,
+// not curl's — the marker is the truth the Ensure ladder reads).
 func tmCmdDownload(url string) string {
-        return fmt.Sprintf("curl -fL --retry 3 --connect-timeout 20 -o %s '%s' && echo __dm_dl_ok__",
-                tmZipPath, url)
+        return "rm -f " + tmDlStatus + "; " +
+                "( curl -fL -C - --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 20 -o " + tmZipPath + " '" + url + "' " +
+                "&& echo __dm_dl_ok__ > " + tmDlStatus + " || echo __dm_dl_fail__ > " + tmDlStatus + " ) & " +
+                "__C=$!; while kill -0 $__C 2>/dev/null; do stat -c %s " + tmZipPath + " > " + tmDlBytes + " 2>/dev/null; sleep 2; done; " +
+                "cat " + tmDlStatus
+}
+
+// tmCmdProgressBytes — the engine's live byte poll (best-effort; the
+// progress is a UI ping, never a gate).
+func tmCmdProgressBytes() string {
+        return fmt.Sprintf("cat %s 2>/dev/null || true", tmDlBytes)
+}
+
+// tmCmdRmZip — the corrupt-download law: a zip that FINISHED downloading but
+// failed its SHA must not be resumed (`-C -` on a complete-but-corrupt
+// file can never heal — the retry starts honest and fresh).
+func tmCmdRmZip() string {
+        return fmt.Sprintf("rm -f %s %s 2>/dev/null; true", tmZipPath, tmDlBytes)
 }
 
 func tmCmdShaCheck(sha string) string {
@@ -233,6 +269,24 @@ type termuxProvisioner struct {
         // health poll speaks it on /api/provider.
         serverPassword string
         logf           func(format string, args ...any)
+        // v1.55.1 THE HONEST LADDER: the live progress hook (stage, bytes,
+        // total) — the Manager arms it so the provider screen's pill pings
+        // the download for real. nil = no reporting (tests that don't care).
+        report func(stage string, bytes, total int64)
+}
+
+// stage reports one progress tick (nil-guarded — the hook is optional).
+func (p *termuxProvisioner) stage(name string) {
+        if p.report != nil {
+                p.report(name, 0, 0)
+        }
+}
+
+// stageBytes reports a download-progress tick.
+func (p *termuxProvisioner) stageBytes(name string, bytes, total int64) {
+        if p.report != nil {
+                p.report(name, bytes, total)
+        }
 }
 
 // run is one jailed command with the honest ladder: transport error →
@@ -301,6 +355,12 @@ func (p *termuxProvisioner) installed(ctx context.Context) (bool, error) {
 // a password re-derivation must reach the NEXT spawn even when the
 // binary install itself is already done; the v1510 rig convicted the
 // stale-key.env hang otherwise).
+//
+// v1.55.1 THE HONEST LADDER: every stage reports through the progress
+// hook (deps → download-with-live-bytes → verify → unpack → configure →
+// the caller's spawn/boot), and THE CHECKPOINT LAW rides the download —
+// `-C -` resumes a partial zip from its byte offset so a retry never
+// restarts from zero.
 func (p *termuxProvisioner) Ensure(ctx context.Context) error {
         if err := p.statusLadder(ctx); err != nil {
                 return err
@@ -309,11 +369,13 @@ func (p *termuxProvisioner) Ensure(ctx context.Context) error {
                 if err := p.refreshSecrets(ctx); err != nil {
                         return err
                 }
+                p.stage("installed")
                 return nil
         }
         if _, err := p.run(ctx, tmCmdMkdirs(), "", 30_000, ""); err != nil {
                 return err
         }
+        p.stage("deps")
         res, err := p.run(ctx, tmCmdDeps(), "", 600_000, "")
         if err != nil {
                 return err
@@ -323,19 +385,26 @@ func (p *termuxProvisioner) Ensure(ctx context.Context) error {
         }
         url, sha := androidArtifact()
         p.logf("pocket bridge: downloading the native OpenCode client (%s)…", androidZipSizeHint)
-        if _, err := p.run(ctx, tmCmdDownload(url), "", 900_000, ""); err != nil {
+        if err := p.download(ctx, url); err != nil {
                 return fmt.Errorf("pocket bridge: download failed: %w", err)
         }
+        p.stage("verify")
         res, err = p.run(ctx, tmCmdShaCheck(sha), "", 120_000, "")
         if err != nil {
                 return err
         }
         if res != nil && strings.Contains(res.Stdout, "__dm_sha_bad__") {
+                // THE CORRUPT-ZIP LAW: a COMPLETE download that failed its SHA must
+                // not be resumed (checkpoint law covers partial files, never corrupt
+                // ones) — drop it so the retry starts honest and fresh.
+                _, _ = p.run(ctx, tmCmdRmZip(), "", 30_000, "")
                 return errors.New("pocket bridge: the downloaded OpenCode client failed its SHA256 check (the pinned build changed or the download was truncated) — try again")
         }
+        p.stage("unpack")
         if _, err := p.run(ctx, tmCmdUnzip(), "", 300_000, ""); err != nil {
                 return fmt.Errorf("pocket bridge: extract failed: %w", err)
         }
+        p.stage("configure")
         cmd, stdin := tmCmdWriteConfig()
         if _, err := p.run(ctx, cmd, "", 30_000, stdin); err != nil {
                 return fmt.Errorf("pocket bridge: writing the permission config failed: %w", err)
@@ -346,6 +415,65 @@ func (p *termuxProvisioner) Ensure(ctx context.Context) error {
         }
         p.logf("pocket bridge: the native OpenCode client %s is installed", androidClientVersion)
         return nil
+}
+
+// download runs the CHECKPOINT download (the resumable curl) and pings the
+// live byte sidecar every 2s through the progress hook — the downloading
+// pill is never static. The sidecar poll is best-effort (a failed `cat` is
+// a skipped tick, never a failure); the download's own truth is the marker.
+func (p *termuxProvisioner) download(ctx context.Context, url string) error {
+        type dlOut struct {
+                res *termuxbridge.RunResult
+                err error
+        }
+        done := make(chan dlOut, 1)
+        go func() {
+                res, err := p.run(ctx, tmCmdDownload(url), "", 900_000, "")
+                done <- dlOut{res, err}
+        }()
+        // v1.55.1: the byte poll tick (short so the pill stays live; the fake
+        // bridges in the tests can shorten it further without touching prod).
+        tick := time.NewTicker(androidProgressInterval)
+        defer tick.Stop()
+        for {
+                select {
+                case out := <-done:
+                        if out.err != nil {
+                                return out.err
+                        }
+                        if out.res == nil || !strings.Contains(out.res.Stdout, "__dm_dl_ok__") {
+                                return errors.New("the resumable download did not finish (marker missing)")
+                        }
+                        // the final 100% tick — the pill must reach its complete state
+                        p.stageBytes("download", androidZipSizeApproxBytes, androidZipSizeApproxBytes)
+                        return nil
+                case <-tick.C:
+                        // best-effort byte ping — never blocks the download itself
+                        pctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+                        if res, err := p.client.Run(pctx, tmCmdProgressBytes(), "", 10_000); err == nil && res != nil {
+                                if n, ok := tmParseBytes(res.Stdout); ok && n > 0 {
+                                        p.stageBytes("download", n, androidZipSizeApproxBytes)
+                                }
+                        }
+                        cancel()
+                case <-ctx.Done():
+                        return ctx.Err()
+                }
+        }
+}
+
+// tmParseBytes reads the sidecar's byte count (whitespace-tolerant;
+// unparsable = no tick).
+func tmParseBytes(s string) (int64, bool) {
+        s = strings.TrimSpace(s)
+        if s == "" {
+                return 0, false
+        }
+        var n int64
+        if _, err := fmt.Sscanf(s, "%d", &n); err != nil || n < 0 {
+                return 0, false
+        }
+        return n, true
 }
 
 // refreshSecrets rewrites the two stdin-written files on an ALREADY
@@ -368,6 +496,7 @@ func (p *termuxProvisioner) refreshSecrets(ctx context.Context) error {
 // and spawn fresh on the given port, then health-poll FROM THE ENGINE (the
 // shared loopback — the same interface the checkin already rides).
 func (p *termuxProvisioner) Launch(ctx context.Context, port int) (int, error) {
+        p.stage("boot")
         if err := p.Ensure(ctx); err != nil {
                 return 0, err
         }
@@ -468,6 +597,9 @@ func (m *Manager) startViaTermux(ctx context.Context) error {
                 return fmt.Errorf("%w (the Termux bridge is not configured on this device)", ErrUnavailable)
         }
         p := &termuxProvisioner{client: m.termux, apiKey: m.apiKey, serverPassword: m.serverPassword, logf: m.logf}
+        // v1.55.1: the live progress hook — every provisioning stage lands on
+        // the Manager's snapshot for the bridge status route (the pill's ping).
+        p.report = func(stage string, bytes, total int64) { m.setProgress(stage, bytes, total) }
         port, err := freePort()
         if err != nil {
                 return fmt.Errorf("ocserve: no free port for the pocket bridge: %w", err)

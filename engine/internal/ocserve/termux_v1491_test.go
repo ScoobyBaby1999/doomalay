@@ -161,9 +161,28 @@ func TestV1491CommandShapes(t *testing.T) {
                 t.Fatalf("install check:\n got %q\nwant %q", got, want)
         }
         url, _ := androidArtifact()
-        if got, want := tmCmdDownload(url),
-                `curl -fL --retry 3 --connect-timeout 20 -o $HOME/.doomalay/cache/opencode-android.zip '`+androidZipURLDefault+`' && echo __dm_dl_ok__`; got != want {
-                t.Fatalf("download:\n got %q\nwant %q", got, want)
+        // v1.55.1 THE CHECKPOINT LAW pin: `-C -` (resume from the partial
+        // zip's byte offset — a retry never restarts from zero), the
+        // stronger retry ladder, and the live dl.bytes sidecar the stat
+        // loop feeds (the provider pill's ping).
+        dl := tmCmdDownload(url)
+        if !strings.Contains(dl, "-C -") {
+                t.Fatalf("download must be resumable (-C -): %q", dl)
+        }
+        if !strings.Contains(dl, "--retry 5 --retry-all-errors") {
+                t.Fatalf("download retry ladder: %q", dl)
+        }
+        if !strings.Contains(dl, "stat -c %s $HOME/.doomalay/cache/opencode-android.zip > $HOME/.doomalay/cache/dl.bytes") {
+                t.Fatalf("download byte sidecar: %q", dl)
+        }
+        if !strings.Contains(dl, "cat $HOME/.doomalay/cache/dl.status") {
+                t.Fatalf("download marker protocol: %q", dl)
+        }
+        if !strings.Contains(dl, "curl -fL -C -") {
+                t.Fatalf("download curl shape: %q", dl)
+        }
+        if got, want := tmCmdProgressBytes(), `cat $HOME/.doomalay/cache/dl.bytes 2>/dev/null || true`; got != want {
+                t.Fatalf("progress bytes poll:\n got %q\nwant %q", got, want)
         }
         if got, want := tmCmdShaCheck(androidZipSHADefault),
                 `printf '%s  %s\n' '`+androidZipSHADefault+`' $HOME/.doomalay/cache/opencode-android.zip | sha256sum -c - >/dev/null 2>&1 && echo __dm_sha_ok__ || echo __dm_sha_bad__`; got != want {
