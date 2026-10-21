@@ -4,6 +4,7 @@ import (
         "strings"
         "testing"
 
+        "github.com/ScoobyBaby1999/doomalay/engine/internal/llm"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/store"
 )
 
@@ -11,6 +12,16 @@ import (
 // real store it reports usage/context/connections/workspaces; db-less it
 // still composes (guarded); the block stays compact (token budget).
 func TestSessionContextPreamble(t *testing.T) {
+        // v1.55.3 THE LIVING CATALOG: the preamble's window/pricing lines read
+        // the LIVE models.dev registry (the embedded snapshot is dead — "no
+        // static lists, not even fallback"). Seed the registry with the same
+        // numbers the old snapshot carried for deepseek-v4.1-flash — the
+        // LAW changed, not the numbers.
+        seed := `{"nvidia":{"name":"NVIDIA","models":{"deepseek-v4.1-flash":{"name":"DeepSeek V4.1 Flash","limit":{"context":327680,"output":16384},"cost":{"input":0.04,"output":0.08,"cache_read":0.004,"cache_write":0.08}}}}}`
+        if err := llm.SetModelsDevForTest([]byte(seed)); err != nil {
+                t.Fatalf("seed: %v", err)
+        }
+        defer llm.ClearModelsDevForTest()
         dir := t.TempDir()
         db, err := store.Open(dir)
         if err != nil {

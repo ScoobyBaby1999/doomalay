@@ -31,6 +31,8 @@ func captureServer(t *testing.T, bodies *[]string) *httptest.Server {
 // documented output cap (snapshot: 65536 for nemotron-3.5-lightning), not
 // the flat 16384.
 func TestV1141_FloorUsesSpecOutput(t *testing.T) {
+	resetModelsDevTestDB()
+	seedModelsDevTestDB(t)
         var bodies []string
         srv := captureServer(t, &bodies)
         defer srv.Close()
@@ -164,6 +166,8 @@ func TestV1141_MergeUsage_LastRoundWins(t *testing.T) {
 // TestV1141_ContextGuard — fires past 92% of a spec-known window with the
 // real numbers; stays silent under it; stays silent for heuristic windows.
 func TestV1141_ContextGuard(t *testing.T) {
+	resetModelsDevTestDB()
+	seedModelsDevTestDB(t)
         // openai/gpt-4-classic: snapshot ctx 8192. 92% = 7536 tokens.
         // ~2 tokens per repetition: 5000 reps ≈ 10000 tokens, safely over.
         big := strings.Repeat("hello world ", 5000)

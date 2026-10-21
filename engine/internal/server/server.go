@@ -177,6 +177,47 @@ func New(cfg *config.Config, db *store.DB, br *brain.Brain) *Server {
         }
 
         s := &Server{cfg: cfg, db: db, vault: vault, brain: br, mux: http.NewServeMux(), remotes: map[string]*brain.RemoteBrain{}}
+        // v1.55.3 THE LIVING CATALOG: the two engine-side hooks — the
+        // models.dev registry's disk cache rides the engine's own data dir
+        // (a cold boot loads instantly instead of re-downloading 6MB), and the
+        // serve-bridge catalogue (GET /api/model — the genuine client's own
+        // live list with limits/cost/variants) merges into the opencode group
+        // whenever a bridge is up (no import cycle: the llm package owns the
+        // hook, the server arms it with the manager peek).
+        llm.SetCacheDir(cfg.DataDir)
+        llm.SetOpenCodeServeCatalog(func() []llm.FetchedModelInfo {
+                s.ocServeMu.Lock()
+                m := s.ocServe
+                s.ocServeMu.Unlock()
+                if m == nil || !m.Healthy() {
+                        return nil
+                }
+                sms := m.LiveCatalog()
+                if len(sms) == 0 {
+                        return nil
+                }
+                out := make([]llm.FetchedModelInfo, 0, len(sms))
+                for _, sm := range sms {
+                        fi := llm.FetchedModelInfo{
+                                ID:           sm.ModelID,
+                                ContextLimit: sm.Limit.Context,
+                        }
+                        if len(sm.Cost) > 0 {
+                                fi.InputCost = sm.Cost[0].Input
+                                fi.OutputCost = sm.Cost[0].Output
+                        }
+                        if sm.Capabilities.Tools {
+                                fi.Caps = []string{"tools"}
+                        }
+                        for _, v := range sm.Variants {
+                                if v.Settings.ReasoningEffort != "" {
+                                        fi.EffortLevels = append(fi.EffortLevels, v.Settings.ReasoningEffort)
+                                }
+                        }
+                        out = append(out, fi)
+                }
+                return out
+        })
         // v1.44.2 THE PIN: the PM pin manager rides the vault (nil when the
         // vault failed — the pm endpoints then answer 500 honestly).
         if vault != nil {

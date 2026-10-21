@@ -791,6 +791,88 @@ func (m *Manager) SelectModel(serveSess, modelID string) error {
         return nil
 }
 
+// ServeModel is one entry of the serve's own catalogue (GET /api/model —
+// the genuine client's LIVE model list: ids, limits, cost, variants, the
+// per-model effort ladders). v1.55.3 THE LIVING CATALOG: this is the
+// device-local truth that merges into the engine's opencode group when a
+// bridge is up (limits/cost/variants straight from the client the turns
+// actually ride).
+type ServeModel struct {
+        ID         string          `json:"id"`
+        ModelID    string          `json:"modelID"`
+        ProviderID string          `json:"providerID"`
+        Name       string          `json:"name"`
+        Status     string          `json:"status"`
+        Limit      struct {
+                Context int64 `json:"context"`
+                Input   int64 `json:"input"`
+                Output  int64 `json:"output"`
+        } `json:"limit"`
+        Cost []struct {
+                Input  float64 `json:"input"`
+                Output float64 `json:"output"`
+                Cache  struct {
+                        Read  float64 `json:"read"`
+                        Write float64 `json:"write"`
+                } `json:"cache"`
+        } `json:"cost"`
+        Variants []struct {
+                ID       string `json:"id"`
+                Settings struct {
+                        ReasoningEffort string `json:"reasoningEffort"`
+                } `json:"settings"`
+        } `json:"variants"`
+        Capabilities struct {
+                Tools bool `json:"tools"`
+        } `json:"capabilities"`
+        Compatibility struct {
+                ReasoningField string `json:"reasoningField"`
+        } `json:"compatibility"`
+}
+
+// LiveCatalog answers the serve's own model catalogue (nil = the serve is
+// down or answered a shape we don't speak — the hosted list stands alone).
+// Only opencode-zen entries ride (the serve also lists the Go workspace's
+// models under providerID opencode-go — a different entitlement surface).
+func (m *Manager) LiveCatalog() []ServeModel {
+        m.mu.Lock()
+        base, pw := m.baseURL, m.serverPassword
+        m.mu.Unlock()
+        if base == "" {
+                return nil
+        }
+        ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+        defer cancel()
+        req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/api/model", nil)
+        if err != nil {
+                return nil
+        }
+        req.Header.Set("Accept", "application/json")
+        req.Header.Set("Authorization", "Basic "+basicAuth("opencode", pw))
+        resp, err := http.DefaultClient.Do(req)
+        if err != nil {
+                return nil
+        }
+        defer resp.Body.Close()
+        if resp.StatusCode != 200 {
+                return nil
+        }
+        var out struct {
+                Data []ServeModel `json:"data"`
+        }
+        if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&out); err != nil {
+                return nil
+        }
+        var models []ServeModel
+        for _, sm := range out.Data {
+                if sm.ProviderID != "opencode" || strings.EqualFold(sm.Status, "deprecated") {
+                        continue
+                }
+                models = append(models, sm)
+        }
+        return models
+}
+
 // Prompt fires one turn (200 with the user-message ack on accept). The
 // 2.x PromptInput carries ONLY the text — no model, no parts, no
 // system/tools fields exist to send (the persona + context ride the text

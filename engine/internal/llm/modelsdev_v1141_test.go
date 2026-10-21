@@ -1,13 +1,15 @@
 package llm
 
-// modelsdev_v1141_test.go — v1.14.1 THE LEDGER: the snapshot lookup matrix.
-// The pinned numbers come from the embedded snapshot itself (probed at
-// generation time); if the snapshot is ever regenerated with shifted
-// values, these tests are the change-detector — update them consciously.
+// modelsdev_v1141_test.go — v1.14.1 THE LEDGER: the lookup matrix.
+// v1.55.3: the embedded snapshot is DEAD — the live registry is the only
+// truth. These tests seed the LIVE DB with the same models the snapshot
+// carried (the numbers are unchanged; the SOURCE became live).
 
 import "testing"
 
 func TestV1141_LookupSpec_Matrix(t *testing.T) {
+	resetModelsDevTestDB()
+	seedModelsDevTestDB(t)
 	cases := []struct {
 		slot  string
 		known bool
@@ -32,6 +34,8 @@ func TestV1141_LookupSpec_Matrix(t *testing.T) {
 }
 
 func TestV1141_SpecMaxOutput(t *testing.T) {
+	resetModelsDevTestDB()
+	seedModelsDevTestDB(t)
 	// The NIM model the floor test exercises (probed: out=65536).
 	if out, ok := SpecMaxOutput("nvidia/nvidia/nemotron-3.5-lightning"); !ok || out != 65536 {
 		t.Fatalf("SpecMaxOutput(nemotron-3.5-lightning) = %d,%v; want 65536,true", out, ok)
@@ -42,6 +46,8 @@ func TestV1141_SpecMaxOutput(t *testing.T) {
 }
 
 func TestV1141_ContextLimitFor_SpecPrimary(t *testing.T) {
+	resetModelsDevTestDB()
+	seedModelsDevTestDB(t)
 	// spec-known: the snapshot wins.
 	if got := ContextLimitFor("openai/gpt-4o"); got != 128000 {
 		t.Errorf("ContextLimitFor(gpt-4o) = %d, want 128000 (snapshot primary)", got)
@@ -57,6 +63,8 @@ func TestV1141_ContextLimitFor_SpecPrimary(t *testing.T) {
 }
 
 func TestV1141_LookupPrice_Sources(t *testing.T) {
+	resetModelsDevTestDB()
+	seedModelsDevTestDB(t)
 	// snapshot-primary: source labeled "models.dev".
 	p := LookupPrice("openai/gpt-4o-mini")
 	if p.Source != "models.dev" {
@@ -79,6 +87,8 @@ func TestV1141_LookupPrice_Sources(t *testing.T) {
 }
 
 func TestV1141_SpecSupportsTools(t *testing.T) {
+	resetModelsDevTestDB()
+	seedModelsDevTestDB(t)
 	if tc, ok := SpecSupportsTools("openai/gpt-4o"); !ok || !tc {
 		t.Errorf("gpt-4o tool_call = %v,%v; want true,true", tc, ok)
 	}

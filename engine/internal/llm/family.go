@@ -94,7 +94,7 @@ var (
         visionKws = []string{"vision", "-vl", "llava", "florence", "gemma", "kimi", "llama-4", "qwen3", "glm-5", "step"}
         audioKws  = []string{"aura-", "whisper", "-tts", "speech", "bark", "voxtral", "melotts"}
         embedKws  = []string{"bge-", "embed-", "gte-", "e5-"}
-        toolsKws  = []string{"tool", "function", "agent", "instruct", "chat", "turbo", "hermes", "big-pickle", "coder"}
+        toolsKws  = []string{"tool", "function", "agent", "instruct", "chat", "turbo", "hermes", "coder"}
         // v0.76.6: "deepseek" (not just deepseek-r) — the v4.x line emits
         // reasoning_content on EVERY call (observed live: the raw API returns
         // "reasoning_content" even for "Say OK"), so deepseek-v4.1-flash is a

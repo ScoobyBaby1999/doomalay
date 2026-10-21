@@ -140,7 +140,7 @@ type CatalogV2 struct {
 // free/fast hosts first, paid last).
 var hostPriority = []string{
         "nvidia", "opencode", "privatemodeai", "cloudflare", "groq",
-        "github", "openrouter", "together", "mistral", "opencode", "deepseek",
+        "github", "openrouter", "together", "mistral", "hf", "deepseek",
         "openai", "anthropic",
 }
 
@@ -165,14 +165,17 @@ type fetchedModel struct {
         Caps          []string
         SyncedLive    bool
         // Effort is the provider's OWN live effort surface when its model
-        // listing exposes one (v0.42 hook — see effort.go SOURCE 1). nil for
-        // every current fetcher; the resolution chain treats it as top
-        // precedence when present.
+        // listing exposes one (v0.42 hook — see effort.go SOURCE 1). v1.55.3:
+        // the models.dev merge fills it from reasoning_options for EVERY
+        // provider the registry covers (the live per-model ladder).
         Effort *LiveEffortInfo
 }
 
 // fetchProviderModelsV2 dispatches to the per-provider live fetcher.
 // Every fetcher uses the provider's OWN API — no static fallbacks.
+// v1.55.3: the fetched lists pass through enrichFromModelsDev (the live
+// registry merge) on the way into the catalog — availability stays the
+// provider's own truth, metadata comes alive.
 func fetchProviderModelsV2(name string, cfg ProviderConfig, apiKey, accountID string) []fetchedModel {
         // v0.91.7: the DOOMALAY_BASE_URL_<PROVIDER> power-feature override
         // holds for the FETCH path too (effectiveBaseURL) — a mirror serving
@@ -199,6 +202,8 @@ func fetchProviderModelsV2(name string, cfg ProviderConfig, apiKey, accountID st
                 return fetchOpenCodeModels(apiKey, override)
         case "privatemodeai":
                 return fetchPrivateModeModels(apiKey, override)
+        case "hf":
+                return fetchHfModels(apiKey, override)
         case "cloudflare":
                 return fetchCloudflareModels(apiKey, accountID)
         case "github":
@@ -209,6 +214,121 @@ func fetchProviderModelsV2(name string, cfg ProviderConfig, apiKey, accountID st
                 // data[]/models[] shapes; re-parse raw for enrichment.
                 return fetchOpenAICompatible(name, cfg, apiKey)
         }
+}
+
+// enrichFromModelsDev merges the LIVE registry's per-model metadata into a
+// fetched list (v1.55.3 THE LIVING CATALOG): availability stays the
+// provider's own truth — this only fills context, pricing (incl. the free
+// law: cost 0/0), capabilities, and the per-model effort ladder. Models
+// the registry marks deprecated are dropped (the keyless zen list carries
+// them; the registry's status field is the live curation, not ours).
+func enrichFromModelsDev(name string, models []fetchedModel) []fetchedModel {
+        if len(models) == 0 {
+                return models
+        }
+        db := modelsDevSnapshot()
+        if db == nil {
+                return models // honest absence — the list still renders
+        }
+        pid := modelsDevProviderID(name)
+        if pid == "" {
+                return models
+        }
+        out := make([]fetchedModel, 0, len(models))
+        for _, m := range models {
+                dm := LookupDevModel(name, m.RawID)
+                if dm != nil {
+                        if strings.EqualFold(dm.Status, "deprecated") || !dm.IsChatable() {
+                                continue // the live registry's own curation — never our static list
+                        }
+                        if m.ContextLength == 0 {
+                                m.ContextLength = dm.Limit.Context
+                        }
+                        if m.Pricing == "" {
+                                m.Pricing = devPricingString(dm)
+                        }
+                        if !m.IsFree && dm.IsFree() {
+                                m.IsFree = true
+                        } else if m.IsFree && !dm.IsFree() && dm.Cost.Input >= 0 {
+                                // the registry prices this model as PAID — its live word wins
+                                // over the fetcher's name-based guess (the -free suffix lie:
+                                // minimax-m3-free / qwen3.6-plus-free are paid on zen).
+                                m.IsFree = false
+                        }
+                        if dm.ToolCall {
+                                m.Caps = appendUnique(m.Caps, "tools")
+                        }
+                        if dm.Reasoning {
+                                m.Caps = appendUnique(m.Caps, "reasoning")
+                        }
+                        for _, mod := range dm.Modalities.Input {
+                                if mod == "image" {
+                                        m.Caps = appendUnique(m.Caps, "vision")
+                                } else if mod == "audio" {
+                                        m.Caps = appendUnique(m.Caps, "audio")
+                                }
+                        }
+                        if m.Effort == nil {
+                                if e := devLiveEffort(dm); e != nil {
+                                        m.Effort = e
+                                }
+                        }
+                }
+                out = append(out, m)
+        }
+        return out
+}
+
+// devLiveEffort turns the registry's reasoning_options into the live
+// effort surface (effort.go's SOURCE 1). v1.55.3 wires the "effort" ladder
+// (the exact per-model values the registry documents — none/low/medium/
+// high/xhigh/max; a "none" entry means the reasoning is disableable, so
+// the spec is not Mandatory). The toggle + budget_tokens controls are
+// v1.55.4's refinement (THE LIVE EFFORT phase). nil = no live ladder.
+func devLiveEffort(dm *DevModelLive) *LiveEffortInfo {
+        for _, opt := range dm.ReasoningOptions {
+                if opt.Type == "effort" && len(opt.Values) > 0 {
+                        return &LiveEffortInfo{Levels: append([]string(nil), opt.Values...)}
+                }
+        }
+        return nil
+}
+
+// fetchHfModels — GET https://router.huggingface.co/v1/models (the HF
+// router's OpenAI-compatible list; keyless works, the key widens
+// visibility). v1.55.3: hf joins the ENGINE catalog (it was brain-only) —
+// availability from the router, metadata from the live registry merge
+// (models.dev carries huggingface with 84 models).
+var hfModelsURL = "https://router.huggingface.co/v1/models"
+
+func fetchHfModels(apiKey, overrideBase string) []fetchedModel {
+        url := hfModelsURL
+        if overrideBase != "" {
+                url = strings.TrimSuffix(overrideBase, "/") + "/models"
+        }
+        body, err := httpGetJSON(url, apiKey)
+        if err != nil {
+                return nil
+        }
+        var resp struct {
+                Data []struct {
+                        ID string `json:"id"`
+                } `json:"data"`
+        }
+        if json.Unmarshal(body, &resp) != nil {
+                return nil
+        }
+        var out []fetchedModel
+        for _, m := range resp.Data {
+                if strings.TrimSpace(m.ID) == "" {
+                        continue
+                }
+                out = append(out, fetchedModel{
+                        RawID:      m.ID,
+                        SyncedLive: true,
+                })
+        }
+        return out
 }
 
 // fetchOpenRouterModels — the OpenRouter provider view, derived from the
@@ -429,15 +549,64 @@ func nvidiaSlugMatch(apiSlug string, freeSet, all map[string]bool) (isFree, foun
         return false, false
 }
 
-// fetchOpenCodeModels — GET https://opencode.ai/zen/v1/models (public).
-// Free: "big-pickle" (verified) or "-free" suffix, EXCEPT the known paid
-// exceptions (minimax-m3-free, qwen3.6-plus-free — paid on Zen despite the name).
+// fetchOpenCodeModels — THE LIVING CATALOG's zen list (v1.55.3 rework).
+//
+// The research (docs + live probes, v155-research): the documented,
+// working model-list endpoint is GET https://opencode.ai/inference/v1/models
+// (the zen /v1 alias answers the same gate; /zen/v1 keeps working — the
+// override contract keeps serving mirrors). Keyed → 46 ids (deprecated
+// filtered); on 401/network → the KEYLESS retry (the list is public — 200,
+// the deprecated ids ride and the live-registry merge drops them). Free /
+// paid is NEVER a name heuristic anymore (the big-pickle/-free-suffix
+// literals are dead): the models.dev merge prices every model from its
+// live cost fields. When a serve bridge is UP (pocket or desktop) its
+// own /api/model catalogue merges in first — the device-local truth with
+// limits/cost/variants straight from the genuine client.
 func fetchOpenCodeModels(apiKey, overrideBase string) []fetchedModel {
-        base := "https://opencode.ai/zen/v1"
+        base := "https://opencode.ai/inference/v1"
         if overrideBase != "" {
                 base = strings.TrimSuffix(overrideBase, "/")
         }
-        body, err := httpGetJSON(base+"/models", apiKey)
+        var ids []string
+        if apiKey != "" {
+                if got := listOpenCodeIDs(base+"/models", apiKey); len(got) > 0 {
+                        ids = got
+                }
+        }
+        if len(ids) == 0 {
+                // keyless belt: the list is documented public (the keyed list only
+                // widens with the user's own entitlements)
+                ids = listOpenCodeIDs(base+"/models", "")
+        }
+        if len(ids) == 0 {
+                return nil
+        }
+        // the serve-bridge catalogue (the device-local truth when a bridge is
+        // up — limits/cost/variants from the genuine client itself)
+        serveModels := openCodeServeCatalogModels()
+        served := map[string]bool{}
+        for _, sm := range serveModels {
+                served[sm.RawID] = true
+        }
+        var out []fetchedModel
+        seen := map[string]bool{}
+        for _, id := range ids {
+                if id == "" || seen[id] {
+                        continue
+                }
+                seen[id] = true
+                if sm := served[id]; sm {
+                        continue // merged from the serve half below (union, one entry per id)
+                }
+                out = append(out, fetchedModel{RawID: id, SyncedLive: true})
+        }
+        out = append(out, serveModels...)
+        return out
+}
+
+// listOpenCodeIDs fetches one zen list page and answers the ids.
+func listOpenCodeIDs(url, apiKey string) []string {
+        body, err := httpGetJSON(url, apiKey)
         if err != nil {
                 return nil
         }
@@ -449,21 +618,73 @@ func fetchOpenCodeModels(apiKey, overrideBase string) []fetchedModel {
         if json.Unmarshal(body, &resp) != nil {
                 return nil
         }
-        paidExceptions := map[string]bool{
-                "minimax-m3-free": true, "qwen3.6-plus-free": true,
+        var ids []string
+        for _, m := range resp.Data {
+                if strings.TrimSpace(m.ID) != "" {
+                        ids = append(ids, m.ID)
+                }
+        }
+        return ids
+}
+
+// FetchedModelInfo is the EXPORTED serve-catalogue shape (the server→llm
+// hook — the bridge cannot construct the package-private fetchedModel):
+// one live model from a healthy serve bridge with the client's own
+// limits/cost/variant-ladder data.
+type FetchedModelInfo struct {
+        ID           string
+        ContextLimit int64
+        InputCost    float64
+        OutputCost   float64
+        Caps         []string
+        EffortLevels []string // the serve variants' reasoningEffort ladder
+}
+
+// openCodeServeCatalogModels answers the healthy serve bridge's own
+// catalogue as fetched models (the hook the server arms at startup; nil
+// when no bridge is up — the hosted list stands alone).
+func openCodeServeCatalogModels() []fetchedModel {
+        if openCodeServeCatalog == nil {
+                return nil
+        }
+        infos := openCodeServeCatalog()
+        if len(infos) == 0 {
+                return nil
         }
         var out []fetchedModel
-        for _, m := range resp.Data {
-                free := m.ID == "big-pickle" ||
-                        (strings.HasSuffix(m.ID, "-free") && !paidExceptions[m.ID])
-                out = append(out, fetchedModel{
-                        RawID:      m.ID,
-                        IsFree:     free,
-                        SyncedLive: true,
-                })
+        for _, fi := range infos {
+                if strings.TrimSpace(fi.ID) == "" {
+                        continue
+                }
+                m := fetchedModel{RawID: fi.ID, ContextLength: fi.ContextLimit, SyncedLive: true}
+                m.IsFree = fi.InputCost == 0 && fi.OutputCost == 0
+                if m.IsFree {
+                        m.Pricing = "$0 / $0 (free)"
+                } else {
+                        m.Pricing = fmt.Sprintf("$%.2f / $%.2f per M", fi.InputCost, fi.OutputCost)
+                }
+                m.Caps = fi.Caps
+                if len(fi.EffortLevels) > 0 {
+                        m.Effort = &LiveEffortInfo{Levels: append([]string(nil), fi.EffortLevels...)}
+                }
+                out = append(out, m)
         }
         return out
 }
+
+// SetOpenCodeServeCatalog arms the serve-catalogue hook (the server's
+// startup call — the engine wires the ocserve Manager's live catalogue
+// into the catalog build without an import cycle).
+func SetOpenCodeServeCatalog(fn func() []FetchedModelInfo) {
+        openCodeServeMu.Lock()
+        openCodeServeCatalog = fn
+        openCodeServeMu.Unlock()
+}
+
+var (
+        openCodeServeMu      sync.Mutex
+        openCodeServeCatalog func() []FetchedModelInfo
+)
 
 // privateModeModelsURL is a package var so unit tests can serve the PM
 // model list from an httptest server (no network in tests).
@@ -728,6 +949,19 @@ type sfWaiter struct {
 
 const catalogV2TTL = 10 * time.Minute
 
+// THE NEGATIVE-CACHE LAW (v1.55.3): a build whose provider groups FAILED
+// (errored with 0 models — the poisoned-empty state the user's device sat
+// in for 10 minutes per failure) is NEVER cached as fresh. The entry still
+// serves (the healthy groups render), but `fresh` answers false so the
+// next /api/models call retriggers the background refresh — with a 60s
+// backoff so a persistent outage can't burn the radio on a build per poll.
+const catalogV2ErrBackoff = 60 * time.Second
+
+var (
+        catalogV2Degraded bool      // the last build had provider errors — never fresh
+        catalogV2LastErr  time.Time // the last degraded build's end (the backoff clock)
+)
+
 // BuildCatalogV2 assembles the full catalog: live provider syncs + family
 // registry + logical grouping.
 //
@@ -754,7 +988,10 @@ func BuildCatalogV2(keys map[string]string, force bool) *CatalogV2 {
         // kept serving the previous availability (hasApiKey) for up to the
         // 10-minute TTL. Now a key change degrades the entry to "stale": served
         // instantly (never block), with a background re-sync on the new keys.
-        fresh := catalogV2Ent != nil && time.Since(catalogV2At) < catalogV2TTL && catalogV2Keys == kh
+        // v1.55.3 THE NEGATIVE-CACHE LAW: a DEGRADED build (provider errors)
+        // is never fresh — the failed groups retry on the next call.
+        fresh := !catalogV2Degraded && catalogV2Ent != nil &&
+                time.Since(catalogV2At) < catalogV2TTL && catalogV2Keys == kh
         catalogV2Mu.Unlock()
         if !force && fresh {
                 return ent
@@ -800,6 +1037,10 @@ func BuildCatalogV2(keys map[string]string, force bool) *CatalogV2 {
 // the cold path's static response, the next /api/models call, and any
 // number of clients all share a single flight). The result fills the
 // cache so subsequent reads get the complete catalog instantly.
+// v1.55.3: THE BACKOFF — a degraded build (provider errors) starts no new
+// refresh for catalogV2ErrBackoff (a persistent outage must not burn the
+// radio with a build per poll; the user's explicit retry + key saves +
+// refresh=1 bypass it).
 func startCatalogRefresh(keys map[string]string) {
         kh := keysHash(keys)
         sfMu.Lock()
@@ -810,6 +1051,14 @@ func startCatalogRefresh(keys map[string]string) {
                 sfMu.Unlock()
                 return
         }
+        sfMu.Unlock()
+        catalogV2Mu.Lock()
+        if catalogV2Degraded && time.Since(catalogV2LastErr) < catalogV2ErrBackoff {
+                catalogV2Mu.Unlock()
+                return // the backoff window — serve what we have, retry soon
+        }
+        catalogV2Mu.Unlock()
+        sfMu.Lock()
         w := &sfWaiter{done: make(chan struct{})}
         sfPend[kh] = w
         sfMu.Unlock()
@@ -887,6 +1136,13 @@ func buildCatalogV2Locked(keys map[string]string) *CatalogV2 {
                 catalog = map[string]ProviderConfig{}
         }
 
+        // v1.55.3 THE LIVING CATALOG: the models.dev registry loads FIRST
+        // (single-flight, disk-cached cold boots, ETag-revalidated) — the
+        // build waits up to 8s for the first fetch, and a miss is honest:
+        // the provider lists render metadata-poor and the negative-cache law
+        // retries the build behind it.
+        ensureModelsDev(8 * time.Second)
+
         // Sync every provider in parallel (public listings sync even without
         // keys so the model browser can show unavailable routes dimmed).
         type syncOut struct {
@@ -906,6 +1162,7 @@ func buildCatalogV2Locked(keys map[string]string) *CatalogV2 {
                                 accountID = keys[cfg.ExtraEnvVar]
                         }
                         models := fetchProviderModelsV2(name, cfg, apiKey, accountID)
+                        models = enrichFromModelsDev(name, models)
                         var syncErr error
                         if models == nil {
                                 syncErr = fmt.Errorf("no models returned")
@@ -1212,6 +1469,13 @@ collect:
         catalogV2Ent = resp
         catalogV2At = time.Now()
         catalogV2Keys = keysHash(keys)
+        // THE NEGATIVE-CACHE LAW: a build with failed provider groups is
+        // DEGRADED — never fresh, retried on the next call (within the
+        // backoff), so a poisoned-empty group can never sit for the TTL.
+        catalogV2Degraded = len(syncErrs) > 0
+        if catalogV2Degraded {
+                catalogV2LastErr = time.Now()
+        }
         catalogV2Mu.Unlock()
         return resp
 }

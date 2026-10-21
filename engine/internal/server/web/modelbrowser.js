@@ -520,6 +520,21 @@
     // v0.98.1: the key lives at MODULE level now (the catalog-changed
     // listener busts it from outside open()).
     function cacheSave() {
+      // v1.55.3 THE POISONED-CACHE LAW: a catalog with ERRORED-EMPTY
+      // provider groups is NEVER persisted — the user's device sat on
+      // "no models for opencode zen" across restarts because a failed
+      // sync landed in localStorage and every later open hydrated it
+      // instantly (the stale-while-revalidate "later" never came). Only
+      // clean catalogs cache; degraded ones re-fetch honestly.
+      if (catalog && catalog.syncStatus && catalog.syncStatus.some) {
+        var poisoned = catalog.syncStatus.some(function (st) {
+          return st && st.error && (!st.modelCount || st.modelCount === 0);
+        });
+        if (poisoned) {
+          try { localStorage.removeItem(CAT_CACHE_KEY); } catch (e) {}
+          return;
+        }
+      }
       try {
         localStorage.setItem(CAT_CACHE_KEY, JSON.stringify({ at: Date.now(), catalog: catalog }));
       } catch (e) { /* quota exceeded — the cache is best-effort */ }
@@ -530,6 +545,17 @@
         if (!raw) return false;
         var d = JSON.parse(raw);
         if (!d || !d.catalog || typeof d.catalog !== 'object') return false;
+        // v1.55.3: a poisoned entry never hydrates (a degraded catalog in
+        // the store is a failed sync, not a truth — fetch fresh instead)
+        if (d.catalog.syncStatus && d.catalog.syncStatus.some) {
+          var poisoned = d.catalog.syncStatus.some(function (st) {
+            return st && st.error && (!st.modelCount || st.modelCount === 0);
+          });
+          if (poisoned) {
+            try { localStorage.removeItem(CAT_CACHE_KEY); } catch (e) {}
+            return false;
+          }
+        }
         catalog = d.catalog;
         quickCat = catalog;
         quickCatAt = Date.now();
