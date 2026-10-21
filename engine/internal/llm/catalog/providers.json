@@ -5,7 +5,7 @@
   "litellm_prefix": "opencode",
   "label": "OpenCode Zen",
   "description": "Curated AI models tested by the OpenCode team. Free tier: 100 requests/day; free models cost $0, paid models are per-token.",
-  "signup_url": "https://opencode.ai/auth",
+  "signup_url": "https://opencode.ai/console/settings/service-accounts",
   "free_tier": true,
   "color": "#00D9A0",
   "validate": "chat_probe",

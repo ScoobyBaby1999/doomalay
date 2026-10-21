@@ -34,7 +34,7 @@
 
   // The free/paid split. Curated 2026-09 from live testing (descriptions,
   // base URLs and key-page deep links are in engine's providers.json).
-  var FREE_ORDER = ['opencode', 'privatemodeai', 'nvidia', 'openrouter', 'cloudflare', 'groq', 'together', 'mistral'];
+  var FREE_ORDER = ['privatemodeai', 'nvidia', 'opencode', 'openrouter', 'cloudflare', 'groq', 'together', 'mistral'];
   var PAID_ORDER = ['anthropic', 'openai', 'deepseek'];
 
   // v0.56 (user spec item 7): the free/paid split follows the THEME
@@ -48,6 +48,96 @@
   // module scope and names the phone's own path from it; null = not
   // fetched yet = the honest neutral copy).
   var ocBridgeLatest = null;
+
+  // ── v1.55.2 THE ROW OF PILLS ─────────────────────────────────────
+  // The user's law (verbatim): "add functionality to the entire cloud
+  // provider screen to have pills that spawn from left to right next to
+  // the get API key we can add next to any provider." providerPills is
+  // the GENERIC mechanism — any provider can grow pills; OpenCode is the
+  // first consumer (its install/termux/setup states). Tone classes ride
+  // the theme tokens ONLY (no hardcoded colors — the theme law), and the
+  // installing pill breathes (prefers-reduced-motion freezes it).
+  var PILL_BASE = 'display:inline-flex;align-items:center;gap:4px;font-size: calc(var(--ui-small-fs) - 2px);font-weight:600;padding:4px 10px;border-radius:999px;white-space:nowrap;cursor:default;flex-shrink:0';
+  var PILL_ACTION = PILL_BASE + ';color:var(--accent);background:rgba(var(--accent-rgb),0.12);border:1px solid rgba(var(--accent-rgb),0.4);cursor:pointer;touch-action:manipulation;font-family:inherit';
+  var PILL_LIVE = PILL_BASE + ';color:var(--accent-2);background:rgba(var(--accent-2-rgb),0.14);border:1px solid rgba(var(--accent-2-rgb),0.4)';
+  var PILL_ERR = PILL_BASE + ';color:var(--err);background:rgba(var(--err-rgb),0.10);border:1px solid rgba(var(--err-rgb),0.35);cursor:pointer;touch-action:manipulation;font-family:inherit';
+  var PILL_DIM = PILL_BASE + ';color:var(--text-3);background:var(--surface-2);border:1px solid var(--surface-2)';
+  (function injectPillStyles() {
+    if (document.getElementById('oc-pill-styles')) return;
+    var st = document.createElement('style');
+    st.id = 'oc-pill-styles';
+    st.textContent =
+      '@keyframes oc-pill-pulse{0%,100%{box-shadow:0 0 0 0 rgba(var(--accent-2-rgb),0.35)}50%{box-shadow:0 0 0 5px rgba(var(--accent-2-rgb),0)}}' +
+      '.oc-pill-live{animation:oc-pill-pulse 1.6s ease-in-out infinite}' +
+      '@media (prefers-reduced-motion: reduce){.oc-pill-live{animation:none}}';
+    document.head.appendChild(st);
+  })();
+
+  // providerPills(name) answers the ordered pill descriptors for a
+  // provider row (left → right). Extend this table to attach pills to any
+  // provider — the renderer is generic.
+  function providerPills(name) {
+    if (name !== 'opencode' || !ocBridgeLatest) return [];
+    var b = ocBridgeLatest;
+    var st = String(b.state || '');
+    var pills = [];
+    // THE OPENCODE PILL — the install lifecycle the bridge ladder drives:
+    //   ready   → "+ install opencode" (action)
+    //   installing → "installing opencode.. N%" (live tone + pulse; the
+    //             poll's real bytes/percent — never static)
+    //   install_failed → "failed, retry" (err tone; the retry resumes
+    //             from the byte checkpoint — no progress is ever lost)
+    //   up | desktop → dim "✓ opencode setup" (installed — the user's
+    //             law: pills "go away or say opencode setup … in a dim
+    //             theme color")
+    //   termux_missing | not_bootstrapped → "+ install opencode" too (the
+    //             engine answers the gate honestly; the termux pill beside
+    //             it owns the gate step)
+    //   walled | unconfigured → none (paste the key first / no bridge)
+    if (st === 'ready' || st === 'termux_missing' || st === 'not_bootstrapped') {
+      pills.push({ key: 'oc-install', tone: 'action', text: '+ install opencode' });
+    } else if (st === 'installing') {
+      var pct = (typeof b.progress_percent === 'number' && b.progress_percent > 0)
+        ? ' ' + Math.round(b.progress_percent) + '%' : '..';
+      var stageTxt = b.stage && b.stage !== 'download' && b.stage !== 'boot' ? ' (' + b.stage + ')' : '';
+      pills.push({ key: 'oc-install', tone: 'live', text: 'installing opencode' + pct + stageTxt, live: true });
+    } else if (st === 'install_failed') {
+      pills.push({ key: 'oc-install', tone: 'err', text: 'failed, retry' });
+    } else if (st === 'up' || st === 'desktop') {
+      pills.push({ key: 'oc-setup', tone: 'dim', text: '✓ opencode setup' });
+    }
+    // THE TERMUX PILL — the two-gate hand-off (the existing TermuxSetup
+    // overlay owns the one-liner + F-Droid + live ladder):
+    //   gates closed → "+ setup termux" (action → window.TermuxSetup.open())
+    //   installed   → dim "✓ termux setup"
+    if (st !== 'desktop' && st !== 'unconfigured') {
+      if (b.termux_installed && b.termux_ready) {
+        pills.push({ key: 'oc-termux', tone: 'dim', text: '✓ termux setup' });
+      } else if (st === 'termux_missing' || st === 'not_bootstrapped' || st === 'ready' || st === 'installing' || st === 'install_failed') {
+        pills.push({ key: 'oc-termux', tone: 'action', text: '+ setup termux' });
+      }
+    }
+    return pills;
+  }
+
+  // pillRowHTML renders the ordered pills (left → right) — buttons for
+  // actions, spans for states; every byte rides the theme tokens.
+  function pillRowHTML(name) {
+    var pills = providerPills(name);
+    if (!pills.length) return '';
+    var out = '';
+    for (var i = 0; i < pills.length; i++) {
+      var p = pills[i];
+      var style = p.tone === 'action' ? PILL_ACTION
+        : p.tone === 'live' ? PILL_LIVE
+        : p.tone === 'err' ? PILL_ERR : PILL_DIM;
+      var cls = p.live ? ' class="oc-pill-live"' : '';
+      var attrs = 'data-oc-pill="' + p.key + '"';
+      var tag = (p.tone === 'action' || p.tone === 'err') ? 'button' : 'span';
+      out += '<' + tag + ' ' + attrs + cls + ' style="' + style + '">' + escHTMLInline(p.text) + '</' + tag + '>';
+    }
+    return out;
+  }
 
   function open(onPick, opts) {
     opts = opts || {};
@@ -135,7 +225,13 @@
         .then(function (d) {
           if (d && d.state) {
             ocBridge = Object.assign({}, ocBridge || {}, d);
+            ocBridgeLatest = Object.assign({}, ocBridgeLatest || {}, d);
             render();
+            // v1.55.2: a closed gate answers honestly on the toast (the
+            // pill row carries the actions; the reason rides the toast).
+            if (d.ok === false && d.detail && window.toast) {
+              window.toast(d.detail);
+            }
             if (d.state === 'installing') ocBridgeStartPoll();
           }
         }).catch(function () {});
@@ -400,39 +496,19 @@
             '</div>';
         }
       }
-      // v1.49.2 THE OPEN HANDSHAKE: the opencode card's pocket-bridge
-      // block — the honest state ladder renders inline (theme tokens
-      // only; the two-surface law: it lives in THIS card, no new
-      // surfaces). The Termux gate steps hand off to the existing
-      // window.TermuxSetup flow (the full-screen ladder overlay owns the
-      // one-liner + copy + F-Droid + live progress — never duplicated
-      // here).
-      var bridgeHTML = '';
-      if (name === 'opencode' && ocBridge) {
-        var bs = String(ocBridge.state || '');
-        var bBox = function (inner) {
-          return '<div style="margin-top:8px;font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-2);line-height:1.5;background:rgba(var(--accent-rgb),0.06);border:1px solid rgba(var(--accent-rgb),0.22);border-radius:8px;padding:8px 10px;overflow-wrap:anywhere">' + inner + '</div>';
-        };
-        var bBtn = 'font-size: calc(var(--ui-small-fs) - 1px);color:var(--accent);background:rgba(var(--accent-rgb),0.12);border:1px solid rgba(var(--accent-rgb),0.4);padding:6px 10px;border-radius:8px;cursor:pointer;font-family:inherit;font-weight:600;margin-top:6px';
-        if (bs === 'desktop') {
-          bridgeHTML = bBox('✓ <b>Desktop</b> — the free models run automatically through the built-in OpenCode bridge when you pick one.');
-        } else if (bs === 'up') {
-          bridgeHTML = bBox('<span style="color:var(--accent-2);font-weight:600">✓ Pocket bridge live</span> — the free OpenCode models work through Termux' + (ocBridge.port ? ' (port ' + ocBridge.port + ')' : '') + '.');
-        } else if (bs === 'installing') {
-          bridgeHTML = bBox('⟳ <b>Installing the native OpenCode client</b> (one-time ' + (ocBridge.size_hint || '~72.5MB') + ' download through Termux)… this box updates itself live.');
-          ocBridgeStartPoll();
-        } else if (bs === 'install_failed') {
-          bridgeHTML = bBox('✕ Install failed — ' + escHTMLInline(ocBridge.last_error || 'see the engine log') + '<br><button data-oc-install="1" style="' + bBtn + '">retry install</button>');
-        } else if (bs === 'ready') {
-          bridgeHTML = bBox('<b>Free models on this phone</b> — one tap installs the native OpenCode client through Termux (one-time ' + (ocBridge.size_hint || '~72.5MB') + ') and starts it.<br><button data-oc-install="1" style="' + bBtn + '">Install OpenCode</button>');
-        } else if (bs === 'termux_missing' || bs === 'not_bootstrapped') {
-          bridgeHTML = bBox('<b>Free models need Termux</b> (one-time setup): ' + (bs === 'termux_missing' ? 'install Termux from F-Droid, ' : '') + 'paste the one setup line in it, come back and tap Install.<br><button data-oc-termux="1" style="' + bBtn + '">open the Termux setup</button>');
-        } else if (bs === 'walled') {
-          bridgeHTML = bBox('◦ Paste your OpenCode key above first — the free models need it.');
-        } else if (bs === 'unconfigured') {
-          bridgeHTML = bBox('◦ ' + escHTMLInline(ocBridge.detail || 'The Termux bridge is not configured on this engine.'));
-        }
+      // v1.55.2 THE ROW OF PILLS: the opencode card's bridge STATE BOX IS
+      // GONE — the user's law: "have a regular get API key without that
+      // addition box tooltip thing we added. Let's have it look the same
+      // as the other provider rows." The row renders byte-identical to
+      // every other provider; the install/termux lifecycle rides the PILLS
+      // next to the Get API key link instead (providerPills — generic for
+      // any provider). The installing pill keeps the live poll armed.
+      if (name === 'opencode' && ocBridge && String(ocBridge.state || '') === 'installing') {
+        ocBridgeStartPoll();
       }
+      var ocPillErrLine = (name === 'opencode' && ocBridge && String(ocBridge.state || '') === 'install_failed' && ocBridge.last_error)
+        ? '<div style="font-size: calc(var(--ui-small-fs) - 2px);color:var(--text-3);margin-top:4px;line-height:1.4;overflow-wrap:anywhere">' + escHTMLInline(ocBridge.last_error) + '</div>' : '';
+      var thisRowPills = pillRowHTML(name);
 
       // Cloudflare also needs an Account ID (stored as its own vault entry).
       var needAccount = !!cfg.extra_env_var;
@@ -470,7 +546,8 @@
         '</div>' +
         valReasonBlock +
         pinHTML +
-        bridgeHTML +
+        // v1.55.2: the bridge state box is gone — the lifecycle rides pills.
+        ocPillErrLine +
         // Key input (disabled once a key is saved — paste new to replace).
         // v0.56: inputs paint SURFACE RAISED (the old --bg-app fill made
         // them the same color as the overlay panel behind — the 2-level
@@ -490,7 +567,18 @@
         // viewer / a desktop popup) — the user never leaves the app to
         // grab a key. webview-hostile providers (Google-only OAuth) hand
         // off to a Chrome Custom Tab on the APK instead.
-        '<a href="' + cfg.signup_url + '" data-getkey="' + name + '" target="_blank" rel="noreferrer" style="font-size: var(--ui-small-fs);font-weight:600;color:var(--text-1);margin-top:8px;display:inline-flex;align-items:center;gap:4px;text-decoration:none;cursor:pointer;touch-action:manipulation">Get API key <span style="font-size: calc(var(--ui-fs) - 1px)">↗</span></a>' +
+        // v1.55.2 THE ROW OF PILLS: pills spawn LEFT → RIGHT next to the
+        // Get API key link (the generic providerPills mechanism — any
+        // provider can grow them; OpenCode's install/termux lifecycle is
+        // the first). No pills → the row is byte-identical to every other
+        // provider row (the user's law: "look the same as the other
+        // provider rows").
+        (thisRowPills
+          ? '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:8px">' +
+            '<a href="' + cfg.signup_url + '" data-getkey="' + name + '" target="_blank" rel="noreferrer" style="font-size: var(--ui-small-fs);font-weight:600;color:var(--text-1);display:inline-flex;align-items:center;gap:4px;text-decoration:none;cursor:pointer;touch-action:manipulation">Get API key <span style="font-size: calc(var(--ui-fs) - 1px)">↗</span></a>' +
+            thisRowPills +
+            '</div>'
+          : '<a href="' + cfg.signup_url + '" data-getkey="' + name + '" target="_blank" rel="noreferrer" style="font-size: var(--ui-small-fs);font-weight:600;color:var(--text-1);margin-top:8px;display:inline-flex;align-items:center;gap:4px;text-decoration:none;cursor:pointer;touch-action:manipulation">Get API key <span style="font-size: calc(var(--ui-fs) - 1px)">↗</span></a>') +
         '<div id="getkey-hint-' + name + '" style="display:none;margin-top:8px;font-size: calc(var(--ui-small-fs) - 1px);color:var(--accent);background:rgba(var(--accent-rgb),0.08);border:1px solid rgba(var(--accent-rgb),0.22);border-radius:8px;padding:8px 10px;line-height:1.5">↗ Opened <b>' + escHTMLInline(hostOf(cfg.signup_url)) + '</b> in the in-app browser. Copy your API key there, tap ✕ to come straight back, and paste it above.</div>' +
         '</div>';
     }
@@ -547,17 +635,19 @@
         });
       });
 
-      // v1.49.2 THE OPEN HANDSHAKE: the pocket bridge's two buttons —
-      // the one-tap engine-led install + the hand-off to the existing
-      // Termux setup flow (never duplicated here).
-      contentEl.querySelectorAll('[data-oc-install]').forEach(function (btn) {
+      // v1.55.2 THE ROW OF PILLS: the pill buttons — the install pill
+      // (action AND the failed/retry err tone both re-POST the install;
+      // THE CHECKPOINT LAW means the retry resumes from the partial zip's
+      // byte offset — no progress is ever lost) + the termux hand-off
+      // (the existing TermuxSetup overlay — never duplicated here).
+      contentEl.querySelectorAll('[data-oc-pill="oc-install"]').forEach(function (btn) {
         btn.addEventListener('click', function () {
           btn.disabled = true;
           btn.textContent = 'installing…';
           ocBridgeInstall();
         });
       });
-      contentEl.querySelectorAll('[data-oc-termux]').forEach(function (btn) {
+      contentEl.querySelectorAll('[data-oc-pill="oc-termux"]').forEach(function (btn) {
         btn.addEventListener('click', function () {
           if (window.TermuxSetup && window.TermuxSetup.open) {
             try { window.TermuxSetup.open(); } catch (e) { /* best-effort */ }
@@ -839,7 +929,7 @@
     // the copy names whichever path THIS device has.
     if (/freetier|free tier can only be used/i.test(r)) {
       var ocPathHint = (ocBridgeLatest && ocBridgeLatest.state !== 'desktop')
-        ? 'On this phone the free models run through the <b>pocket bridge</b> — the <b>Install OpenCode</b> button in the card below drives Termux for you; '
+        ? 'On this phone the free models run through the <b>pocket bridge</b> — the <b>+ install opencode</b> pill next to Get API key drives Termux for you; '
         : 'On the <b>desktop engine</b> the free models run through the built-in <b>OpenCode bridge</b>; ';
       return '<span style="display:block;font-size: calc(var(--ui-small-fs) - 1px);color:var(--text-2);line-height:1.45;white-space:normal;overflow-wrap:anywhere;margin-top:3px;padding:6px 8px;background:rgba(var(--notice-rgb,var(--warn-rgb)),0.10);border:1px solid rgba(var(--notice-rgb,var(--warn-rgb)),0.3);border-radius:8px">' +
         '✓ Your key works — OpenCode reserves its <b>free models for its own client</b>. ' +
@@ -919,7 +1009,7 @@
           }
         }
         if (!connected.length) return { connected: 0, provider: null };
-        var PRIORITY = ['nvidia', 'privatemodeai', 'opencode'];
+        var PRIORITY = ['privatemodeai', 'nvidia', 'opencode'];
         var choice = null;
         for (var i = 0; i < PRIORITY.length; i++) {
           if (connected.indexOf(PRIORITY[i]) >= 0) { choice = PRIORITY[i]; break; }
