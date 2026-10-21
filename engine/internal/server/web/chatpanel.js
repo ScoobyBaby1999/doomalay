@@ -766,10 +766,21 @@
   // v1.50.5: the CUT tail — the last reply ended mid-flight (the provider's
   // finish_reason was 'length' / output_cut; stamped on the last assistant
   // message by the terminal-status handler). Continue is the way forward.
+  // v1.52.3 THE HEALED SEAM: the INTERRUPTED tail joins it — a turn killed
+  // by an engine restart (the boot-heal's terminal error status, no error
+  // bubble on replay) stamps the last assistant message too, so the
+  // composer arms CONTINUE on the healed seam (live AND replayed).
   function lastTurnCut(state) {
     if (!state || !state.messages || !state.messages.length) return false;
-    var last = state.messages[state.messages.length - 1];
-    return last.role === 'assistant' && !!last._cut;
+    // v1.52.3: tool pills never own the tail verdict — the healed seam's
+    // last message is the synthesized tool_result pill; the verdict lives
+    // on the last ASSISTANT row behind it.
+    for (var i = state.messages.length - 1; i >= 0; i--) {
+      var m = state.messages[i];
+      if (m.role === 'tool') continue;
+      return m.role === 'assistant' && (!!m._cut || !!m._interrupted);
+    }
+    return false;
   }
 
   // The AUTO mode ladder (user spec #4):
@@ -2623,6 +2634,15 @@
   // displaying thinking... We can suggest a switch of models aswell."
   function friendlyError(raw) {
     var t = String(raw || '');
+    // v1.52.1 THE DNS RUNG: the trippy log's 5× death — "netx: no address
+    // for …(system resolver and DNS-over-HTTPS both failed)" / "no such
+    // host" — used to render as a raw Go transport string. DNS death is a
+    // walking outage: the engine's pause ladder now retries it (the v1.52.1
+    // isTransientNetErr rung), and when a terminal still lands, the answer
+    // is Continue — never retry (the v1.50.5 law).
+    if (/no such host|no address for|dns|server misbehaving|SERVFAIL|lookup [a-z0-9.-]+(:\d+)? on/i.test(t)) {
+      return 'Network trouble — the device couldn\u2019t resolve the provider\u2019s address (DNS). The engine auto-retries while the network heals; when it\u2019s back, tap Continue to resume exactly where the reply stopped.';
+    }
     if (/\b429\b|rate.?limit|too many requests/i.test(t)) {
       return 'the model is at capacity (429) — wait ~15s and try again, or switch models (each model has its own limit)';
     }
@@ -4774,6 +4794,19 @@
           for (var ci = state.messages.length - 1; ci >= 0; ci--) {
             if (state.messages[ci].role === 'assistant') {
               state.messages[ci]._cut = true;
+              break;
+            }
+          }
+        }
+        // v1.52.3 THE HEALED SEAM: a terminal ERROR status (the restart-
+        // heal's "interrupted by engine restart", or any error end whose
+        // bubble isn't the tail) stamps the last assistant message — the
+        // composer's continue arms on the interrupted tail (live AND
+        // replayed: a re-opened healed chat still offers the resume).
+        if (ev.state === 'error') {
+          for (var hi = state.messages.length - 1; hi >= 0; hi--) {
+            if (state.messages[hi].role === 'assistant') {
+              state.messages[hi]._interrupted = true;
               break;
             }
           }

@@ -14,6 +14,7 @@ import (
         "net/url"
         "path/filepath"
         "runtime"
+        "strconv"
         "strings"
         "sync"
         "time"
@@ -247,7 +248,18 @@ func (s *Server) healInterruptedTurns() {
                         continue
                 }
                 if pending {
-                        if _, err := s.db.AppendEvent(sess.ID, "status", `{"state":"error","healed":true,"message":"interrupted by engine restart"}`, ""); err == nil {
+                        // v1.52.3 THE HEALED SEAM: a restart mid-tool-call
+                        // leaves a DANGLING tool_use — the history fold
+                        // DROPS it (its pending list never flushes), so the
+                        // model's context loses even the knowledge that it
+                        // made the call, and provider wires that demand an
+                        // answer for every tool_call get an invalid shape
+                        // the moment a continue resumes the turn. Answer the
+                        // call honestly BEFORE the terminal: it never ran.
+                        if n := s.synthesizeDanglingToolResults(sess.ID); n > 0 {
+                                log.Printf("boot heal: session %s — answered %d dangling tool call(s) with the never-ran truth", sess.ID, n)
+                        }
+                        if _, err := s.db.AppendEvent(sess.ID, "status", `{"state":"error","healed":true,"message":"interrupted by engine restart","hint":"continue"}`, ""); err == nil {
                                 healed++
                         }
                 }
@@ -255,6 +267,80 @@ func (s *Server) healInterruptedTurns() {
         if healed > 0 {
                 log.Printf("boot heal: closed %d interrupted turn(s) with a terminal status", healed)
         }
+}
+
+// synthesizeDanglingToolResults — v1.52.3 THE HEALED SEAM: walks the tail
+// of the last (interrupted) turn, pairs tool_use rows with their
+// tool_result rows exactly like the history fold does (name-matched, in
+// order, oldest-first), and appends one honest synthesized result for
+// every use that never got one:
+//
+//      OBSERVATION:\ninterrupted by engine restart — this call never ran;
+//      re-issue it if still needed.
+//
+// Why: foldSlots' pending list silently DROPS an unanswered tool_use, so
+// the resumed turn's history loses the call entirely (the model re-issues
+// blind or forgets the thread), and providers that validate the
+// tool_use→tool_result chain reject the shape. The synthesized pair keeps
+// the seam truthful on both sides.
+func (s *Server) synthesizeDanglingToolResults(sessionID string) int {
+        events, err := s.db.ListEventsTail(sessionID, 20001)
+        if err != nil || len(events) == 0 {
+                return 0
+        }
+        // the interrupted turn's boundary: the LAST user row
+        start := -1
+        for i := len(events) - 1; i >= 0; i-- {
+                if events[i].EventType == "user" {
+                        start = i
+                        break
+                }
+        }
+        if start < 0 {
+                return 0 // the window can't see the turn's start — nothing to pair safely
+        }
+        var pending []string
+        for _, ev := range events[start+1:] {
+                switch ev.EventType {
+                case "tool_use":
+                        var p struct {
+                                Name string `json:"name"`
+                        }
+                        if json.Unmarshal([]byte(ev.Content), &p) == nil && p.Name != "" {
+                                pending = append(pending, p.Name)
+                        }
+                case "tool_result":
+                        var p struct {
+                                Name string `json:"name"`
+                        }
+                        if json.Unmarshal([]byte(ev.Content), &p) != nil {
+                                continue
+                        }
+                        idx := -1
+                        for i, u := range pending {
+                                if u == p.Name {
+                                        idx = i
+                                        break
+                                }
+                        }
+                        if idx < 0 && p.Name == "" && len(pending) > 0 {
+                                idx = 0
+                        }
+                        if idx < 0 {
+                                continue // an orphan result — no use to pair
+                        }
+                        pending = append(pending[:idx], pending[idx+1:]...)
+                }
+        }
+        done := 0
+        for _, name := range pending {
+                content := `{"name":` + strconv.Quote(name) + `,"text":"OBSERVATION:\ninterrupted by engine restart — this call never ran; re-issue it if still needed."}`
+                if _, err := s.db.AppendEvent(sessionID, "tool_result", content, ""); err != nil {
+                        return done // partial heal — the log stays honest; the rest wait for the next boot
+                }
+                done++
+        }
+        return done
 }
 
 // routes registers every API endpoint + the embedded PWA.

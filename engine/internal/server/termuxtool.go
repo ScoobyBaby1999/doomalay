@@ -55,13 +55,14 @@ import (
         "strings"
         "time"
 
+        "github.com/ScoobyBaby1999/doomalay/engine/internal/surgeon"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/termuxbridge"
 )
 
 // ── the verb registry + the honesty constants ────────────────────────────
 
 // termuxVerbs is the canonical verb list (help + unknown-action teach).
-const termuxVerbs = "help, exec, cmds, ls, read, write, append, rm, mkdir, grep, find, pkg, git_setup, session_start, session_list, session_log, session_kill"
+const termuxVerbs = "help, exec, cmds, ls, read, write, append, patch, rm, mkdir, grep, find, pkg, git_setup, session_start, session_list, session_log, session_kill"
 
 // termuxCapBytes is Termux's own result-Bundle physics (ResultSender's
 // TRANSACTION_SIZE_LIMIT_IN_BYTES): stdout+stderr ride the
@@ -221,6 +222,8 @@ func (s *Server) runTermuxAction(ctx context.Context, sessionID, argJSON string)
                 return s.termuxVerbRead(ctx, get, roots)
         case "write", "append":
                 return s.termuxVerbWrite(ctx, action, get, roots)
+        case "patch":
+                return s.termuxVerbPatch(ctx, get, args, roots)
         case "rm":
                 return s.termuxVerbRm(ctx, get, roots)
         case "mkdir":
@@ -782,6 +785,99 @@ echo "wrote $(stat -c%s -- "$r")"
         return "OBSERVATION:\n" + strings.ToUpper(action) + " — " + oc.resolved + "\n" + oc.body
 }
 
+// termuxVerbPatch — v1.52.5 THE BLADE (the local twin): {path, edits:
+// [{old,new}], dry_run?} — the SAME surgeon engine the workspace patch
+// verb rides (one truth, no twin drift), applied to a LOCAL file inside
+// the jail. Read → ApplyEdits → write (or the dry-run preview). The
+// model edits its local clone surgically: read a range, patch, no
+// whole-file rewrite.
+func (s *Server) termuxVerbPatch(ctx context.Context, get func(string) string, args map[string]any, roots []string) string {
+        joined, obs := s.termuxPathArgs(get, roots, `patch needs {"path":"the/file","edits":[{"old":"…","new":"…"}],"dry_run":true?}`)
+        if obs != "" {
+                return obs
+        }
+        // parse the edits from the raw args — the get() closure only speaks
+        // strings, so the verb re-reads the args map it wraps (the runner
+        // stores them under the same key it built the closure from).
+        specs, obs := termuxParseEdits(args)
+        if obs != "" {
+                return obs
+        }
+        script := termuxJailScript(nil, `if [ ! -f "$r" ]; then echo "not a file: $r" >&2; exit 1; fi
+if head -c 4096 -- "$r" | grep -qP '[\x00-\x08\x0e-\x1f]'; then echo "binary $(stat -c%s -- "$r")"; exit 0; fi
+echo "text $(stat -c%s -- "$r")"
+cat -- "$r"
+`)
+        oc, obs := s.termuxRunScript(ctx, script, append([]string{joined}, roots...), roots, "", 60000)
+        if obs != "" {
+                return obs
+        }
+        head := firstLineOf(oc.body)
+        if strings.HasPrefix(head, "binary") {
+                return "OBSERVATION:\nerror: " + oc.resolved + " is binary — surgical edits are for text"
+        }
+        rest := strings.TrimPrefix(oc.body, head)
+        rest = strings.TrimPrefix(rest, "\n")
+        newContent, reports, err := surgeon.ApplyEdits(rest, specs)
+        if err != nil {
+                return "OBSERVATION:\nerror: " + err.Error()
+        }
+        var rline strings.Builder
+        for _, r := range reports {
+                fmt.Fprintf(&rline, "edit %d: %s match, %d replacement(s)\n", r.Index+1, r.Mode, r.Count)
+        }
+        if termuxArgsBool(args, "dry_run") {
+                return "OBSERVATION:\nDRY-RUN — patch to " + oc.resolved + " applies cleanly (" + strconv.Itoa(len(specs)) + " edit(s)):\n" + rline.String() + surgeon.DiffPreview(rest, newContent) + "\n(pass \"dry_run\":false or omit it to write)"
+        }
+        b64 := base64.StdEncoding.EncodeToString([]byte(newContent))
+        wscript := termuxJailScript([]string{"b64"}, `printf %s "$b64" | base64 -d > "$r" || { echo "write failed: $r" >&2; exit 1; }
+echo "wrote $(stat -c%s -- "$r")"
+`)
+        woc, wobs := s.termuxRunScript(ctx, wscript, append([]string{joined, b64}, roots...), roots, "", 30000)
+        if wobs != "" {
+                return wobs
+        }
+        whead := firstLineOf(woc.body)
+        size := strings.TrimPrefix(whead, "wrote ")
+        return "OBSERVATION:\nPATCHED — " + oc.resolved + " (" + strconv.Itoa(len(specs)) + " surgical edit(s), file now " + size + " bytes)\n" + rline.String()
+}
+
+// termuxParseEdits parses the patch verb's edits array (the same shape
+// the workspace tool speaks).
+func termuxParseEdits(args map[string]any) ([]surgeon.EditSpec, string) {
+        if args == nil {
+                return nil, "OBSERVATION:\nerror: patch needs {\"path\":\"the/file\",\"edits\":[{\"old\":\"…\",\"new\":\"…\"}]}"
+        }
+        raw, ok := args["edits"].([]any)
+        if !ok || len(raw) == 0 {
+                return nil, "OBSERVATION:\nerror: patch needs {\"edits\":[{\"old\":\"the exact text\",\"new\":\"the replacement\"}]}"
+        }
+        specs := make([]surgeon.EditSpec, 0, len(raw))
+        for i, re := range raw {
+                m, _ := re.(map[string]any)
+                if m == nil {
+                        return nil, fmt.Sprintf("OBSERVATION:\nerror: edits[%d] is not an object", i)
+                }
+                old, _ := m["old"].(string)
+                newS, _ := m["new"].(string)
+                all, _ := m["all"].(bool)
+                occ := 0
+                if v, ok := m["occurrence"].(float64); ok && v > 0 {
+                        occ = int(v)
+                }
+                specs = append(specs, surgeon.EditSpec{Old: old, New: newS, All: all, Occurrence: occ})
+        }
+        return specs, ""
+}
+
+func termuxArgsBool(args map[string]any, k string) bool {
+        if args == nil {
+                return false
+        }
+        v, _ := args[k].(bool)
+        return v
+}
+
 // termuxVerbRm — {path}: jailed; the bound roots themselves are
 // REFUSED (never delete the jail — a bare path resolves to the first
 // root, which is exactly the refusal).
@@ -1278,6 +1374,7 @@ Actions (one JSON object of arguments per tool call):
   {"action":"read","args":{"path":"a.txt"}}    read a WHOLE file (binary files reported honestly)
   {"action":"write","args":{"path":"f.txt","content":"…"}}   write (overwrite) a file — ≤1MB per call
   {"action":"append","args":{"path":"f.txt","content":"…"}}  append to a file
+  {"action":"patch","args":{"path":"f.go","edits":[{"old":"exact text","new":"replacement"}],"dry_run":true}}  the SURGICAL edit — search/replace on a local file (whitespace-flexible; "all":true or "occurrence":k when old repeats; dry_run previews the diff). Read a range first, then patch — no whole-file rewrite
   {"action":"rm","args":{"path":"f.txt"}}      remove a file/folder (a bound root itself is refused)
   {"action":"mkdir","args":{"path":"d"}}       create a folder (mkdir -p)
   {"action":"grep","args":{"pattern":"TODO","path":"","glob":"*.py"}}   search file contents — UNLIMITED hits

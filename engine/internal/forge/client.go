@@ -381,6 +381,57 @@ func (c *Client) PutFile(ctx context.Context, path, branch, message, content, sh
         return "", ErrUnsupported
 }
 
+// TreeWrite is one file's final state for a multi-file atomic commit
+// (v1.52.6 THE ONE COMMIT). The CALLER applies surgical edits first —
+// this layer only speaks final content.
+type TreeWrite struct {
+        Path    string
+        Content string
+        Delete  bool
+}
+
+// CommitFiles lands MULTIPLE files in ONE git commit via the git data
+// API (v1.52.6 THE ONE COMMIT — the seamless-push core):
+//
+//      resolve the branch head → POST /git/trees {base_tree, entries:
+//      [inline content | sha:null deletes]} → POST /git/commits →
+//      PATCH /git/refs/heads/{branch} {force:false}.
+//
+// The ref update is the STRICT-PUSH GUARD: GitHub answers 422 when the
+// branch moved under us — the honest "re-read and re-apply" moment, the
+// API-side rebase alarm. NEVER forced. branch="" targets the default
+// branch. Returns the commit's HTML URL.
+func (c *Client) CommitFiles(ctx context.Context, branch, message string, writes []TreeWrite, token string) (string, error) {
+        switch c.host.Kind {
+        case "github":
+                return c.ghCommitFiles(ctx, branch, message, writes, token)
+        }
+        return "", ErrUnsupported
+}
+
+// Compare is the two-dot-dash ref comparison (v1.52.7 THE SYNC EYE):
+// ahead_by/behind_by, the merge-base sha, and the changed-file names of
+// EACH side since that base (BaseFiles = what base gained; HeadFiles =
+// what the head branch changed) — the rebase-awareness primitive the
+// strict-push protocol needs before every push.
+type Compare struct {
+        AheadBy   int
+        BehindBy  int
+        MergeBase string
+        BaseFiles []string // files changed on base since the merge-base
+        HeadFiles []string // files changed on head since the merge-base
+}
+
+// CompareRefs runs base...head (GitHub-only for now; other kinds answer
+// ErrUnsupported and the verb teaches the honest fallback).
+func (c *Client) CompareRefs(ctx context.Context, base, head, token string) (Compare, error) {
+        switch c.host.Kind {
+        case "github":
+                return c.ghCompare(ctx, base, head, token)
+        }
+        return Compare{}, ErrUnsupported
+}
+
 // Fork forks the repo into the token's account (the read→write upgrade
 // path from the user spec). Returns the new owner/repo.
 func (c *Client) Fork(ctx context.Context, token string) (string, error) {

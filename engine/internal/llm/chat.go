@@ -428,7 +428,26 @@ func runPlainTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- error, r
 // for a failed turn — emitted where the pause ladder gave up (or a non-
 // retryable error surfaced), never inside the retry loop (an early chunk
 // terminalizes the UI: the frontend treats error events as end-of-turn).
+//
+// v1.52.1 THE HONEST TERMINAL: errHTTPAlreadyEmitted marks a failure whose
+// friendly chunk ALREADY rode (the HTTP-status sites in scanSSECollect)
+// — the turn is owed only its terminal, never a second error bubble. The
+// old shape returned nil/nil/nil there and the callers read SILENCE: the
+// failed turn fell through to the empty-response note + terminal IDLE —
+// a 403/401 masked as success, the no-dup law disarmed, the composer's
+// continue never arming (the v1520 rig's A1 conviction, live).
+var errHTTPAlreadyEmitted = errors.New("http error (the friendly chunk already rode)")
+
+// IsAlreadyEmitted reports whether err is (or wraps) the sentinel for a
+// failure whose friendly chunk already rode — the callers owe the turn
+// only its terminal, never a second error bubble.
+func IsAlreadyEmitted(err error) bool { return errors.Is(err, errHTTPAlreadyEmitted) }
+
 func emitTurnError(ch chan<- ChatChunk, err error) {
+        if errors.Is(err, errHTTPAlreadyEmitted) {
+                ch <- ChatChunk{Type: "status", State: "error"}
+                return
+        }
         ch <- ChatChunk{Type: "error", Error: "stream", Message: friendlyStreamError(err)}
         ch <- ChatChunk{Type: "status", State: "error"}
 }
@@ -1105,7 +1124,7 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
                 select {
                 case <-ctx.Done():
                         ch <- ChatChunk{Type: "error", Error: "cancelled", Message: "turn stopped while pacing the provider"}
-                        return nil, nil, nil
+return nil, nil, errHTTPAlreadyEmitted // v1.52.1: the caller must see the FAILURE (silence masked it as an empty-reply idle)
                 case <-time.After(wait):
                 }
         }
@@ -1161,7 +1180,7 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
                 select {
                 case <-ctx.Done():
                         ch <- ChatChunk{Type: "error", Error: "cancelled", Message: "turn stopped while waiting to retry after the rate limit"}
-                        return nil, nil, nil
+return nil, nil, errHTTPAlreadyEmitted // v1.52.1: the caller must see the FAILURE (silence masked it as an empty-reply idle)
                 case <-time.After(wait):
                 }
                 resp, reqErr = doPostSSE(ctx, req, url, bodyBytes, ch)
@@ -1226,7 +1245,7 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
                                                         ClassifyProviderError(resp2.StatusCode, string(bts2)),
                                                         fmt.Sprintf("HTTP %d on %s (post effort-strip)", resp2.StatusCode, modelShort(req.Model)))
                                                 ch <- ChatChunk{Type: "error", Error: "http", Message: friendlyHTTPError(resp2.StatusCode, string(bts2), req.Provider)}
-                                                return nil, nil, nil
+return nil, nil, errHTTPAlreadyEmitted // v1.52.1: the caller must see the FAILURE (silence masked it as an empty-reply idle)
                                         }
                                         resp = resp2
                                 } else {
@@ -1259,7 +1278,7 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
                                                         ClassifyProviderError(resp2.StatusCode, string(bts2)),
                                                         fmt.Sprintf("HTTP %d on %s (post max_tokens-strip)", resp2.StatusCode, modelShort(req.Model)))
                                                 ch <- ChatChunk{Type: "error", Error: "http", Message: friendlyHTTPError(resp2.StatusCode, string(bts2), req.Provider)}
-                                                return nil, nil, nil
+return nil, nil, errHTTPAlreadyEmitted // v1.52.1: the caller must see the FAILURE (silence masked it as an empty-reply idle)
                                         }
                                         // fall through to the stream with the stripped body
                                 } else {
@@ -1271,7 +1290,7 @@ func scanSSECollect(ctx context.Context, req ChatRequest, extraBody map[string]a
                                                 ClassifyProviderError(resp.StatusCode, string(bts)),
                                                 fmt.Sprintf("HTTP %d on %s", resp.StatusCode, modelShort(req.Model)))
                                         ch <- ChatChunk{Type: "error", Error: "http", Message: friendlyHTTPError(resp.StatusCode, string(bts), req.Provider)}
-                                        return nil, nil, nil
+return nil, nil, errHTTPAlreadyEmitted // v1.52.1: the caller must see the FAILURE (silence masked it as an empty-reply idle)
                                 }
                         }
                 }
@@ -2350,7 +2369,12 @@ func netProviderHoldLoop(ctx context.Context, ch chan<- ChatChunk, provider, ent
                         if !isTransientNetErr(err) || emitted {
                                 return err // the class changed mid-hold — the caller's verdict
                         }
-                        return fmt.Errorf("%s is unreachable right now — this looks like a problem on their side (your connection is fine). Tap Retry when you want to try again", label)
+                        // v1.52.1: the continue-only law — this hold's exit
+                        // used to say "Tap Retry"; a DNS/provider outage now
+                        // ends here after the bounded hold and the way
+                        // forward is CONTINUE (the v1.50.5 law; the DNS rung
+                        // made this string reachable again).
+                        return fmt.Errorf("%s is unreachable right now — this looks like a problem on their side (your connection is fine). Tap Continue when you want to try again", label)
                 }
                 if next > remaining {
                         next = remaining
@@ -2576,7 +2600,18 @@ func isTransientNetErr(err error) bool {
         // The cure is EXACTLY what the pause ladder does — retry on a FRESH
         // connection (Go's transport discards the poisoned one). These are
         // transient by nature; auth/protocol errors never match this set.
-        return regexp.MustCompile(`(?i)timeout|context deadline|connection reset|broken pipe|unexpected EOF|refused|temporary|HTTP 5[0-9][0-9]|503|502|network|went silent|no data|bad record mac|tls:|record mac|handshake failure`).MatchString(s)
+        //
+        // v1.52.1 THE DNS RUNG: the trippy (2).md log convicted the DNS
+        // class as TERMINAL — the device's resolver (system + DoH) dropped
+        // for ~3 minutes and the SAME user message died 5 times in a row:
+        //   netx: no address for "integrate.api.nvidia.com" (system resolver
+        //   and DNS-over-HTTPS both failed)
+        // DNS death on a phone is a walking outage ( captive-portal capture,
+        // wifi handoff, airplane-mode edge) — it comes back, and when it
+        // does the ladder's fresh dial lands. No such host / lookup /
+        // no address / SERVFAIL now ride the pause ladder like every other
+        // transient net class instead of an instant terminal error.
+        return regexp.MustCompile(`(?i)timeout|context deadline|connection reset|broken pipe|unexpected EOF|refused|temporary|HTTP 5[0-9][0-9]|503|502|network|went silent|no data|bad record mac|tls:|record mac|handshake failure|no such host|no address|lookup|dns|server misbehaving|SERVFAIL`).MatchString(s)
 }
 
 // mergeUsage sums two usage reports (nil-safe).

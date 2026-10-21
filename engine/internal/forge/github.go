@@ -1168,3 +1168,153 @@ func (c *Client) ghCreateRelease(ctx context.Context, tag, name, body, target, t
         }
         return m.HTMLURL, nil
 }
+
+// ghCommitFiles — v1.52.6 THE ONE COMMIT: multiple files in ONE atomic
+// commit via the git data API (research-verified shapes, PLAN-V152 §2.3):
+//
+//	 1. GET  /git/ref/heads/{branch}            → head commit sha
+//	 2. GET  /git/commits/{sha}                 → its tree sha (base_tree)
+//	 3. POST /git/trees {base_tree, tree:[…]}   → inline content writes;
+//	    sha:null DELETES an entry (the documented shape)
+//	 4. POST /git/commits {message, tree, parents:[head]}
+//	 5. PATCH /git/refs/heads/{branch} {sha, force:false} — the STRICT-PUSH
+//	    GUARD: 422 when the remote moved (never forced; re-read + re-apply).
+func (c *Client) ghCommitFiles(ctx context.Context, branch, message string, writes []TreeWrite, token string) (string, error) {
+	if token == "" {
+		return "", fmt.Errorf("committing to GitHub needs a token with repo write access")
+	}
+	if len(writes) == 0 {
+		return "", fmt.Errorf("commit needs at least one file")
+	}
+	repo := "/repos/" + c.host.Owner + "/" + c.host.Repo
+	if branch == "" {
+		meta, err := c.ghRepoInfo(ctx, token)
+		if err != nil {
+			return "", err
+		}
+		branch = meta.DefaultBranch
+	}
+	// 1. the branch head
+	var ref struct {
+		Object struct {
+			SHA string `json:"sha"`
+		} `json:"object"`
+	}
+	if err := c.ghGetJSON(ctx, repo+"/git/ref/heads/"+url.PathEscape(branch), token, &ref, maxListBody); err != nil {
+		return "", fmt.Errorf("resolving branch %s: %w", branch, err)
+	}
+	headSHA := ref.Object.SHA
+	if headSHA == "" {
+		return "", fmt.Errorf("branch %s resolved to an empty head", branch)
+	}
+	// 2. the head's tree
+	var headCommit struct {
+		Tree struct {
+			SHA string `json:"sha"`
+		} `json:"tree"`
+	}
+	if err := c.ghGetJSON(ctx, repo+"/git/commits/"+url.PathEscape(headSHA), token, &headCommit, maxListBody); err != nil {
+		return "", fmt.Errorf("reading the head commit: %w", err)
+	}
+	// 3. the new tree on top of the base
+	tree := make([]map[string]any, 0, len(writes))
+	for _, w := range writes {
+		p := strings.TrimPrefix(w.Path, "/")
+		if p == "" || strings.Contains(p, "..") {
+			return "", fmt.Errorf("refusing a bad path: %q", w.Path)
+		}
+		if w.Delete {
+			tree = append(tree, map[string]any{
+				"path": p, "mode": "100644", "type": "blob", "sha": nil,
+			})
+			continue
+		}
+		tree = append(tree, map[string]any{
+			"path": p, "mode": "100644", "type": "blob", "content": w.Content,
+		})
+	}
+	tb, _ := json.Marshal(map[string]any{"base_tree": headCommit.Tree.SHA, "tree": tree})
+	var treeOut struct {
+		SHA string `json:"sha"`
+	}
+	data, err := c.do(ctx, "POST", GitHubAPIBase+repo+"/git/trees", token, tb, "application/json", maxListBody)
+	if err != nil {
+		return "", fmt.Errorf("building the tree: %w", err)
+	}
+	if err := json.Unmarshal(data, &treeOut); err != nil {
+		return "", err
+	}
+	if treeOut.SHA == "" {
+		return "", fmt.Errorf("the tree API returned no sha")
+	}
+	// 4. the commit
+	cb, _ := json.Marshal(map[string]any{
+		"message": message, "tree": treeOut.SHA, "parents": []string{headSHA},
+	})
+	var commitOut struct {
+		SHA     string `json:"sha"`
+		HTMLURL string `json:"html_url"`
+	}
+	data, err = c.do(ctx, "POST", GitHubAPIBase+repo+"/git/commits", token, cb, "application/json", maxListBody)
+	if err != nil {
+		return "", fmt.Errorf("creating the commit: %w", err)
+	}
+	if err := json.Unmarshal(data, &commitOut); err != nil {
+		return "", err
+	}
+	// 5. the ref update — force:false = the fast-forward guard. A 422 here
+	// is the honest "the remote moved under you" (the strict-push alarm):
+	// the caller re-reads and re-applies; we never force.
+	rb, _ := json.Marshal(map[string]any{"sha": commitOut.SHA, "force": false})
+	_, err = c.do(ctx, "PATCH", GitHubAPIBase+repo+"/git/refs/heads/"+url.PathEscape(branch), token, rb, "application/json", maxListBody)
+	if err != nil {
+		return "", fmt.Errorf("the branch moved under you (the strict-push guard refused the non-fast-forward update) — re-read the changed files and re-apply your edits on the new head: %w", err)
+	}
+	if commitOut.HTMLURL != "" {
+		return commitOut.HTMLURL, nil
+	}
+	return "https://github.com/" + c.host.Owner + "/" + c.host.Repo + "/commit/" + commitOut.SHA, nil
+}
+
+// ghCompare — v1.52.7 THE SYNC EYE: base...head with each side's changed
+// files since the merge-base (three compares: base…head for the verdict +
+// merge-base…base and merge-base…head for the per-side file lists — the
+// overlap forecast's raw material).
+func (c *Client) ghCompare(ctx context.Context, base, head, token string) (Compare, error) {
+	fetch := func(basehead string) (ahead, behind int, mergeBase string, files []string, err error) {
+		var out struct {
+			AheadBy   int `json:"ahead_by"`
+			BehindBy  int `json:"behind_by"`
+			MergeBase struct {
+				SHA string `json:"sha"`
+			} `json:"merge_base_commit"`
+			Files []struct {
+				Filename string `json:"filename"`
+			} `json:"files"`
+		}
+		if err := c.ghGetJSON(ctx, "/repos/"+c.host.Owner+"/"+c.host.Repo+"/compare/"+url.PathEscape(basehead), token, &out, maxTreeBody); err != nil {
+			return 0, 0, "", nil, err
+		}
+		for _, f := range out.Files {
+			files = append(files, f.Filename)
+		}
+		return out.AheadBy, out.BehindBy, out.MergeBase.SHA, files, nil
+	}
+	if head == "" || base == "" {
+		return Compare{}, fmt.Errorf("compare needs a base and a head branch")
+	}
+	ahead, behind, mb, _, err := fetch(base + "..." + head)
+	if err != nil {
+		return Compare{}, err
+	}
+	cmp := Compare{AheadBy: ahead, BehindBy: behind, MergeBase: mb}
+	if mb != "" {
+		if _, _, _, baseFiles, err := fetch(mb + "..." + base); err == nil {
+			cmp.BaseFiles = baseFiles
+		}
+		if _, _, _, headFiles, err := fetch(mb + "..." + head); err == nil {
+			cmp.HeadFiles = headFiles
+		}
+	}
+	return cmp, nil
+}

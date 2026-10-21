@@ -42,10 +42,12 @@ import (
         "encoding/json"
         "fmt"
         "sort"
+        "strconv"
         "strings"
 
         "github.com/ScoobyBaby1999/doomalay/engine/internal/forge"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/store"
+        "github.com/ScoobyBaby1999/doomalay/engine/internal/surgeon"
 )
 
 // v1.19.1 THE WHOLE TRUTH: the model-facing caps are DEAD (PLAN-V119 §v1.19.1).
@@ -54,7 +56,7 @@ import (
 // forge's own `truncated` signal (upstream physics), never a local cut.
 
 // workspaceVerbs is the canonical verb list (help + unknown-action teach).
-const workspaceVerbs = "help, list, info, tree, ls, read, readme, grep, view, put, pr, branch, tag_create, issue_create, issue_comment, issue_close, pr_diff, pr_comment, pr_review, pr_merge, discussion_post, workflow_dispatch, file_delete, release_create, fork, create, discover"
+const workspaceVerbs = "help, list, info, tree, ls, read, readme, grep, view, put, patch, commit, sync, pr, branch, tag_create, issue_create, issue_comment, issue_close, pr_diff, pr_comment, pr_review, pr_merge, discussion_post, workflow_dispatch, file_delete, release_create, fork, create, discover"
 
 // runWorkspaceAction executes an "the workspace tool with {json}" call for the
 // direct path (and, since v0.81.6, the PM tool server + the brain's
@@ -156,6 +158,19 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
                 }
                 if err != nil {
                         return "OBSERVATION:\nerror: " + wsPublicErr(ws, err)
+                }
+                // v1.52.4 THE HONEST TREE: a big repo's recursive listing is a
+                // CONTEXT FLOOD, not a view — the trippy (2).md log shows the
+                // model calling the SAME 69,775-byte listing three times
+                // (≈210KB of context) because a raw 1,459-entry dump answers
+                // no question it was asked. Past the summary threshold the
+                // DEFAULT becomes the dir summary (every top-level dir with
+                // its file count + size, the direct files, honest totals);
+                // {"recursive":true} returns the full listing verbatim — a
+                // smarter VIEW, never a truncation (the v1.19.1 whole-truth
+                // law: nothing is ever cut mid-content).
+                if action == "tree" && len(entries) > wsTreeSummaryThreshold && !wsArgBool(args, "recursive") {
+                        return "OBSERVATION:\n" + wsTreeSummaryText(ws, path, ref, entries, truncated)
                 }
                 return "OBSERVATION:\n" + wsTreeText(ws, path, ref, entries, truncated)
         case "read":
@@ -280,6 +295,277 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
                 }
                 return "OBSERVATION:\n" + out + "\ncommit: " + url +
                         "\nnext: the workspace tool with {\"action\":\"pr\",\"ws\":\"" + ws.Name + "\",\"head\":\"" + branch + "\",\"base\":\"" + wsBranchOr(ws, "main") + "\"} opens the pull request."
+        case "patch":
+                // v1.52.5 THE BLADE: the surgical edit — search/replace blocks
+                // applied to the fetched file, one API commit for the whole
+                // edited file. The cure for the v1500 rig B wall (a 145,832-
+                // byte file read whole + PUT whole for a one-line change).
+                ws := toolWS
+                if ws.Access != forge.AccessFull {
+                        return "OBSERVATION:\nerror: workspace " + ws.Name + " is access=" + ws.Access + " — direct file writes need FULL access. The partial path: fork (this tool) → write to the fork → pr."
+                }
+                path := strings.Trim(get("path"), "/")
+                if path == "" || strings.Contains(path, "..") {
+                        return "OBSERVATION:\nerror: patch needs {\"ws\":…, \"path\":\"file\", \"edits\":[{\"old\":\"…\",\"new\":\"…\"}], \"message\":\"…\", \"branch\":\"…\", \"dry_run\":true?}"
+                }
+                specs, obs := wsParseEdits(args)
+                if obs != "" {
+                        return obs
+                }
+                message := get("message")
+                if message == "" {
+                        message = "doomalay: surgical update " + path
+                }
+                branch := get("branch")
+                if branch == "" {
+                        branch = ws.Branch
+                }
+                c := s.wsClient(ws)
+                tok := s.wsToken(ws)
+                branchCreated := false
+                if branch != "" {
+                        if names, err := c.Branches(ctx, tok); err == nil {
+                                found := false
+                                for _, b := range names {
+                                        if b == branch {
+                                                found = true
+                                                break
+                                        }
+                                }
+                                if !found {
+                                        if _, err := c.CreateBranch(ctx, branch, "", tok); err != nil {
+                                                return "OBSERVATION:\nerror: branch " + branch + " does not exist and could not be created: " + err.Error()
+                                        }
+                                        branchCreated = true
+                                }
+                        }
+                }
+                fc, err := c.File(ctx, path, branch, "", tok)
+                if err != nil {
+                        return "OBSERVATION:\nerror: could not read " + path + " @" + branch + ": " + wsPublicErr(ws, err)
+                }
+                if fc.Binary {
+                        return "OBSERVATION:\nerror: " + path + " is a binary file — surgical edits are for text"
+                }
+                newContent, reports, aerr := surgeon.ApplyEdits(fc.Content, specs)
+                if aerr != nil {
+                        return "OBSERVATION:\nerror: " + aerr.Error()
+                }
+                var rline strings.Builder
+                for _, r := range reports {
+                        fmt.Fprintf(&rline, "edit %d: %s match, %d replacement(s)\n", r.Index+1, r.Mode, r.Count)
+                }
+                if wsArgBool(args, "dry_run") {
+                        return "OBSERVATION:\nDRY-RUN — patch to " + path + " @" + branch + " applies cleanly (" + fmt.Sprint(len(specs)) + " edit(s)):\n" + rline.String() + surgeon.DiffPreview(fc.Content, newContent) + "\n(pass \"dry_run\":false or omit it to commit)"
+                }
+                url, err := c.PutFile(ctx, path, branch, message, newContent, fc.SHA, tok)
+                if err != nil {
+                        return "OBSERVATION:\nerror: " + wsPublicErr(ws, err) + "\n(the file may have changed under you — re-read it and re-apply; the sha guard refuses a blind overwrite)"
+                }
+                out := "PATCHED — " + path + " @ " + branch + " (" + fmt.Sprint(len(specs)) + " surgical edit(s))\n" + rline.String()
+                if branchCreated {
+                        out += " (branch created)"
+                }
+                return "OBSERVATION:\n" + out + "commit: " + url +
+                        "\nnext: {\"action\":\"commit\",…} edits MULTIPLE files in ONE commit; {\"action\":\"pr\",…} opens the pull request; {\"action\":\"sync\",…} checks whether the branch is behind before you push further."
+        case "commit":
+                // v1.52.6 THE ONE COMMIT: multiple files in ONE atomic commit
+                // via the git data API — the seamless-push core. Each file:
+                // surgical edits (fetched + ApplyEdits), full content (create
+                // /overwrite), delete, or rename. The ref update carries the
+                // strict-push guard (force:false; 422 = re-read + re-apply).
+                ws := toolWS
+                if ws.Access != forge.AccessFull {
+                        return "OBSERVATION:\nerror: workspace " + ws.Name + " is access=" + ws.Access + " — direct file writes need FULL access. The partial path: fork (this tool) → write to the fork → pr."
+                }
+                message := get("message")
+                if message == "" {
+                        return "OBSERVATION:\nerror: commit needs {\"message\":\"…\"} — one honest message for the whole changeset"
+                }
+                rawFiles, ok := args["files"].([]any)
+                if !ok || len(rawFiles) == 0 {
+                        return "OBSERVATION:\nerror: commit needs \"files\":[{\"path\":\"a.go\",\"edits\":[…]} | {\"path\":\"new.txt\",\"content\":\"…\"} | {\"path\":\"old.go\",\"delete\":true} | {\"path\":\"moved.go\",\"rename_from\":\"old.go\"}]"
+                }
+                branch := get("branch")
+                if branch == "" {
+                        branch = ws.Branch
+                }
+                c := s.wsClient(ws)
+                tok := s.wsToken(ws)
+                branchCreated := false
+                if branch != "" {
+                        if names, err := c.Branches(ctx, tok); err == nil {
+                                found := false
+                                for _, b := range names {
+                                        if b == branch {
+                                                found = true
+                                                break
+                                        }
+                                }
+                                if !found {
+                                        if _, err := c.CreateBranch(ctx, branch, "", tok); err != nil {
+                                                return "OBSERVATION:\nerror: branch " + branch + " does not exist and could not be created: " + err.Error()
+                                        }
+                                        branchCreated = true
+                                }
+                        }
+                }
+                var writes []forge.TreeWrite
+                var report strings.Builder
+                for i, rf := range rawFiles {
+                        m, _ := rf.(map[string]any)
+                        if m == nil {
+                                return fmt.Sprintf("OBSERVATION:\nerror: files[%d] is not an object", i)
+                        }
+                        fget := func(k string) string { v, _ := m[k].(string); return v }
+                        path := strings.Trim(fget("path"), "/")
+                        if path == "" || strings.Contains(path, "..") {
+                                return fmt.Sprintf("OBSERVATION:\nerror: files[%d] needs a clean \"path\"", i)
+                        }
+                        delete, _ := m["delete"].(bool)
+                        renameFrom := strings.Trim(fget("rename_from"), "/")
+                        // RENAME: the content comes from the old path (unless
+                        // edits/content also given) — write-new + delete-old
+                        // in the SAME commit.
+                        source := path
+                        if renameFrom != "" {
+                                source = renameFrom
+                        }
+                        var content string
+                        var haveContent bool
+                        if rawEdits, ok := m["edits"].([]any); ok && len(rawEdits) > 0 {
+                                specArgs := map[string]any{"edits": rawEdits}
+                                specs, obs := wsParseEdits(specArgs)
+                                if obs != "" {
+                                        return obs
+                                }
+                                fc, err := c.File(ctx, source, branch, "", tok)
+                                if err != nil {
+                                        return "OBSERVATION:\nerror: could not read " + source + " @" + branch + ": " + wsPublicErr(ws, err)
+                                }
+                                if fc.Binary {
+                                        return "OBSERVATION:\nerror: " + source + " is binary — surgical edits are for text"
+                                }
+                                var aerr error
+                                content, _, aerr = surgeon.ApplyEdits(fc.Content, specs)
+                                if aerr != nil {
+                                        return "OBSERVATION:\nerror: " + path + ": " + aerr.Error()
+                                }
+                                haveContent = true
+                                fmt.Fprintf(&report, "- %s: %d surgical edit(s)", path, len(specs))
+                                if renameFrom != "" {
+                                        fmt.Fprintf(&report, " (renamed from %s)", renameFrom)
+                                }
+                                report.WriteString("\n")
+                        } else if full := fget("content"); full != "" || hasKey(m, "content") {
+                                content = full
+                                haveContent = true
+                                fmt.Fprintf(&report, "- %s: full content (%d bytes)", path, len(content))
+                                if renameFrom != "" {
+                                        fmt.Fprintf(&report, " (renamed from %s)", renameFrom)
+                                }
+                                report.WriteString("\n")
+                        }
+                        switch {
+                        case delete:
+                                writes = append(writes, forge.TreeWrite{Path: path, Delete: true})
+                                fmt.Fprintf(&report, "- %s: deleted\n", path)
+                        case haveContent:
+                                writes = append(writes, forge.TreeWrite{Path: path, Content: content})
+                                if renameFrom != "" && renameFrom != path {
+                                        writes = append(writes, forge.TreeWrite{Path: renameFrom, Delete: true})
+                                }
+                        case renameFrom != "":
+                                // pure rename: carry the old content to the new path
+                                fc, err := c.File(ctx, renameFrom, branch, "", tok)
+                                if err != nil {
+                                        return "OBSERVATION:\nerror: could not read " + renameFrom + " @" + branch + ": " + wsPublicErr(ws, err)
+                                }
+                                if fc.Binary {
+                                        return "OBSERVATION:\nerror: " + renameFrom + " is binary — renames of binary files need content (base64 through put)"
+                                }
+                                writes = append(writes, forge.TreeWrite{Path: path, Content: fc.Content})
+                                writes = append(writes, forge.TreeWrite{Path: renameFrom, Delete: true})
+                                fmt.Fprintf(&report, "- %s: renamed from %s (%d bytes carried)\n", path, renameFrom, len(fc.Content))
+                        default:
+                                return fmt.Sprintf("OBSERVATION:\nerror: files[%d] (%s) needs one of \"edits\", \"content\", \"delete\", \"rename_from\"", i, path)
+                        }
+                }
+                if len(writes) == 0 {
+                        return "OBSERVATION:\nerror: the commit carried no writes"
+                }
+                url, err := c.CommitFiles(ctx, branch, message, writes, tok)
+                if err != nil {
+                        return "OBSERVATION:\nerror: " + wsPublicErr(ws, err)
+                }
+                out := "COMMITTED (one atomic commit) — " + fmt.Sprint(len(rawFiles)) + " file(s) @ " + branch + "\n" + report.String()
+                if branchCreated {
+                        out += " (branch created)"
+                }
+                return "OBSERVATION:\n" + out + "commit: " + url +
+                        "\nnext: {\"action\":\"sync\",\"ws\":\"" + ws.Name + "\",\"branch\":\"" + branch + "\"} checks whether the branch is behind base before the PR; {\"action\":\"pr\",\"ws\":\"" + ws.Name + "\",\"head\":\"" + branch + "\",\"base\":\"" + wsBranchOr(ws, "main") + "\"} opens the pull request (pr_merge method:rebase lands it as a rebase)."
+        case "sync":
+                // v1.52.7 THE SYNC EYE: the rebase awareness the strict-push
+                // protocol demands BEFORE every push — behind/ahead, the
+                // files each side changed since the merge-base, and the
+                // OVERLAP forecast (a file changed on BOTH sides = the
+                // re-apply moment; disjoint = pr_merge method:rebase is safe).
+                ws := toolWS
+                c := s.wsClient(ws)
+                tok := s.wsToken(ws)
+                branch := get("branch")
+                if branch == "" {
+                        branch = ws.Branch
+                }
+                base := get("base")
+                if base == "" {
+                        meta, err := c.RepoInfo(ctx, tok)
+                        if err != nil {
+                                return "OBSERVATION:\nerror: " + wsPublicErr(ws, err)
+                        }
+                        base = meta.DefaultBranch
+                }
+                if branch == "" || branch == base {
+                        return "OBSERVATION:\nsync needs a branch to check against base — {\"action\":\"sync\",\"ws\":\"…\",\"branch\":\"your-branch\"} (base defaults to the default branch). A feature branch is where the strict-push protocol lives; " + base + " is the base itself."
+                }
+                cmp, err := c.CompareRefs(ctx, base, branch, tok)
+                if err != nil {
+                        return "OBSERVATION:\nerror: " + wsPublicErr(ws, err)
+                }
+                var sb strings.Builder
+                fmt.Fprintf(&sb, "SYNC — %s: %s vs %s (merge-base %s)\n", ws.Name, branch, base, shortSHA(cmp.MergeBase))
+                fmt.Fprintf(&sb, "ahead %d · behind %d\n", cmp.AheadBy, cmp.BehindBy)
+                if cmp.BehindBy == 0 {
+                        sb.WriteString("the branch is UP TO DATE with " + base + " — push/PR freely.\n")
+                        return "OBSERVATION:\n" + sb.String()
+                }
+                overlap := map[string]bool{}
+                for _, f := range cmp.HeadFiles {
+                        overlap[f] = false
+                }
+                anyOverlap := false
+                for _, f := range cmp.BaseFiles {
+                        if _, mine := overlap[f]; mine {
+                                overlap[f] = true
+                                anyOverlap = true
+                        }
+                }
+                if len(cmp.BaseFiles) > 0 {
+                        fmt.Fprintf(&sb, "%s moved these files since the fork point:\n", base)
+                        for _, f := range cmp.BaseFiles {
+                                mark := ""
+                                if overlap[f] {
+                                        mark = "  ⚠ ALSO CHANGED ON YOUR BRANCH"
+                                }
+                                fmt.Fprintf(&sb, "- %s%s\n", f, mark)
+                        }
+                }
+                if anyOverlap {
+                        sb.WriteString("OVERLAP: " + fmt.Sprint(countTrue(overlap)) + " file(s) changed on BOTH sides — the surgical cure: create a FRESH branch from " + base + " ({\"action\":\"branch\",\"from\":\"" + base + "\"}) and re-apply your edits there (patch/commit); your search/replace blocks re-apply cleanly unless the same lines changed. Do NOT force anything.\n")
+                } else {
+                        sb.WriteString("no overlap — your changes and " + base + "'s are disjoint: pr_merge with method:rebase lands cleanly (GitHub rebases server-side), or re-branch + re-apply for a linear history.\n")
+                }
+                return "OBSERVATION:\n" + sb.String()
         case "pr":
                 ws := toolWS // v1.19.2: resolved once above (bound rows + the public fallback)
                 if ws.Access == forge.AccessRead {
@@ -946,6 +1232,9 @@ func workspaceHelpText(n int) string {
   {"action":"grep","ws":"…","query":"text","limit":30}
   {"action":"view","ws":"…","what":"issues|pulls|commits|branches|releases|workflows|runs|discussions","state":"open"}
   {"action":"put","ws":"…","path":"f.txt","content":"…","message":"…","branch":"…"}  FULL access — an API commit
+  {"action":"patch","ws":"…","path":"f.go","edits":[{"old":"exact text","new":"replacement"}],"message":"…","branch":"…","dry_run":true}  FULL access — the SURGICAL edit (search/replace, whitespace-flexible; "all":true or "occurrence":k when old repeats). dry_run previews the diff. Read a RANGE first, then patch — no whole-file rewrite
+  {"action":"commit","ws":"…","message":"…","branch":"…","files":[{"path":"a.go","edits":[…]},{"path":"new.txt","content":"…"},{"path":"old.go","delete":true},{"path":"renamed.go","rename_from":"old.go"}]}  FULL access — MULTIPLE files in ONE atomic commit (the git data API; the ref update refuses when the remote moved — re-read and re-apply, never forced)
+  {"action":"sync","ws":"…","branch":"feat","base":"main"}  the rebase eye: is the branch behind base? which files changed on base? do any OVERLAP your branch's files (the conflict forecast) — run it BEFORE pushing further
   {"action":"file_delete","ws":"…","path":"f.txt","branch":"…","message":"…"}        FULL access
   {"action":"branch","ws":"…","name":"feature","from":"main"}                       partial+ — creates a branch
   {"action":"pr","ws":"…","head":"branch","base":"main","title":"…","body":"…"}      partial+ — head "owner:branch" for forks
@@ -999,9 +1288,109 @@ func wsTreeText(ws *store.Workspace, path, ref string, entries []forge.TreeEntry
         return sb.String()
 }
 
+// wsTreeSummaryThreshold — v1.52.4 THE HONEST TREE: past this many
+// entries the tree verb's DEFAULT view is the dir summary (a smarter
+// shape, not a smaller one — {"recursive":true} always returns the full
+// listing). 200 keeps every small repo on the classic verbatim listing.
+const wsTreeSummaryThreshold = 200
+
+// wsTreeSummaryText renders the v1.52.4 dir summary: every DIRECT child of
+// the requested path — files with sizes, dirs with their recursive file
+// counts + aggregate sizes — plus honest totals and the two narrowing
+// verbs. Nothing is hidden: the counts describe every entry under the
+// path, and the full recursive listing stays one explicit call away.
+func wsTreeSummaryText(ws *store.Workspace, path, ref string, entries []forge.TreeEntry, truncated bool) string {
+        prefix := strings.Trim(path, "/")
+        rel := func(p string) string {
+                r := strings.Trim(strings.Trim(p, "/"), "/")
+                if prefix != "" {
+                        r = strings.TrimPrefix(r, prefix+"/")
+                }
+                return r
+        }
+        // direct children: files with no "/" in the remainder; dirs at
+        // depth 1. Everything deeper aggregates INTO its depth-1 ancestor.
+        var files []forge.TreeEntry
+        var dirNames []string
+        dirStats := map[string]struct {
+                files int
+                bytes int64
+        }{}
+        var totalFiles int
+        var totalBytes int64
+        for _, e := range entries {
+                r := rel(e.Path)
+                if r == "" {
+                        continue
+                }
+                slash := strings.Index(r, "/")
+                if slash < 0 {
+                        if e.Type == "tree" {
+                                if _, seen := dirStats[r]; !seen {
+                                        dirStats[r] = struct {
+                                                files int
+                                                bytes int64
+                                        }{}
+                                        dirNames = append(dirNames, r)
+                                }
+                        } else {
+                                files = append(files, e)
+                                totalFiles++
+                                totalBytes += e.Size
+                        }
+                        continue
+                }
+                top := r[:slash]
+                if _, seen := dirStats[top]; !seen {
+                        dirStats[top] = struct {
+                                files int
+                                bytes int64
+                        }{}
+                        dirNames = append(dirNames, top)
+                }
+                if e.Type != "tree" {
+                        st := dirStats[top]
+                        st.files++
+                        st.bytes += e.Size
+                        dirStats[top] = st
+                        totalFiles++
+                        totalBytes += e.Size
+                }
+        }
+        sort.Slice(dirNames, func(i, j int) bool { return dirNames[i] < dirNames[j] })
+        var sb strings.Builder
+        at := path
+        if at == "" {
+                at = "/"
+        }
+        fmt.Fprintf(&sb, "%s at %s", ws.Name, at)
+        if ref != "" {
+                sb.WriteString(" @" + ref)
+        }
+        fmt.Fprintf(&sb, " — %d entries (%d files, %s) summarized by directory", len(entries), totalFiles, humanBytes(totalBytes))
+        if truncated {
+                sb.WriteString(" (upstream truncated — narrow the path)")
+        }
+        sb.WriteString(":\n")
+        for _, d := range dirNames {
+                st := dirStats[d]
+                label := fmt.Sprintf("- %s/ (dir — %d files, ~%s)", d, st.files, humanBytes(st.bytes))
+                sb.WriteString(label + "\n")
+        }
+        for _, f := range files {
+                fmt.Fprintf(&sb, "- %s (%s)\n", rel(f.Path), humanBytes(f.Size))
+        }
+        sb.WriteString("(summary view — narrow with {\"path\":\"dir\"} for a scoped listing, or {\"recursive\":true} for the full " + fmt.Sprint(len(entries)) + "-entry listing)\n")
+        return sb.String()
+}
+
 func onlyDirsAndTopLevel(entries []forge.TreeEntry, path string) []forge.TreeEntry {
         // "ls" = the immediate children only: for the flat per-path listing the
         // forge returns, keep entries whose parent IS the path.
+        // v1.52.4: at the ROOT the old filter was a NO-OP (prefix "" skipped
+        // the whole block) so `ls` at / returned the FULL RECURSIVE DUMP —
+        // the 1,459-entry flood. The empty-prefix case now keeps exactly the
+        // entries with no "/" in their path: the honest `ls` semantics.
         prefix := strings.Trim(path, "/")
         var out []forge.TreeEntry
         for _, e := range entries {
@@ -1014,6 +1403,8 @@ func onlyDirsAndTopLevel(entries []forge.TreeEntry, path string) []forge.TreeEnt
                         if strings.Contains(rest, "/") && e.Type != "tree" {
                                 continue
                         }
+                } else if strings.Contains(p, "/") {
+                        continue // root listing: direct children only
                 }
                 out = append(out, e)
         }
@@ -1031,6 +1422,49 @@ func wsBranchOr(ws *store.Workspace, def string) string {
 }
 
 
+// wsParseEdits parses the patch/commit verbs' edits array into surgeon
+// specs. obs != "" = the honest teach-back error.
+func wsParseEdits(args map[string]any) ([]surgeon.EditSpec, string) {
+        raw, ok := args["edits"].([]any)
+        if !ok || len(raw) == 0 {
+                return nil, "OBSERVATION:\nerror: patch/commit need \"edits\":[{\"old\":\"the exact text to replace\",\"new\":\"the replacement\"}] — optional per-edit: \"all\":true (replace every occurrence), \"occurrence\":k (1-based, when old appears multiple times)"
+        }
+        specs := make([]surgeon.EditSpec, 0, len(raw))
+        for i, re := range raw {
+                m, _ := re.(map[string]any)
+                if m == nil {
+                        return nil, fmt.Sprintf("OBSERVATION:\nerror: edits[%d] is not an object — each edit is {\"old\":\"…\",\"new\":\"…\"}", i)
+                }
+                old, _ := m["old"].(string)
+                newS, _ := m["new"].(string)
+                all := editArgBool(m, "all")
+                occ := 0
+                if v, ok := m["occurrence"].(float64); ok && v > 0 {
+                        occ = int(v)
+                } else if s, ok := m["occurrence"].(string); ok {
+                        if n, err := strconv.Atoi(strings.TrimSpace(s)); err == nil && n > 0 {
+                                occ = n
+                        }
+                }
+                specs = append(specs, surgeon.EditSpec{Old: old, New: newS, All: all, Occurrence: occ})
+        }
+        return specs, ""
+}
+
+// editArgBool — the edits' boolean coercion (the string forms too).
+func editArgBool(m map[string]any, k string) bool {
+        if v, ok := m[k].(bool); ok {
+                return v
+        }
+        if s, ok := m[k].(string); ok {
+                switch strings.ToLower(strings.TrimSpace(s)) {
+                case "true", "1", "yes":
+                        return true
+                }
+        }
+        return false
+}
+
 func wsArgInt(args map[string]any, k string, def int) int {
         if v, ok := args[k].(float64); ok && v > 0 && v < 500 {
                 return int(v)
@@ -1039,8 +1473,19 @@ func wsArgInt(args map[string]any, k string, def int) int {
 }
 
 func wsArgBool(args map[string]any, k string) bool {
-        v, _ := args[k].(bool)
-        return v
+        if v, ok := args[k].(bool); ok {
+                return v
+        }
+        // v1.52.5: LLMs often pass "true"/"false" as STRINGS (the v1520 rig's
+        // live conviction — the model's dry_run:"true" skipped the preview and
+        // committed directly). Coerce the honest forms; anything else is false.
+        if s, ok := args[k].(string); ok {
+                switch strings.ToLower(strings.TrimSpace(s)) {
+                case "true", "1", "yes":
+                        return true
+                }
+        }
+        return false
 }
 
 func hostOfKind(kind string) string {
@@ -1125,4 +1570,30 @@ func (s *Server) createWorkspaceRepoTyped(ctx context.Context, kind, name, desc,
                 return nil, err
         }
         return ws, nil
+}
+
+// hasKey — the commit verb's content-vs-absent distinction (an explicit
+// empty string content is a truncate-to-empty write, not a missing key).
+func hasKey(m map[string]any, k string) bool {
+        _, ok := m[k]
+        return ok
+}
+
+// shortSHA renders a 7-char sha for the sync report.
+func shortSHA(s string) string {
+        if len(s) > 7 {
+                return s[:7]
+        }
+        return s
+}
+
+// countTrue counts the true values (the overlap forecast's file count).
+func countTrue(m map[string]bool) int {
+        n := 0
+        for _, v := range m {
+                if v {
+                        n++
+                }
+        }
+        return n
 }

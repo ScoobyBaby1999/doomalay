@@ -159,8 +159,17 @@ func TestV824_TreeDotPath(t *testing.T) {
                 t.Fatalf("the './' tree should equal '': %q", out)
         }
         out = wsRun(s, sid, `{"action":"ls","ws":"me/greplines","path":"/./"}`)
-        if !strings.Contains(out, "2 entries") {
-                t.Fatalf("the '/./' ls should equal '': %q", out)
+        // v1.52.4 THE HONEST TREE updated this pin: `ls` at the root now
+        // lists DIRECT CHILDREN ONLY (the old no-op filter leaked the full
+        // recursive dump). This fake carries no root-level entries (both
+        // files live under lib/) so the honest count is 0 — the DOT-PATH
+        // NORMALIZATION this pin guards shows as "at /" (the old dead-
+        // prefix bug rendered "at ."); use tree for the recursive listing.
+        if !strings.Contains(out, "at / @c") {
+                t.Fatalf("the '/./' ls must normalize to the root display: %q", out)
+        }
+        if strings.Contains(out, "at .") {
+                t.Fatalf("the dead-prefix display bug reproduced: %q", out)
         }
 }
 
