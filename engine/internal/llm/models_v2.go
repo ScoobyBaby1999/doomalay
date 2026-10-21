@@ -248,12 +248,14 @@ func enrichFromModelsDev(name string, models []fetchedModel) []fetchedModel {
                                 m.Pricing = devPricingString(dm)
                         }
                         if !m.IsFree && dm.IsFree() {
+                                // the registry's cost-0/0 law can only make a model FREE —
+                                // never paid. A fetcher that already says free speaks its
+                                // PROVIDER's own tier semantics (PrivateMode's free tier,
+                                // NVIDIA's free endpoints, OpenRouter's zero-priced routes)
+                                // and that beats the registry's generic list rates (the
+                                // v155 research: models.dev prices PM's models at their
+                                // pay-per-token rates while PM's tier itself is free).
                                 m.IsFree = true
-                        } else if m.IsFree && !dm.IsFree() && dm.Cost.Input >= 0 {
-                                // the registry prices this model as PAID — its live word wins
-                                // over the fetcher's name-based guess (the -free suffix lie:
-                                // minimax-m3-free / qwen3.6-plus-free are paid on zen).
-                                m.IsFree = false
                         }
                         if dm.ToolCall {
                                 m.Caps = appendUnique(m.Caps, "tools")
@@ -280,15 +282,39 @@ func enrichFromModelsDev(name string, models []fetchedModel) []fetchedModel {
 }
 
 // devLiveEffort turns the registry's reasoning_options into the live
-// effort surface (effort.go's SOURCE 1). v1.55.3 wires the "effort" ladder
-// (the exact per-model values the registry documents — none/low/medium/
-// high/xhigh/max; a "none" entry means the reasoning is disableable, so
-// the spec is not Mandatory). The toggle + budget_tokens controls are
-// v1.55.4's refinement (THE LIVE EFFORT phase). nil = no live ladder.
+// effort surface (effort.go's SOURCE 1) — the FULL mapping (v1.55.4 THE
+// LIVE EFFORT):
+//
+//      effort        → the exact documented ladder (none/low/medium/high/
+//                     xhigh/max). A ladder WITHOUT a none/off entry means the
+//                     reasoning is MANDATORY (glm-5.3: low/high/max — the
+//                     docs-verified PM law, now read from the data).
+//      toggle        → the on/off vocabulary (kimi: reasoning is a switch).
+//      budget_tokens → Claude-style reasoning.max_tokens dial — the budget
+//                     knob rides the low/medium/high ladder.
+//
+// nil = no live ladder (the registry says the model has no reasoning
+// control — or doesn't know the model).
 func devLiveEffort(dm *DevModelLive) *LiveEffortInfo {
         for _, opt := range dm.ReasoningOptions {
-                if opt.Type == "effort" && len(opt.Values) > 0 {
-                        return &LiveEffortInfo{Levels: append([]string(nil), opt.Values...)}
+                switch opt.Type {
+                case "effort":
+                        if len(opt.Values) == 0 {
+                                continue
+                        }
+                        e := &LiveEffortInfo{Levels: append([]string(nil), opt.Values...)}
+                        hasDisable := false
+                        for _, v := range opt.Values {
+                                if strings.EqualFold(v, "none") || strings.EqualFold(v, "off") {
+                                        hasDisable = true
+                                }
+                        }
+                        e.Mandatory = !hasDisable
+                        return e
+                case "toggle":
+                        return &LiveEffortInfo{Levels: []string{"on", "off"}, Default: "on"}
+                case "budget_tokens":
+                        return &LiveEffortInfo{Levels: []string{"low", "medium", "high"}, SupportsBudget: true}
                 }
         }
         return nil

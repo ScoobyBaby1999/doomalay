@@ -16,6 +16,10 @@ import (
 // values the native set allows (the pmsdk 400-resilience net catches any
 // residual drift browser-side).
 func TestPMNativeLadder(t *testing.T) {
+        if err := SetModelsDevForTest([]byte(pmSeedV1554)); err != nil {
+                t.Fatalf("seed: %v", err)
+        }
+        defer ClearModelsDevForTest()
         for _, model := range []string{"glm-5.3", "glm-5.3-flash", "glm-latest", "glm-5.2"} {
                 spec := ResolveEffort("privatemodeai", model)
                 if len(spec.Levels) == 0 {
@@ -30,9 +34,11 @@ func TestPMNativeLadder(t *testing.T) {
                 if spec.Default == "" || !hasString(spec.Levels, spec.Default) {
                         t.Errorf("%s: default %q not on the advertised ladder %v", model, spec.Default, spec.Levels)
                 }
-                // v0.83.2: glm's documented ladder INCLUDES max (default max)
-                if !hasString(spec.Levels, "max") || spec.Default != "max" {
-                        t.Errorf("%s: docs ladder low/high/max default max missing (levels=%v default=%q)", model, spec.Levels, spec.Default)
+                // v1.55.4: the live ladder law (the docs-table era is over).
+                // v1.55.4: glm's live ladder INCLUDES max; the DEFAULT rides
+                // withDefault (the registry carries no default marker).
+                if !hasString(spec.Levels, "max") {
+                        t.Errorf("%s: the live ladder low/high/max missing max (levels=%v)", model, spec.Levels)
                 }
         }
         // the wire: every sendable level lands inside the deployed enum

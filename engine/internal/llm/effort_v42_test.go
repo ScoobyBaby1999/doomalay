@@ -202,6 +202,12 @@ func TestMatchOREntryV42(t *testing.T) {
 
 func TestResolveEffortV42(t *testing.T) {
         useTestORRegistry(t, startCannedOR(t))
+        // v1.55.4: PM's surfaces resolve LIVE from the registry now (the docs
+        // table is dead); the exact same ladders ride models.dev's data.
+        if err := SetModelsDevForTest([]byte(pmSeedV1554)); err != nil {
+                t.Fatalf("seed: %v", err)
+        }
+        defer ClearModelsDevForTest()
         cases := []struct {
                 name      string
                 provider  string
@@ -219,16 +225,17 @@ func TestResolveEffortV42(t *testing.T) {
                 // documented low/high/max with DEFAULT max (mandatory — the
                 // current docs supersede the v0.69 deployed-enum filter), and
                 // gpt-oss keeps low/medium/high default medium.
-                {"pm kimi-k2.6 toggle", "privatemodeai", "kimi-k2.6", "on,off", "on", false, "chat_template_kwargs", "pm-docs"},
-                {"pm kimi-latest toggle (docs table, v0.83.2)", "privatemodeai", "kimi-latest", "on,off", "on", false, "chat_template_kwargs", "pm-docs"},
-                {"pm glm-5.3 mandatory enum (docs: low/high/max, default max)", "privatemodeai", "glm-5.3", "low,high,max", "max", true, "reasoning_effort", "pm-docs"},
-                {"pm gpt-oss-120b enum", "privatemodeai", "gpt-oss-120b", "low,medium,high", "medium", false, "reasoning_effort", "pm-docs"},
+                {"pm kimi-k2.6 toggle (live registry)", "privatemodeai", "kimi-k2.6", "on,off", "on", false, "chat_template_kwargs", "provider-live"},
+                {"pm kimi-latest toggle (live registry)", "privatemodeai", "kimi-latest", "on,off", "on", false, "chat_template_kwargs", "provider-live"},
+                {"pm glm-5.3 mandatory enum (live: low/high/max, no disable rung)", "privatemodeai", "glm-5.3", "low,high,max", "low", true, "reasoning_effort", "provider-live"},
+                {"pm gpt-oss-120b enum (live: low/medium/high, no disable rung)", "privatemodeai", "gpt-oss-120b", "low,medium,high", "low", true, "reasoning_effort", "provider-live"},
                 // NVIDIA — the blanket-on/off complaint.
                 {"nvidia lightning toggle (OR toggle-only)", "nvidia", "nvidia/nemotron-3.5-lightning-30b-a3b", "on,off", "on", false, "chat_template_kwargs", "openrouter"},
                 {"nvidia super enum", "nvidia", "nvidia/nemotron-3-super-120b-a12b", "low,medium", "medium", false, "reasoning_effort", "openrouter"},
                 {"nvidia kimi-k3 enum", "nvidia", "moonshotai/kimi-k3", "low,high,max", "max", false, "reasoning_effort", "openrouter"},
                 {"nvidia gemma toggle default-off", "nvidia", "google/gemma-4-31b-it", "on,off", "off", false, "chat_template_kwargs", "openrouter"},
-                {"nvidia unknown → blanket", "nvidia", "totally-unknown-model", "on,off", "on", false, "chat_template_kwargs", "provider-default"},
+                // v1.55.4 THE NO-STATIC LAW: the blanket is dead.
+                {"nvidia unknown → honest nothing", "nvidia", "totally-unknown-model", "", "", false, "", ""},
                 // OpenRouter — its own list is authoritative.
                 {"openrouter claude enum", "openrouter", "anthropic/claude-fable-5", "low,medium,high,xhigh,max", "high", true, "reasoning", "openrouter"},
                 {"openrouter kimi toggle", "openrouter", "moonshotai/kimi-k2.6", "on,off", "on", false, "reasoning", "openrouter"},
@@ -236,8 +243,8 @@ func TestResolveEffortV42(t *testing.T) {
                 {"openrouter bogus id → no knob", "openrouter", "bogus-model-id", "", "", false, "", ""},
                 // Providers without a blanket AND without an OR match → [] (no button).
                 {"together unknown → no levels", "together", "some-unknown-model", "", "", false, "", ""},
-                // Cloudflare keeps the curated fallback path.
-                {"cloudflare unknown → blanket + catalog shape", "cloudflare", "@cf/nvidia/nemotron-3-120b-a12b", "on,off", "on", false, "catalog", "provider-default"},
+                // v1.55.4: Cloudflare's curated fallback path is dead too.
+                {"cloudflare unknown → honest nothing", "cloudflare", "@cf/nvidia/nemotron-3-120b-a12b", "", "", false, "", ""},
         }
         for _, c := range cases {
                 spec := ResolveEffort(c.provider, c.model)
@@ -276,17 +283,18 @@ func TestResolveEffortPrecedenceV42(t *testing.T) {
         // Offline: the registry fetch fails and has never succeeded →
         // blankets/curated take over.
         useTestORRegistry(t, nil)
+        ClearModelsDevForTest()
         spec = ResolveEffort("nvidia", "moonshotai/kimi-k2.6")
-        if strings.Join(spec.Levels, ",") != "on,off" || spec.Source != "provider-default" {
-                t.Errorf("offline nvidia should degrade to the blanket: %+v", spec)
+        if len(spec.Levels) != 0 {
+                t.Errorf("offline unknown nvidia must answer no ladder (the blanket is dead): %+v", spec)
         }
         spec = ResolveEffort("privatemodeai", "kimi-k2.6")
-        if strings.Join(spec.Levels, ",") != "on,off" {
-                t.Errorf("offline PM kimi should keep the toggle: %+v", spec)
+        if len(spec.Levels) != 0 {
+                t.Errorf("offline PM kimi must answer no ladder (no static table): %+v", spec)
         }
         spec = ResolveEffort("openrouter", "anthropic/claude-fable-5")
-        if len(spec.Levels) != 7 || spec.Source != "catalog" {
-                t.Errorf("offline openrouter should degrade to the curated ladder: %+v", spec)
+        if len(spec.Levels) != 0 {
+                t.Errorf("offline openrouter must answer no ladder (the curated ladder is dead): %+v", spec)
         }
 }
 
@@ -294,6 +302,10 @@ func TestResolveEffortPrecedenceV42(t *testing.T) {
 
 func TestBuildEffortBodyForV42(t *testing.T) {
         useTestORRegistry(t, startCannedOR(t))
+        if err := SetModelsDevForTest([]byte(pmSeedV1554)); err != nil {
+                t.Fatalf("seed: %v", err)
+        }
+        defer ClearModelsDevForTest()
         cases := []struct {
                 name     string
                 provider string
@@ -312,7 +324,8 @@ func TestBuildEffortBodyForV42(t *testing.T) {
                 {"nvidia lightning coerce high→on", "nvidia", "nvidia/nemotron-3.5-lightning-30b-a3b", "high", `{"chat_template_kwargs":{"thinking":true}}`},
                 {"nvidia super coerce high→medium", "nvidia", "nvidia/nemotron-3-super-120b-a12b", "high", `{"reasoning_effort":"medium"}`},
                 {"nvidia gemma enable_thinking", "nvidia", "google/gemma-4-31b-it", "on", `{"chat_template_kwargs":{"enable_thinking":true}}`},
-                {"nvidia unknown toggle", "nvidia", "totally-unknown-model-x", "high", `{"chat_template_kwargs":{"thinking":true}}`},
+                // v1.55.4: the blanket is dead — an unknown model sends NOTHING.
+                {"nvidia unknown → nothing (the blanket is dead)", "nvidia", "totally-unknown-model-x", "high", "null"},
                 // PrivateMode shapes (research 3-c: kimi thinking, glm/gpt-oss reasoning_effort).
                 {"pm kimi on", "privatemodeai", "kimi-k2.6", "on", `{"chat_template_kwargs":{"thinking":true}}`},
                 {"pm kimi off", "privatemodeai", "kimi-k2.6", "off", `{"chat_template_kwargs":{"thinking":false}}`},

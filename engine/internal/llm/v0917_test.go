@@ -194,7 +194,8 @@ func TestMistralEffortOfflineSendsNothing(t *testing.T) {
         if cfg.EnvVar != "MISTRAL_API_KEY" || cfg.BaseURL != "https://api.mistral.ai/v1" {
                 t.Errorf("mistral config should be pure wiring: %+v", cfg)
         }
-        if cfg.ProbeModel != "" {
-                t.Errorf("mistral carries a probe model — the list must stay fully dynamic")
-        }
+        // v1.55.4: the ProbeModel FIELD is gone entirely — the strongest
+        // form of the v0.91.7 law (the list stays fully dynamic; no pin can
+        // even exist now).
+        _ = cfg
 }

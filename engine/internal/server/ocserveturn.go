@@ -228,6 +228,29 @@ func (s *Server) runOcServeTurn(ctx context.Context, pipe *chatPipe, sessionID s
 // terminal (never a silent hang).
 func (s *Server) ocServeStreamTurn(ctx context.Context, m *ocserve.Manager, sessionID string, sess *store.Session, userText string, out chan<- map[string]any) error {
         modelID := strings.TrimPrefix(sess.Model, "opencode/")
+        // v1.55.4 THE VARIANT LAW: the 2.x serve speaks effort through VARIANTS
+        // (provider/model#variant — the docs' own grammar, live-captured from
+        // the serve's catalogue: variants [{id:"low", settings:{reasoningEffort:
+        // "low"}}, …]). The chat's effort knob maps onto the model's OWN variant
+        // ladder — fetched LIVE from the healthy serve (never a static table);
+        // no match → the base model (the serve's default reasoning).
+        effort := strings.TrimSpace(sess.Effort)
+        if effort != "" && effort != "med" && effort != "off" {
+                if cat := m.LiveCatalog(); len(cat) > 0 {
+                        for _, sm := range cat {
+                                if sm.ModelID != modelID {
+                                        continue
+                                }
+                                for _, v := range sm.Variants {
+                                        if strings.EqualFold(v.Settings.ReasoningEffort, effort) {
+                                                modelID = modelID + "#" + v.ID
+                                                break
+                                        }
+                                }
+                                break
+                        }
+                }
+        }
         for attempt := 0; attempt < 2; attempt++ {
                 serveSess, fresh, err := s.ocServeSessionID(m, sess)
                 if err != nil {

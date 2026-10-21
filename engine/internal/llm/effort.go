@@ -30,118 +30,27 @@
 //        PrivateMode or NVIDIA inherits moonshotai/kimi-k2.6's surface.
 //        Matching ladder: exact id → exact last-segment → family → last-segment
 //        prefix ("nvidia/nemotron-3.5-lightning-30b-a3b" ⊇ "nemotron-3.5-lightning").
-//        10-minute TTL cache, stale-on-error (an offline build degrades to the
-//        blanket fallbacks instead of losing the effort button).
+//        10-minute TTL cache, stale-on-error (an offline build answers
+//        honestly with no ladder — the no-static law).
 //
-//      SOURCE 3 (never-blank blanket): providerDefaultLevels — per-provider
-//      conservative ladders, ONLY for models OpenRouter doesn't know at all.
+//      v1.55.4 THE NO-STATIC LAW: SOURCE 3 (the per-provider blankets) and
+//      SOURCE 4 (the curated reasoning_catalog.json) are DEAD — an unknown
+//      model honestly answers "no knob" (levels []), never an invented
+//      ladder. The REQUEST translation below stays: it is structural API
+//      knowledge (HOW each provider spells the knob), never a model list.
 //
-//      SOURCE 4 (last resort): the curated reasoning_catalog.json — demoted
-//      from v0.13's primary spot to the final fallback (its VERIFIED request
-//      bodies still drive the translation for providers outside the shape map,
-//      e.g. Cloudflare).
-//
-// The REQUEST translation is a small per-PROVIDER param-shape map. This is
-// structural API knowledge (HOW each provider spells the knob), NOT model
-// data — the only static thing left, by design:
-//
-//      openrouter                     → reasoning:{effort} (enum models) /
-//                                       reasoning:{enabled:true} (toggle models)
-//      openai / deepseek / groq /     → top-level reasoning_effort
-//      together / mistral / xai-style
-//      nvidia                         → per model: reasoning_effort when the OR
-//                                       family exposes it, else
-//                                       chat_template_kwargs:{thinking|enable_thinking}
-//      privatemodeai                  → kimi family: chat_template_kwargs:{thinking:bool};
-//                                       glm/gpt-oss family: reasoning_effort
-//      anthropic                      → top-level effort (Claude 4.5+; the
-//                                       thinking:{budget_tokens} form is being
-//                                       phased out per research 3-c)
-//      github-models                  → never send (undocumented; a 400
-//                                       blacklists the slot)
-//      cloudflare / unlisted          → curated-catalog body translation
-//
-// Values pass through a coercion map (research 3-c: minimal→low, medium→high,
-// xhigh→high, none→low) plus a nearest-ladder fallback, so a level the model
-// doesn't offer never reaches the wire. The v0.26 400-retry-without-param +
-// engine-lifetime blacklist in chat.go stays as the safety net for anything
-// the dynamic data still gets wrong.
 
 package llm
 
 import (
-        _ "embed"
         "encoding/json"
-        "fmt"
         "sort"
         "strings"
         "sync"
         "time"
 )
 
-//go:embed catalog/reasoning_catalog.json
-var reasoningCatalogJSON []byte
 
-// reasoningCatalog is the parsed curated catalog.
-type reasoningCatalog struct {
-        Reasoning map[string]reasoningEntry `json:"reasoning"`
-        WebSearch map[string]webSearchEntry `json:"web_search"`
-}
-
-type reasoningEntry struct {
-        Body         json.RawMessage `json:"body"`
-        EffortLevels []string        `json:"effort_levels"`
-        Note         string          `json:"note"`
-}
-
-type webSearchEntry struct {
-        Native bool            `json:"native"`
-        Body   json.RawMessage `json:"body"`
-}
-
-var (
-        reasoningOnce sync.Once
-        reasoningCur  *reasoningCatalog
-        reasoningErr  error
-)
-
-// loadReasoningCatalog parses the embedded JSON. Comment keys ("//", "//1",
-// …) carry STRING values that fail strict unmarshaling into entry structs —
-// parse each section as a raw map and keep only entries that decode cleanly.
-func loadReasoningCatalog() (*reasoningCatalog, error) {
-        reasoningOnce.Do(func() {
-                c := reasoningCatalog{
-                        Reasoning: map[string]reasoningEntry{},
-                        WebSearch: map[string]webSearchEntry{},
-                }
-                var raw struct {
-                        Reasoning map[string]json.RawMessage `json:"reasoning"`
-                        WebSearch map[string]json.RawMessage `json:"web_search"`
-                }
-                if err := json.Unmarshal(reasoningCatalogJSON, &raw); err != nil {
-                        reasoningErr = fmt.Errorf("parse reasoning_catalog: %w", err)
-                        return
-                }
-                for k, v := range raw.Reasoning {
-                        var e reasoningEntry
-                        if err := json.Unmarshal(v, &e); err != nil {
-                                continue // comment key or unknown shape — skip
-                        }
-                        c.Reasoning[k] = e
-                }
-                for k, v := range raw.WebSearch {
-                        var e webSearchEntry
-                        if err := json.Unmarshal(v, &e); err != nil {
-                                continue
-                        }
-                        // Entries with only a "note" (no native flag) are comments' kin —
-                        // keep them; the flag defaults false which is the safe direction.
-                        c.WebSearch[k] = e
-                }
-                reasoningCur = &c
-        })
-        return reasoningCur, reasoningErr
-}
 
 // ── SOURCE 2: the OpenRouter reasoning registry ────────────────────────────
 
@@ -354,6 +263,9 @@ type LiveEffortInfo struct {
         Default   string
         Mandatory bool
         Param     string
+        // v1.55.4: the registry's budget_tokens reasoning control (Claude's
+        // reasoning.max_tokens dial) — the budget knob survives the live cut.
+        SupportsBudget bool
 }
 
 // ResolveEffort resolves (provider, model) → EffortSpec from the dynamic
@@ -378,15 +290,23 @@ func ResolveEffortWithLive(provider, rawModel string, live *LiveEffortInfo) *Eff
                 return spec.withDefault()
         }
 
-        // 1.5 v0.83.2: PrivateMode's OWN documented surface — the provider
-        // speaking about its models beats OR's family view (the user's
-        // "toggle effort modes like they can with Nvidia reliably anytime"
-        // spec; the docs-verified ladders land the button on every known PM
-        // chat model, max included).
-        if provider == "privatemodeai" {
-                if pm := pmFamilyEffort(rawModel); pm != nil {
-                        pm.Levels = canonicalLevels(pm.Levels)
-                        return pm.withDefault()
+        // 1.5 v1.55.4 THE LIVE REGISTRY: models.dev's OWN reasoning_options for
+        // this exact model — the live per-model truth (effort enums with the
+        // exact documented values, on/off toggles, budget-token dials). This
+        // covers the chat-time path and every provider the catalog merge
+        // enriches; the docs-verified PM surfaces the old static table pinned
+        // now ride the registry's own data (kimi → toggle, glm → low/high/max,
+        // gpt-oss → low/medium/high — verified against the live doc).
+        if dm := LookupDevModel(provider, rawModel); dm != nil {
+                if e := devLiveEffort(dm); e != nil {
+                        spec.Levels = canonicalLevels(e.Levels)
+                        spec.Default = e.Default
+                        spec.Mandatory = e.Mandatory
+                        spec.CanDisable = !e.Mandatory
+                        spec.SupportsBudget = e.SupportsBudget
+                        spec.Param = effortParamFor(provider, rawModel, spec, nil)
+                        spec.Source = "provider-live"
+                        return spec.withDefault()
                 }
         }
 
@@ -419,24 +339,11 @@ func ResolveEffortWithLive(provider, rawModel string, live *LiveEffortInfo) *Eff
                 return spec.withDefault()
         }
 
-        // 3. Provider default blanket — only for models OR doesn't know.
-        if levels, ok := providerDefaultLevels[provider]; ok {
-                spec.Levels = append([]string{}, levels...)
-                spec.Default = providerDefaultEffort[provider]
-                spec.CanDisable = true
-                spec.Param = effortParamFor(provider, rawModel, spec, nil)
-                spec.Source = "provider-default"
-                return spec.withDefault()
-        }
-
-        // 4. Curated catalog — the last resort.
-        if entry, ok := resolveReasoningEntry(provider, rawModel); ok && len(entry.EffortLevels) > 0 {
-                spec.Levels = canonicalLevels(entry.EffortLevels)
-                spec.CanDisable = true
-                spec.Param = "catalog"
-                spec.Source = "catalog"
-                return spec.withDefault()
-        }
+        // v1.55.4 THE NO-STATIC LAW: the per-provider blankets + the curated
+        // reasoning catalog are DEAD — an unknown model honestly answers "no
+        // knob" (levels []). The wire-vocab tables below stay: they are
+        // PROTOCOL shapes (how a level serializes per provider), never model
+        // lists.
         return spec.withDefault()
 }
 
@@ -504,85 +411,6 @@ func DetectEffortLevels(provider, rawModel string) []string {
         return ResolveEffort(provider, rawModel).Levels
 }
 
-// ── v0.83.2 THE PRIVATEMODE OWN-SURFACE TABLE (SOURCE 1.5) ─────────────────
-//
-// User spec: "For privatemodeai, let's make sure we enable effort modes for
-// their models. We want users to be able to toggle effort modes like they
-// can with Nvidia reliably anytime."
-//
-// The OFFICIAL docs (docs.privatemode.ai/models/overview, v1.57, fetched
-// live 2026-10-01) define PM's CURRENT reasoning surface — and it DISAGREES
-// with both the OpenRouter family inheritance (which handed glm-5.3 a
-// max-less ladder and kimi-latest a fake enum) and the v0.69 live probe
-// (whose deployed validator rejected 'max'; the surface has since evolved —
-// 'max' is now glm's DOCUMENTED DEFAULT):
-//
-//      GLM-5.3, GLM-5.3-Flash (+ -latest aliases) → reasoning_effort:
-//        low, high, max — default max, reasoning can't be switched off
-//        (any other value, incl. none, maps to max).
-//      gpt-oss-120b → reasoning_effort: low, medium, high — default medium.
-//      Kimi K2.6 (+ kimi-latest) → chat_template_kwargs:{"thinking":bool}
-//        — default on (deprecated Sep 28 2026).
-//      All chat models reason by default; reasoning returns in the `reasoning`
-//      field (deprecated copy in reasoning_content).
-//
-// Precedence: provider-live (SOURCE 1) still wins; then THIS table (the
-// provider's own documented surface — it knows its models better than OR's
-// family view); then the OR registry; then blankets. Only the ids the docs
-// enumerate are pinned here — anything else keeps the dynamic chain.
-
-// pmFamilyEffort returns the documented PM effort surface for a model, or
-// nil when the family isn't in the docs table (fall through to OR).
-func pmFamilyEffort(rawModel string) *EffortSpec {
-        s := strings.ToLower(rawModel)
-        s = strings.TrimPrefix(s, "privatemodeai/")
-        s = strings.TrimPrefix(s, "openai/") // PM hosts the aliased twin too
-        switch {
-        case strings.Contains(s, "kimi"):
-                // The verified PM toggle — even when the OR family carries an
-                // enum, PM's own API for kimi is the boolean (effortParamFor
-                // agrees).
-                return &EffortSpec{Levels: []string{"on", "off"}, Default: "on",
-                        CanDisable: true, Param: "chat_template_kwargs", Source: "pm-docs"}
-        case strings.Contains(s, "glm"):
-                // glm-5.2/5.3/flash + the -latest aliases all route to GLM-5.3;
-                // reasoning is MANDATORY (maps-to-max, never off).
-                return &EffortSpec{Levels: []string{"low", "high", "max"}, Default: "max",
-                        Mandatory: true, CanDisable: false, Param: "reasoning_effort", Source: "pm-docs"}
-        case strings.Contains(s, "gpt-oss"):
-                return &EffortSpec{Levels: []string{"low", "medium", "high"}, Default: "medium",
-                        CanDisable: true, Param: "reasoning_effort", Source: "pm-docs"}
-        case strings.Contains(s, "deepseek-ocr"):
-                // OCR model with special prompt formatting — no reasoning dial.
-                return &EffortSpec{Levels: []string{}, CanDisable: false, Param: "", Source: "pm-docs"}
-        }
-        return nil
-}
-
-// providerDefaultLevels — SOURCE 3: the never-blank blanket, v0.42 semantics
-// (ONLY for models the OpenRouter registry doesn't know — it used to cover
-// every model on these providers, which is exactly the "wrong for most
-// models" complaint). A wrong param is still safe: chat.go's 400-resilience
-// retries without it and blacklists the (provider, model) pair.
-var providerDefaultLevels = map[string][]string{
-        "nvidia":        {"on", "off"},
-        "privatemodeai": {"on", "off"},
-        "opencode":      {"low", "high"},
-        "opencode-zen":  {"low", "high"},
-        "opencode-go":   {"low", "high"},
-        "cloudflare":    {"on", "off"},
-}
-
-// providerDefaultEffort is the blanket's default level per provider.
-var providerDefaultEffort = map[string]string{
-        "nvidia":        "on",
-        "privatemodeai": "on",
-        "opencode":      "high",
-        "opencode-zen":  "high",
-        "opencode-go":   "high",
-        "cloudflare":    "on",
-}
-
 // ── The per-PROVIDER param-shape map (structural API knowledge) ───────────
 
 // effortParamFor picks the request shape for provider+model from the
@@ -628,7 +456,7 @@ func effortParamFor(provider, rawModel string, spec *EffortSpec, orEntry *orMode
         case "github-models", "github":
                 return "" // conservative — undocumented, a 400 blacklists the slot
         }
-        return "catalog"
+        return "" // v1.55.4: unlisted providers send nothing (the curated catalog is dead)
 }
 
 // isKimiFamily reports whether the model belongs to the kimi family (the
@@ -872,84 +700,10 @@ func BuildEffortBodyFor(provider, rawModel, level string) map[string]any {
         case "":
                 return nil // conservative providers (github-models, toggle on OpenAI-style)
         }
-        // "catalog" — Cloudflare + unlisted providers keep the v0.13 curated
-        // body translation (verified shapes: CTK toggle flip / enum replace /
-        // reasoning.enabled swap).
-        return catalogEffortBody(provider, rawModel, level)
-}
-
-// catalogEffortBody is the v0.13 curated-catalog translation, unchanged —
-// the fallback for providers outside the shape map.
-func catalogEffortBody(provider, rawModel, level string) map[string]any {
-        entry, ok := resolveReasoningEntry(provider, rawModel)
-        if !ok || !entry.hasBody() {
-                return nil
-        }
-        var body map[string]any
-        if err := json.Unmarshal(entry.Body, &body); err != nil {
-                return nil
-        }
-        // (a) toggle models — flip the first boolean inside chat_template_kwargs.
-        if ctk, isMap := body["chat_template_kwargs"].(map[string]any); isMap {
-                for k, v := range ctk {
-                        if _, isBool := v.(bool); isBool {
-                                ctk[k] = level != "off"
-                                break
-                        }
-                }
-                return body
-        }
-        // (b) enum models — replace reasoning_effort with the level when allowed.
-        if _, hasRE := body["reasoning_effort"]; hasRE {
-                if len(entry.EffortLevels) > 0 {
-                        for _, allowed := range entry.EffortLevels {
-                                if allowed == level {
-                                        body["reasoning_effort"] = level
-                                        return body
-                                }
-                        }
-                        return body // level not offered — keep the catalog default
-                }
-                body["reasoning_effort"] = level
-                return body
-        }
-        // (c) reasoning:{enabled:true}-style — swap to effort.
-        if r, isMap := body["reasoning"].(map[string]any); isMap {
-                r["effort"] = level
-                return body
-        }
-        return body
-}
-
-// hasBody reports whether the entry carries a non-empty body object.
-func (e reasoningEntry) hasBody() bool {
-        s := strings.TrimSpace(string(e.Body))
-        return s != "" && s != "{}"
-}
-
-// resolveReasoningEntry walks the curated catalog key ladder:
-// provider/model → provider/<last-seg> → provider/* → logical → family → *.
-func resolveReasoningEntry(provider, rawModel string) (reasoningEntry, bool) {
-        cat, err := loadReasoningCatalog()
-        if err != nil || cat == nil {
-                return reasoningEntry{}, false
-        }
-        logical := lastSegment(rawModel)
-        family := MakeFamily(rawModel)
-        keys := []string{
-                provider + "/" + rawModel,
-                provider + "/" + logical,
-                provider + "/*",
-                logical,
-                family,
-                "*",
-        }
-        for _, k := range keys {
-                if entry, ok := cat.Reasoning[k]; ok {
-                        return entry, true
-                }
-        }
-        return reasoningEntry{}, false
+        // v1.55.4: the curated catalog body translation is dead (no static
+        // lists); unlisted providers conservatively send nothing — the
+        // 400-resilience + blacklist stay as the belt.
+        return nil
 }
 
 // hasString is a tiny case-insensitive-free membership test (levels are
@@ -965,49 +719,18 @@ func hasString(list []string, want string) bool {
 
 // ── Native web search (unchanged v0.13 surface) ────────────────────────────
 
-// supportsNativeWebSearch checks the curated web_search section:
-// provider/model → provider/<last-seg> → provider/* → "*".
-// Only OpenRouter gets a native body (plugins:[{id:"web"}]).
+// supportsNativeWebSearch answers the STRUCTURAL law (v1.55.4: the curated
+// web_search section of the old reasoning catalog is dead — its per-model
+// entries were legacy copies of the same structural truth): OpenRouter is
+// the one provider with a NATIVE chat-completions web plugin; everyone
+// else answers false and the turn rides the client-side web_tools loop.
 func supportsNativeWebSearch(provider, rawModel string) (bool, map[string]any) {
-        cat, err := loadReasoningCatalog()
-        if err != nil || cat == nil {
-                return false, nil
-        }
-        logical := lastSegment(rawModel)
-        keys := []string{
-                provider + "/" + rawModel,
-                provider + "/" + logical,
-                provider + "/*",
-                "*",
-        }
-        for _, k := range keys {
-                if entry, ok := cat.WebSearch[k]; ok {
-                        if !entry.Native {
-                                return false, nil
-                        }
-                        var body map[string]any
-                        if len(entry.Body) > 0 {
-                                _ = json.Unmarshal(entry.Body, &body)
-                        }
-                        return true, body
-                }
-        }
-        return false, nil
+	if provider != "openrouter" {
+		return false, nil
+	}
+	return true, map[string]any{"plugins": []any{map[string]any{"id": "web"}}}
 }
 
-// NativeWebSearchBody returns the request fragment enabling the provider's
-// NATIVE web search (OpenRouter plugins). nil → use the injected tool loop.
-//
-// v0.93.1 THE FREE-TIER 402 (live-reproduced + captured on the wire): the
-// `web` plugin is a PAID OpenRouter feature — on ANY free-tier model
-// (`…:free`, the openrouter/free router, or a zero-priced registry entry)
-// the request answers 402 "Insufficient credits. This account never
-// purchased credits" even though the model itself is free. The engine then
-// armed it for EVERY OpenRouter web-search turn, so free-tier users could
-// never use web search — the user's "even the free model says the quota is
-// reached when I barley used it" report. Free models now return nil here,
-// which routes the turn onto the client-side ReAct web_search loop (free,
-// on-device) instead of the paid plugin.
 func NativeWebSearchBody(provider, rawModel string) map[string]any {
         if provider != "openrouter" {
                 return nil // only OpenRouter has a native plugin (verified)

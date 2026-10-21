@@ -228,7 +228,10 @@ func TestV1553_EnrichmentMerge(t *testing.T) {
 
         in := []fetchedModel{
                 {RawID: "big-pickle", SyncedLive: true},
-                {RawID: "minimax-m3-free", IsFree: true, SyncedLive: true}, // the -free name LIE
+                // THE -FREE NAME LIE IS DEAD AT THE SOURCE: fetchOpenCodeModels sets
+                // NO free bit (the -free suffix heuristic is gone) — the registry's
+                // live price decides (minimax-m3-free is PAID on zen despite the name)
+                {RawID: "minimax-m3-free", SyncedLive: true},
                 {RawID: "gpt-5.5", SyncedLive: true},
                 {RawID: "gone-soon", SyncedLive: true}, // registry-deprecated
                 {RawID: "total-unknown", SyncedLive: true},
@@ -251,11 +254,27 @@ func TestV1553_EnrichmentMerge(t *testing.T) {
         if !hasString(bp.Caps, "tools") || !hasString(bp.Caps, "reasoning") {
                 t.Fatalf("capability merge: %v", bp.Caps)
         }
-        // THE -FREE NAME LIE: the registry prices minimax-m3-free as PAID — its
-        // live word wins over the fetcher's suffix guess (the old static
-        // exception is dead; the law is the data).
+        // THE -FREE NAME LIE: the name carries NO free signal anymore — the
+        // registry's live price decides, and minimax-m3-free is PAID on zen
         if mm := byID["minimax-m3-free"]; mm.IsFree {
-                t.Fatalf("the -free name lie must lose to the registry's live price")
+                t.Fatalf("the -free name must not read as free — the registry's live price decides")
+        }
+        // THE TIER-SPEAKS LAW: a fetcher that already says free (the provider's
+        // own tier semantics — PM's free tier, NVIDIA's free endpoints) keeps it
+        // even when the registry carries generic list rates
+        dbFreeIn := []fetchedModel{{RawID: "glm-5.3", IsFree: true, SyncedLive: true}}
+        rawPM := map[string]devProviderLive{
+                "privatemode-ai": {Name: "PM", Models: map[string]*DevModelLive{
+                        "glm-5.3": {Name: "GLM 5.3", Cost: DevCost{Input: 1.791, Output: 6.6326}},
+                }},
+        }
+        db2, flat2 := indexModelsDev(rawPM)
+        mdMu.Lock()
+        mdDB, mdFlat, mdFetchedAt = db2, flat2, time.Now()
+        mdMu.Unlock()
+        pmOut := enrichFromModelsDev("privatemodeai", dbFreeIn)
+        if len(pmOut) != 1 || !pmOut[0].IsFree {
+                t.Fatalf("the provider's own free-tier law beats the registry's list rates: %+v", pmOut)
         }
         if g := byID["gpt-5.5"]; g.ContextLength != 1050000 || g.Effort == nil || len(g.Effort.Levels) != 5 {
                 t.Fatalf("gpt-5.5 merge: %+v %+v", g, g.Effort)

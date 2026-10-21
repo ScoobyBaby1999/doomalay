@@ -43,6 +43,7 @@ type fakeServe struct {
         authTries     int      // how many consecutive turns answer provider.auth
         sse           []string // the clean-turn frames
         sawAuth       []string // every Authorization header seen
+        modelCatalog  string   // v1.55.4: the /api/model payload when armed
 }
 
 func (f *fakeServe) handler(w http.ResponseWriter, r *http.Request) {
@@ -64,6 +65,15 @@ func (f *fakeServe) handler(w http.ResponseWriter, r *http.Request) {
                 json.Unmarshal(b, &body)
                 f.promptTexts = append(f.promptTexts, body["text"].(string))
                 io.WriteString(w, `{"data":{"id":"msg_u1","type":"user"}}`)
+        case r.URL.Path == "/api/model":
+                // v1.55.4 THE VARIANT LAW: the fake serves the serve's own catalogue
+                // (limits/cost/variants) when armed; the manager's LiveCatalog pins
+                // against it.
+                if f.modelCatalog != "" {
+                        io.WriteString(w, f.modelCatalog)
+                } else {
+                        w.WriteHeader(404)
+                }
         case r.URL.Path == "/api/session" && r.Method == "POST":
                 f.sessionN++
                 f.lastSess = "ses_fake_" + strconv.Itoa(f.sessionN)
@@ -463,19 +473,33 @@ func TestOcServeOpeningTextTrimLaw(t *testing.T) {
         }
 }
 
-// TestIsOpenCodeFreeModelSlot pins the dispatch gate's model table (the
-// exact rule fetchOpenCodeModels applies: big-pickle + *-free minus the
-// paid exceptions).
+// TestIsOpenCodeFreeModelSlot pins the dispatch gate's LIVE law (v1.55.4:
+// the old big-pickle + *-free literals with hand-carved exceptions are
+// DEAD — the registry's cost-0/0 data decides). The seed carries the same
+// verdicts the literals encoded: the LAW changed, not the answers.
 func TestIsOpenCodeFreeModelSlot(t *testing.T) {
+        seed := `{"opencode":{"name":"OpenCode","models":{
+                "big-pickle":{"name":"Big Pickle","cost":{"input":0,"output":0}},
+                "glm-5.3-flash-free":{"name":"GLM Flash Free","cost":{"input":0,"output":0}},
+                "minimax-m3.1-flash-free":{"name":"MiniMax M3.1 Flash Free","cost":{"input":0,"output":0}},
+                "minimax-m3-free":{"name":"MiniMax M3 Free","cost":{"input":0.3,"output":1.2}},
+                "qwen3.6-plus-free":{"name":"Qwen Plus Free","cost":{"input":0.4,"output":1.4}},
+                "glm-5.3":{"name":"GLM 5.3","cost":{"input":1.4,"output":4.4}}
+        }}}`
+        if err := llm.SetModelsDevForTest([]byte(seed)); err != nil {
+                t.Fatalf("seed: %v", err)
+        }
+        defer llm.ClearModelsDevForTest()
         cases := map[string]bool{
                 "big-pickle":              true,
                 "opencode/big-pickle":     true,
                 "glm-5.3-flash-free":      true,
                 "minimax-m3.1-flash-free": true,
-                "minimax-m3-free":         false, // the paid exception
-                "qwen3.6-plus-free":       false, // the paid exception
+                "minimax-m3-free":         false, // paid despite the -free name (the registry's price)
+                "qwen3.6-plus-free":       false, // paid despite the -free name (the registry's price)
                 "glm-5.3":                 false, // paid
                 "":                        false,
+                "totally-unknown-model":   false, // honest false (no static fallback)
         }
         for slot, want := range cases {
                 if got := llm.IsOpenCodeFreeModelSlot(slot); got != want {

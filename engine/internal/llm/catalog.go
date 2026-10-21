@@ -10,7 +10,7 @@
 //   - "auth_key"       : GET {base_url}{validate_path} (an endpoint that
 //     REQUIRES auth, e.g. OpenRouter's /auth/key). This
 //     is for providers whose /models is public.
-//   - "chat_probe"     : POST {base_url}/chat/completions with probe_model
+//   - "chat_probe"     : POST {base_url}/chat/completions with a LIVE-roster probe model
 //     and max_tokens=1. Auth errors = invalid; quota or
 //     model errors mean auth PASSED (the key is fine).
 //
@@ -54,8 +54,6 @@ type ProviderConfig struct {
         Validate string `json:"validate,omitempty"`
         // ValidatePath is appended to base_url for the "auth_key" strategy.
         ValidatePath string `json:"validate_path,omitempty"`
-        // ProbeModel is the model used for the "chat_probe" strategy.
-        ProbeModel string `json:"probe_model,omitempty"`
         // WebviewHostile — v0.62.3: the signup/key page can't complete in an
         // Android WebView (Google-only OAuth → disallowed_useragent). The UI
         // routes these straight to a Chrome Custom Tab (the user's Chrome
@@ -407,13 +405,11 @@ func ValidateKey(envVar string, keys map[string]string) ValidateResult {
                 for _, probeModel := range candidates {
                         res, tryNext := chatProbeResult(providerName, cfg, apiKey, accountID, probeModel)
                         if res.State == "valid" {
-                                if probeModel != cfg.ProbeModel {
-                                        extra := ""
-                                        if res.Reason != "" {
-                                                extra = " — " + res.Reason
-                                        }
-                                        res.Reason = "auth passed via " + probeModel + extra
+                                extra := ""
+                                if res.Reason != "" {
+                                        extra = " — " + res.Reason
                                 }
+                                res.Reason = "auth passed via " + probeModel + extra
                                 return res
                         }
                         if res.State == "invalid" {
@@ -472,15 +468,13 @@ func ValidateKey(envVar string, keys map[string]string) ValidateResult {
         }
 }
 
-// probeModelFor picks a model for the chat-probe fallback: the provider's
-// configured probe_model, else the first synced model, else a live fetch.
+// probeModelFor picks a model for the chat-probe fallback — v1.55.4 THE
+// LIVE-PROBE LAW: the configured probe_model pins are DEAD; the synced
+// roster's first model (or a live fetch) decides. Nothing is static.
 func probeModelFor(provider string, models []ModelInfo) (string, bool) {
         catalog, err := LoadCatalog()
         if err != nil {
                 return "", false
-        }
-        if cfg, ok := catalog[provider]; ok && cfg.ProbeModel != "" {
-                return cfg.ProbeModel, true
         }
         if len(models) > 0 {
                 return models[0].Label, true
@@ -548,6 +542,10 @@ func chatProbeResult(provider string, cfg ProviderConfig, apiKey, accountID, pro
 }
 
 // probeCandidates builds the model ladder for the chat_probe strategy.
+// v1.55.4 THE LIVE-PROBE LAW: the configured probe_model pins are DEAD (no
+// static model ids) — the ladder is the provider's OWN live roster, FREE
+// models first (the registry's cost-0/0 law), then any-model. The live
+// fetch + the registry decide; nothing is carved into the tree.
 func probeCandidates(provider string, cfg ProviderConfig, apiKey, accountID string) []string {
         var out []string
         seen := map[string]bool{}
@@ -558,7 +556,6 @@ func probeCandidates(provider string, cfg ProviderConfig, apiKey, accountID stri
                 seen[id] = true
                 out = append(out, id)
         }
-        add(cfg.ProbeModel)
 
         // v1.15.1 THE CHOICE: the ladder is LIVE-DERIVED — the provider's own
         // synced roster, FREE models first (they serve on any account), capped
@@ -591,27 +588,15 @@ func probeCandidates(provider string, cfg ProviderConfig, apiKey, accountID stri
 // model sits at roster position 8, live-verified 2026-10).
 const probeCandidateCap = 12
 
-// isFreeProbeModel knows the per-provider free-model rules (probe ladder only).
+// isFreeProbeModel answers the live registry's free law (v1.55.4: the
+// opencode big-pickle/-free literals + the nvidia blanket are DEAD — the
+// registry's cost-0/0 data decides; honest false when unknown).
 func isFreeProbeModel(provider, modelID string) bool {
-        switch provider {
-        case "opencode":
-                // Zen free models: big-pickle + "-free" suffix, minus the
-                // known paid exceptions.
-                if modelID == "big-pickle" {
-                        return true
-                }
-                if strings.HasSuffix(modelID, "-free") &&
-                        modelID != "minimax-m3-free" && modelID != "qwen3.6-plus-free" {
-                        return true
-                }
+        dm := LookupDevModel(provider, modelID)
+        if dm == nil {
                 return false
-        case "nvidia":
-                // v0.15: NVIDIA NIM models default to FREE (user-verified:
-                // build.nvidia.com exposes free endpoints for ~all listed
-                // models, e.g. Kimi K3).
-                return true
         }
-        return false
+        return dm.IsFree()
 }
 
 // friendlyProviderError extracts the human message from an OpenAI-style

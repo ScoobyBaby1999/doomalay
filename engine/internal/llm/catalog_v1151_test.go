@@ -56,14 +56,21 @@ func TestV1151_ProbeLadderIsLiveDerived(t *testing.T) {
         defer srv.Close()
         t.Setenv("DOOMALAY_BASE_URL_NVIDIA", srv.URL)
 
+        // v1.55.4 THE LIVE-PROBE LAW: the ProbeModel FIELD is gone entirely —
+        // no provider carries a probe pin. The free-first rung reads the LIVE
+        // registry (seeded here: every roster model cost-0 → free → the whole
+        // roster walks).
+        seed := `{"nvidia":{"name":"NVIDIA","models":{"z-ai/glm-5.3-flash":{"name":"glm","cost":{"input":0,"output":0}},"openai/gpt-oss-20b":{"name":"oss","cost":{"input":0,"output":0}},"nvidia/nemotron-3-super-120b-a12b":{"name":"super","cost":{"input":0,"output":0}},"meta/llama-3.2-11b-vision-instruct":{"name":"llama","cost":{"input":0,"output":0}},"google/gemma-4-31b-it":{"name":"gemma","cost":{"input":0,"output":0}},"qwen/qwen3.6-coder":{"name":"qwen","cost":{"input":0,"output":0}},"deepseek/deepseek-v4":{"name":"ds","cost":{"input":0,"output":0}},"kimi/kimi-k3":{"name":"kimi","cost":{"input":0,"output":0}}}}}`
+        if err := SetModelsDevForTest([]byte(seed)); err != nil {
+                t.Fatalf("seed: %v", err)
+        }
+        defer ClearModelsDevForTest()
+
         cat, err := LoadCatalog()
         if err != nil {
                 t.Fatalf("LoadCatalog: %v", err)
         }
         cfg := cat["nvidia"]
-        if cfg.ProbeModel != "" {
-                t.Fatalf("nvidia probe_model should be gone from the catalog config, got %q", cfg.ProbeModel)
-        }
 
         got := probeCandidates("nvidia", cfg, "key", "")
         // v1.29.3: the cap grew 5 → 12 (the rotten-roster-head fix — the
@@ -92,29 +99,37 @@ func TestV1151_ProbeLadderIsLiveDerived(t *testing.T) {
 // TestV1151_ProbeLadderLeadsConfiguredProbe — the catalog-configured
 // probe model (config, not code) still leads when one exists (opencode's
 // big-pickle).
-func TestV1151_ProbeLadderLeadsConfiguredProbe(t *testing.T) {
+// v1.55.4 THE LIVE-PROBE LAW: opencode's big-pickle PIN is dead — the
+// ladder is the live roster, FREE models first (the registry's cost law).
+// big-pickle (registry cost-0) leads; mimo-v2.5-free carries a PAID
+// registry price in this seed (the -free name lie, live-convicted).
+func TestV1551_ProbeLadderLiveLeads(t *testing.T) {
         srv := stubRosterServer(t, "kimi-k2.6", "big-pickle", "mimo-v2.5-free")
         defer srv.Close()
         t.Setenv("DOOMALAY_BASE_URL_OPENCODE", srv.URL)
+
+        seed := `{"opencode":{"name":"OpenCode","models":{"big-pickle":{"name":"Big Pickle","cost":{"input":0,"output":0}},"kimi-k2.6":{"name":"Kimi","cost":{"input":1,"output":4}},"mimo-v2.5-free":{"name":"Mimo","cost":{"input":0.3,"output":1.2}}}}}`
+        if err := SetModelsDevForTest([]byte(seed)); err != nil {
+                t.Fatalf("seed: %v", err)
+        }
+        defer ClearModelsDevForTest()
 
         cat, err := LoadCatalog()
         if err != nil {
                 t.Fatalf("LoadCatalog: %v", err)
         }
         cfg := cat["opencode"]
-        if cfg.ProbeModel != "big-pickle" {
-                t.Fatalf("opencode probe_model = %q, want big-pickle (catalog config)", cfg.ProbeModel)
-        }
         got := probeCandidates("opencode", cfg, "key", "")
+        // the FREE registry model leads; the paid entries ride as roster order,
+        // capped by the any-model fallback rung
         if len(got) == 0 || got[0] != "big-pickle" {
-                t.Fatalf("ladder = %v, want big-pickle leading", got)
+                t.Fatalf("ladder = %v, want big-pickle (the registry's free model) leading", got)
         }
 }
 
 // TestV1151_ProbeLadderDeadRoster — a roster that can't be fetched and no
-// configured probe: the ladder is empty (the validator reports
-// "no probe model available" honestly — it does NOT fall back to any
-// hardcoded list).
+// pins anywhere: the ladder is empty (the validator reports "no probe model
+// available" honestly — it does NOT fall back to any hardcoded list).
 func TestV1151_ProbeLadderDeadRoster(t *testing.T) {
         srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
                 http.Error(w, "boom", 500)
@@ -128,7 +143,7 @@ func TestV1151_ProbeLadderDeadRoster(t *testing.T) {
         }
         got := probeCandidates("nvidia", cat["nvidia"], "key", "")
         if len(got) != 0 {
-                t.Fatalf("dead roster + no probe_model: ladder = %v, want empty", got)
+                t.Fatalf("dead roster + no pins: ladder = %v, want empty (honest)", got)
         }
 }
 
