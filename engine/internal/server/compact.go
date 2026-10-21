@@ -359,6 +359,29 @@ func (s *Server) buildHistoryCompacted(sessionID string, sess *store.Session, wi
         return append(msgs, slotsWindowed(live, -1)...)
 }
 
+// trimInFlightUser drops the trailing copy of the CURRENT user message that
+// buildHistoryCompacted already picked up from the event log. v1.48.1 THE
+// SINGLE ECHO: handleTurn persists the user event (emit) BEFORE history is
+// built, so the in-flight message is already the history's last row; the
+// turn-construction sites used to append it again and every user message
+// reached the model twice ([user M, user M]) — on every provider, since the
+// v0.38 brain-history build. The trim is CONSERVATIVE and fails soft: it
+// drops only ONE trailing user-role row, and only when it is byte-equal to
+// the in-flight text — a redacted (key-shaped) persisted copy never matches
+// (the append then supplies the raw text; the old shape, and not one byte
+// of history is ever dropped by this fix), an empty userText never trims,
+// and a trailing assistant/tool row (an aborted-turn edge) never matches.
+func trimInFlightUser(hist []llm.Message, userText string) []llm.Message {
+        if len(hist) == 0 || userText == "" {
+                return hist
+        }
+        last := hist[len(hist)-1]
+        if last.Role != "user" || last.Content != userText {
+                return hist
+        }
+        return hist[:len(hist)-1]
+}
+
 // clampServer truncates a string (compact summaries, observations).
 func clampServer(s string, max int) string {
         if len(s) <= max {

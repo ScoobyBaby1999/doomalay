@@ -1341,6 +1341,13 @@ func (s *Server) handleTurn(sender *websocket.Conn, pipe *chatPipe, sessionID st
                 if sess.SlidingWindow == 0 {
                         hist = s.buildHistoryCompacted(sessionID, sess, 40)
                 }
+                // v1.48.1 THE SINGLE ECHO: the turn's user event is
+                // persisted BEFORE this build (the emit at turn start), so
+                // the history already carries the in-flight message as its
+                // last row — and agent.py appends it again (the v0.38
+                // contract), which sent every user message to the brain
+                // twice. Trim the log's copy here; the brain supplies it.
+                hist = trimInFlightUser(hist, userText)
                 brainHistory := make([]map[string]any, 0, len(hist))
                 for _, m := range hist {
                         brainHistory = append(brainHistory, map[string]any{"role": m.Role, "content": m.Content})
@@ -1990,13 +1997,24 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, pipe *chatPipe, sess
                 // spec — the mind slider's minimum, no window at all).
                 history = s.buildHistoryCompacted(sessionID, sess, 40)
         }
+        // v1.48.1 THE SINGLE ECHO: the turn's user event is persisted
+        // BEFORE this build (the emit at turn start), so the history
+        // already carries the in-flight message as its last row — the
+        // append below used to add it AGAIN and every user message
+        // reached the model twice ([user M, user M]) on every provider.
+        // Trim the log's copy; the append supplies it exactly once.
+        history = trimInFlightUser(history, userText)
         history = append(history, llm.Message{Role: "user", Content: userText})
 
         // v0.17→v0.19: the system message = identity + persona (or the
         // default prompt) + the artifact protocol — composed fresh each
         // turn so model switches change the identity instantly.
         // v0.26: live metrics feed the trigger personas (messages/turns).
-        pm := personaMetrics{Messages: len(history), Turns: countUserTurns(history) + 1}
+        // v1.48.1: history now carries the in-flight message exactly once
+        // (the trim + the append above), so the count needs no +1 — the
+        // old +1 was written when the append double-carried it and a
+        // "trigger at 3 turns" persona fired on the chat's first turn.
+        pm := personaMetrics{Messages: len(history), Turns: countUserTurns(history)}
         full := make([]llm.Message, 0, len(history)+1)
         full = append(full, llm.Message{Role: "system", Content: s.systemPromptForMetrics(sess, pm, bundleNameOf(bundleManifest))})
         full = append(full, history...)
