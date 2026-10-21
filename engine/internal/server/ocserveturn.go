@@ -17,7 +17,6 @@ package server
 
 import (
         "context"
-        "encoding/json"
         "fmt"
         "log"
         "os"
@@ -199,11 +198,11 @@ func (s *Server) runOcServeTurn(ctx context.Context, pipe *chatPipe, sessionID s
 }
 
 // ocServeStreamTurn drives one serve turn and streams the engine's own
-// event vocabulary onto out. THE RECYCLE LAW: a FreeTierError inside the
-// turn (a poisoned session — ours never violates the shape, but upstream
-// flags evolve) births a fresh serve session with the full opening text
-// and retries ONCE; a second wall answers honestly with the bridge's own
-// error + terminal (never a silent hang).
+// event vocabulary onto out. THE RECYCLE LAW: a free-tier refusal inside
+// the turn (ours never violates the shape, but upstream flags evolve)
+// births a fresh serve session with the full opening text and retries
+// ONCE; a second wall answers honestly with the bridge's own error +
+// terminal (never a silent hang).
 func (s *Server) ocServeStreamTurn(ctx context.Context, m *ocserve.Manager, sessionID string, sess *store.Session, userText string, out chan<- map[string]any) error {
         modelID := strings.TrimPrefix(sess.Model, "opencode/")
         for attempt := 0; attempt < 2; attempt++ {
@@ -211,15 +210,21 @@ func (s *Server) ocServeStreamTurn(ctx context.Context, m *ocserve.Manager, sess
                 if err != nil {
                         return fmt.Errorf("serve bridge session: %w", err)
                 }
+                // v1.51.1 THE SECOND TONGUE: model selection lives on the SESSION
+                // in 2.x — the adapter selects before EVERY prompt (the per-turn
+                // model law; a cheap 204, the turn echoes it in session.step.started).
+                if err := m.SelectModel(serveSess, modelID); err != nil {
+                        return fmt.Errorf("serve bridge select model: %w", err)
+                }
                 text := userText
                 if fresh {
                         text = s.ocServeOpeningText(sess, userText)
                 }
-                if err := m.PromptAsync(serveSess, modelID, text); err != nil {
+                if err := m.Prompt(serveSess, text); err != nil {
                         return fmt.Errorf("serve bridge prompt: %w", err)
                 }
                 out <- map[string]any{"type": "progress", "session_id": sessionID,
-                        "message": "OpenCode free bridge: turn in flight (the genuine OpenCode client)"}
+                        "message": "OpenCode free bridge: turn in flight (the genuine OpenCode 2 client)"}
                 recycled, err := s.ocServePump(ctx, m, serveSess, sessionID, out)
                 if recycled {
                         // THE RECYCLE LAW: drop the poisoned serve session; the next
@@ -239,79 +244,108 @@ func (s *Server) ocServeStreamTurn(ctx context.Context, m *ocserve.Manager, sess
         return nil
 }
 
-// ocServePump consumes the serve SSE feed for one turn, mapping frames
-// onto the engine's event vocabulary. It returns recycled=true when the
-// turn hit OpenCode's free-tier wall (the recycle law's trigger).
+// ocServePump consumes the 2.x serve's SSE feed for one turn, mapping the
+// v2 event vocabulary onto the engine's. It returns recycled=true when
+// the turn hit OpenCode's free-tier wall (the recycle law's trigger).
 func (s *Server) ocServePump(ctx context.Context, m *ocserve.Manager, serveSess, sessionID string, out chan<- map[string]any) (bool, error) {
-        partTypes := map[string]string{} // partID → reasoning|text (deltas carry only the id)
+        toolNames := map[string]string{} // tool call id → tool name (input.started)
+        usedEmitted := map[string]bool{}  // the pill law: use BEFORE result, exactly once
         var usage map[string]any
+        finish := "stop"
+        emitToolUse := func(callID, name, args string) {
+                if callID == "" || usedEmitted[callID] {
+                        return
+                }
+                usedEmitted[callID] = true
+                if args == "" {
+                        args = "{}"
+                }
+                out <- map[string]any{"type": "tool_use", "session_id": sessionID,
+                        "name": "opencode:" + name, "summary": "running", "args": args,
+                        "tool_use_id": callID}
+        }
         pump := func(ev ocserve.Event) error {
                 switch ev.Type {
-                case "message.part.updated":
-                        p := ev.Properties.Part
-                        if p.ID == "" {
+                case "session.reasoning.delta":
+                        if ev.Data.Delta == "" {
                                 return nil
                         }
-                        switch p.Type {
-                        case "reasoning", "text":
-                                partTypes[p.ID] = p.Type
-                        case "tool":
-                                if p.State == nil {
-                                        return nil
-                                }
-                                name := "opencode:" + p.Tool
-                                switch p.State.Status {
-                                case "running":
-                                        args := "{}"
-                                        if b, err := json.Marshal(p.State.Input); err == nil {
-                                                args = string(b)
-                                        }
-                                        out <- map[string]any{"type": "tool_use", "session_id": sessionID,
-                                                "name": name, "summary": p.State.Status, "args": args,
-                                                "tool_use_id": p.ID}
-                                case "completed":
-                                        out <- map[string]any{"type": "tool_result", "session_id": sessionID,
-                                                "name": name, "text": clampServer(p.State.Output, 6000),
-                                                "tool_use_id": p.ID}
-                                }
-                        }
-                case "message.part.delta":
-                        if ev.Properties.Field != "text" {
+                        out <- map[string]any{"type": "thinking", "session_id": sessionID, "text": ev.Data.Delta}
+                case "session.text.delta":
+                        if ev.Data.Delta == "" {
                                 return nil
                         }
-                        d := ev.Properties.Delta
-                        if d == "" {
-                                return nil
+                        out <- map[string]any{"type": "assistant_delta", "session_id": sessionID, "text": ev.Data.Delta}
+                case "session.tool.input.started":
+                        if ev.Data.ID != "" {
+                                toolNames[ev.Data.ID] = ev.Data.Name
                         }
-                        switch partTypes[ev.Properties.PartID] {
-                        case "reasoning":
-                                out <- map[string]any{"type": "thinking", "session_id": sessionID, "text": d}
-                        case "text":
-                                out <- map[string]any{"type": "assistant_delta", "session_id": sessionID, "text": d}
+                case "session.tool.input.ended":
+                        // the pill's use event — with the serialized args the 2.x feed
+                        // carries (input.ended's text IS the call's JSON)
+                        emitToolUse(ev.Data.ID, toolNames[ev.Data.ID], ev.Data.Text)
+                case "session.tool.success":
+                        // belt: a result with no seen use still needs its use row
+                        emitToolUse(ev.Data.ID, toolNames[ev.Data.ID], "")
+                        var texts []string
+                        for _, c := range ev.Data.Content {
+                                texts = append(texts, c.Text)
                         }
-                case "message.updated":
-                        info := ev.Properties.Info
-                        if info.Role == "assistant" && info.Finish != "" {
-                                usage = map[string]any{
-                                        "input_tokens":     info.Tokens.Input,
-                                        "output_tokens":    info.Tokens.Output,
-                                        "total_tokens":     info.Tokens.Total,
-                                        "reasoning_tokens": info.Tokens.Reasoning,
-                                        "finish_reason":    info.Finish,
-                                        "output_cut":       false,
-                                }
+                        out <- map[string]any{"type": "tool_result", "session_id": sessionID,
+                                "name": "opencode:" + toolNames[ev.Data.ID], "text": clampServer(strings.Join(texts, "\n"), 6000),
+                                "tool_use_id": ev.Data.ID}
+                case "session.tool.failed":
+                        emitToolUse(ev.Data.ID, toolNames[ev.Data.ID], "")
+                        msg := ev.Data.Text
+                        if ev.Data.Error != nil && ev.Data.Error.Message != "" {
+                                msg = ev.Data.Error.Message
                         }
-                        if ev.IsFreeTierError() {
-                                // the wall: the poisoned-session signature
-                                return errRecycle
+                        out <- map[string]any{"type": "tool_result", "session_id": sessionID,
+                                "name": "opencode:" + toolNames[ev.Data.ID], "text": clampServer(msg, 6000),
+                                "tool_use_id": ev.Data.ID}
+                case "session.step.ended":
+                        if ev.Data.Finish != "" {
+                                finish = ev.Data.Finish
                         }
-                case "session.idle":
+                case "session.usage.updated":
+                        // THE LEDGER: the serve's own accounting (per step, cumulative
+                        // over the serve session) — never invented, cost included.
+                        usage = map[string]any{
+                                "input_tokens":     ev.Data.Tokens.Input,
+                                "output_tokens":    ev.Data.Tokens.Output,
+                                "total_tokens":     ev.Data.Tokens.Input + ev.Data.Tokens.Output + ev.Data.Tokens.Reasoning,
+                                "reasoning_tokens": ev.Data.Tokens.Reasoning,
+                                "cache_read":       ev.Data.Tokens.Cache.Read,
+                                "cache_write":      ev.Data.Tokens.Cache.Write,
+                                "cost":             ev.Data.Cost,
+                                "finish_reason":    finish,
+                                "output_cut":       false,
+                        }
+                case "session.execution.succeeded":
                         if usage == nil {
                                 usage = map[string]any{"input_tokens": 0, "output_tokens": 0,
-                                        "total_tokens": 0, "reasoning_tokens": 0, "finish_reason": "stop", "output_cut": false}
+                                        "total_tokens": 0, "reasoning_tokens": 0, "finish_reason": finish, "output_cut": false}
                         }
+                        usage["finish_reason"] = finish
                         out <- map[string]any{"type": "status", "session_id": sessionID,
                                 "state": "idle", "usage": usage}
+                case "session.execution.failed":
+                        if ev.IsFreeTierError() {
+                                // the wall: the recycle law's trigger
+                                return errRecycle
+                        }
+                        msg := "the OpenCode free bridge turn failed"
+                        errKind := "oc_bridge_error"
+                        if ev.Data.Error != nil && ev.Data.Error.Message != "" {
+                                msg = ev.Data.Error.Message
+                        }
+                        if ev.IsAuthError() {
+                                errKind = "oc_bridge_auth"
+                                msg = "OpenCode rejected the bridge key — check the OpenCode key in the providers screen (" + msg + ")"
+                        }
+                        out <- map[string]any{"type": "error", "session_id": sessionID,
+                                "error": errKind, "message": msg}
+                        out <- map[string]any{"type": "status", "session_id": sessionID, "state": "error", "usage": nil}
                 }
                 return nil
         }

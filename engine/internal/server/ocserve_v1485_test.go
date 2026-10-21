@@ -1,296 +1,435 @@
 package server
 
-// v1.48.5 THE SERVE BRIDGE — the adapter pins. A FAKE serve (httptest)
-// speaking the LIVE-CAPTURED frame shapes drives the engine's own mapping
-// (reasoning deltas → thinking, text deltas → assistant_delta, tool
-// parts → the pill grammar, the final usage → the v1.46.2 ledger shape)
-// + THE RECYCLE LAW (a free-tier wall drops the poisoned serve session
-// and retries ONCE on a fresh one) + the opening-text law (the persona
-// rides the MESSAGE TEXT — the per-turn system field poisons the turn —
-// and v1.48.1's trim rides the replayed history: the in-flight message
-// appears exactly once).
+// v1.51.1 THE SECOND TONGUE — the adapter pins. A FAKE serve (httptest)
+// speaking the LIVE-CAPTURED 2.x frame shapes drives the engine's own
+// mapping (reasoning deltas → thinking, text deltas → assistant_delta, the
+// tool pill events → the pill grammar, session.usage.updated → the
+// v1.46.2 ledger shape, the execution terminals) + THE RECYCLE LAW (a
+// free-tier wall drops the poisoned serve session and retries ONCE on a
+// fresh one) + the opening-text law (the persona rides the MESSAGE TEXT —
+// the 2.x PromptInput is text-only, so the law carries over verbatim) +
+// the basic-auth law (every call speaks the Manager's serve password) +
+// the per-turn model law (SelectModel fires before EVERY prompt).
 
 import (
-	"context"
-	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
-	"net/http/httptest"
-	"strconv"
-	"strings"
-	"sync"
-	"testing"
+        "context"
+        "encoding/base64"
+        "encoding/json"
+        "fmt"
+        "io"
+        "net/http"
+        "net/http/httptest"
+        "strconv"
+        "strings"
+        "sync"
+        "testing"
 
-	"github.com/ScoobyBaby1999/doomalay/engine/internal/llm"
-	"github.com/ScoobyBaby1999/doomalay/engine/internal/ocserve"
-	"github.com/ScoobyBaby1999/doomalay/engine/internal/store"
+        "github.com/ScoobyBaby1999/doomalay/engine/internal/llm"
+        "github.com/ScoobyBaby1999/doomalay/engine/internal/ocserve"
+        "github.com/ScoobyBaby1999/doomalay/engine/internal/store"
 )
 
-// fakeServe speaks the captured serve shapes. mode "clean" streams a
-// normal turn; mode "walled" answers the free-tier wall (once or twice —
-// the second field is poisonedTries).
+// fakeServe speaks the captured 2.x shapes: /api/session → {"data":{"id"}},
+// /api/session/{id}/model → 204, /api/session/{id}/prompt {"text"} → 200,
+// /api/event SSE (auth-checked) — mode "clean" streams a normal turn, the
+// wall answers the free-tier refusal (poisonedTries consecutive turns).
 type fakeServe struct {
-	mu            sync.Mutex
-	sessionN      int
-	promptBodies  []map[string]any
-	promptTexts   []string
-	poisonedTries int      // how many consecutive turns answer the wall
-	sse           []string // the clean-turn frames
+        mu            sync.Mutex
+        sessionN      int
+        lastSess      string // the most-recent session id (the wall frames must carry it)
+        promptTexts   []string
+        modelBodies   []map[string]any
+        poisonedTries int      // how many consecutive turns answer the wall
+        authTries     int      // how many consecutive turns answer provider.auth
+        sse           []string // the clean-turn frames
+        sawAuth       []string // every Authorization header seen
 }
 
 func (f *fakeServe) handler(w http.ResponseWriter, r *http.Request) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	switch {
-	case strings.HasSuffix(r.URL.Path, "/session/status"):
-		io.WriteString(w, `{}`)
-	case strings.HasSuffix(r.URL.Path, "/session") && r.Method == "POST":
-		f.sessionN++
-		io.WriteString(w, `{"id":"ses_fake_`+strconv.Itoa(f.sessionN)+`"}`)
-	case strings.Contains(r.URL.Path, "/prompt_async"):
-		var body map[string]any
-		b, _ := io.ReadAll(r.Body)
-		json.Unmarshal(b, &body)
-		f.promptBodies = append(f.promptBodies, body)
-		if parts, ok := body["parts"].([]any); ok && len(parts) > 0 {
-			if p, ok := parts[0].(map[string]any); ok {
-				f.promptTexts = append(f.promptTexts, p["text"].(string))
-			}
-		}
-		w.WriteHeader(204)
-	case strings.Contains(r.URL.Path, "/event"):
-		w.Header().Set("Content-Type", "text/event-stream")
-		if f.poisonedTries > 0 {
-			f.poisonedTries--
-			io.WriteString(w, `data: {"id":"w1","type":"message.updated","properties":{"sessionID":"`+
-				r.URL.Query().Get("sessionID")+`","info":{"role":"assistant","error":{"name":"APIError","data":{"message":"OpenCode's free tier can only be used from within OpenCode. Download it at https://opencode.ai"}}}}}`+"\n\n"+
-				`data: {"id":"w2","type":"session.idle","properties":{"sessionID":"`+r.URL.Query().Get("sessionID")+`"}}`+"\n\n")
-			return
-		}
-		io.WriteString(w, strings.Join(f.sse, "\n\n")+"\n\n")
-	default:
-		w.WriteHeader(404)
-	}
+        f.mu.Lock()
+        defer f.mu.Unlock()
+        f.sawAuth = append(f.sawAuth, r.Header.Get("Authorization"))
+        switch {
+        case r.URL.Path == "/api/provider":
+                io.WriteString(w, `{"location":{},"data":[]}`)
+        case strings.HasSuffix(r.URL.Path, "/model") && r.Method == "POST":
+                var body map[string]any
+                b, _ := io.ReadAll(r.Body)
+                json.Unmarshal(b, &body)
+                f.modelBodies = append(f.modelBodies, body)
+                w.WriteHeader(204)
+        case strings.HasSuffix(r.URL.Path, "/prompt") && r.Method == "POST":
+                var body map[string]any
+                b, _ := io.ReadAll(r.Body)
+                json.Unmarshal(b, &body)
+                f.promptTexts = append(f.promptTexts, body["text"].(string))
+                io.WriteString(w, `{"data":{"id":"msg_u1","type":"user"}}`)
+        case r.URL.Path == "/api/session" && r.Method == "POST":
+                f.sessionN++
+                f.lastSess = "ses_fake_" + strconv.Itoa(f.sessionN)
+                io.WriteString(w, `{"data":{"id":"`+f.lastSess+`"}}`)
+        case r.URL.Path == "/api/event":
+                w.Header().Set("Content-Type", "text/event-stream")
+                if f.poisonedTries > 0 {
+                        f.poisonedTries--
+                        io.WriteString(w, `data: {"id":"w1","type":"session.execution.failed","data":{"sessionID":"`+f.lastSess+`","error":{"type":"provider.error","message":"OpenCode's free tier can only be used from within OpenCode. Download it at https://opencode.ai","status":403}}}`+"\n\n")
+                        return
+                }
+                if f.authTries > 0 {
+                        f.authTries--
+                        io.WriteString(w, `data: {"id":"w1","type":"session.execution.failed","data":{"sessionID":"`+f.lastSess+`","error":{"type":"provider.auth","message":"Reconnect OpenCode Console to continue.","status":401}}}`+"\n\n")
+                        return
+                }
+                io.WriteString(w, strings.Join(f.sse, "\n\n")+"\n\n")
+        default:
+                w.WriteHeader(404)
+        }
 }
 
 func cleanTurnFrames(sess string) []string {
-	return []string{
-		`data: {"type":"message.part.updated","properties":{"sessionID":"` + sess + `","part":{"id":"prt_r","type":"reasoning","text":""}}}`,
-		`data: {"type":"message.part.delta","properties":{"sessionID":"` + sess + `","partID":"prt_r","field":"text","delta":"thinking hard"}}`,
-		`data: {"type":"message.part.updated","properties":{"sessionID":"` + sess + `","part":{"id":"prt_t","type":"text","text":""}}}`,
-		`data: {"type":"message.part.delta","properties":{"sessionID":"` + sess + `","partID":"prt_t","field":"text","delta":"the answer"}}`,
-		`data: {"type":"message.part.updated","properties":{"sessionID":"` + sess + `","part":{"id":"prt_tool","type":"tool","tool":"glob","state":{"status":"running","input":{"pattern":"*"}}}}}`,
-		`data: {"type":"message.part.updated","properties":{"sessionID":"` + sess + `","part":{"id":"prt_tool","type":"tool","tool":"glob","state":{"status":"completed","input":{"pattern":"*"},"output":"one file"}}}}`,
-		`data: {"type":"message.updated","properties":{"sessionID":"` + sess + `","info":{"id":"m1","role":"assistant","finish":"stop","tokens":{"total":120,"input":80,"output":30,"reasoning":10}}}}`,
-		`data: {"type":"session.idle","properties":{"sessionID":"` + sess + `"}}`,
-	}
+        return []string{
+                `data: {"id":"e0","type":"server.connected","data":{}}`,
+                `data: {"id":"e1","type":"session.reasoning.delta","data":{"sessionID":"` + sess + `","assistantMessageID":"msg_a1","delta":"thinking hard"}}`,
+                `data: {"id":"e2","type":"session.text.delta","data":{"sessionID":"` + sess + `","assistantMessageID":"msg_a1","delta":"the answer"}}`,
+                `data: {"id":"e3","type":"session.tool.input.started","data":{"sessionID":"` + sess + `","id":"call_g1","name":"glob"}}`,
+                `data: {"id":"e4","type":"session.tool.input.ended","data":{"sessionID":"` + sess + `","id":"call_g1","text":"{\"pattern\":\"*\"}"}}`,
+                `data: {"id":"e5","type":"session.tool.success","data":{"sessionID":"` + sess + `","id":"call_g1","content":[{"type":"text","text":"one file"}]}}`,
+                `data: {"id":"e6","type":"session.step.ended","data":{"sessionID":"` + sess + `","finish":"stop","cost":0,"tokens":{"input":80,"output":30,"reasoning":10}}}`,
+                `data: {"id":"e7","type":"session.usage.updated","data":{"sessionID":"` + sess + `","cost":0,"tokens":{"input":80,"output":30,"reasoning":10,"cache":{"read":256,"write":0}}}}`,
+                `data: {"id":"e8","type":"session.execution.succeeded","data":{"sessionID":"` + sess + `"}}`,
+        }
 }
 
 // TestOcServeEventMapping drives the adapter against the fake serve and
 // pins the engine-vocabulary mapping: reasoning→thinking, text→assistant_delta,
-// tool running→tool_use, completed→tool_result, the final usage rides the
-// idle terminal in the v1.46.2 ledger shape.
+// tool input→tool_use (with the serialized args), tool success→tool_result,
+// the usage rides the terminal in the v1.46.2 ledger shape — plus the
+// per-turn model law and basic auth on every call.
 func TestOcServeEventMapping(t *testing.T) {
-	fake := &fakeServe{sse: nil}
-	srv := httptest.NewServer(http.HandlerFunc(fake.handler))
-	defer srv.Close()
-	m := ocserve.New("", "key", nil)
-	m.SetBaseURL(srv.URL)
+        t.Setenv("DOOMALAY_OPENCODE_SERVE_PASSWORD", "rig-pw")
+        fake := &fakeServe{sse: nil}
+        srv := httptest.NewServer(http.HandlerFunc(fake.handler))
+        defer srv.Close()
+        m := ocserve.New("", "key", nil)
+        m.SetBaseURL(srv.URL)
 
-	s := &Server{}
-	// pre-seed the serve session so the turn skips the opening text
-	s.ocServeSessions = map[string]string{"chat1": "ses_fake_pre"}
+        s := &Server{}
+        // pre-seed the serve session so the turn skips the opening text
+        s.ocServeSessions = map[string]string{"chat1": "ses_fake_pre"}
 
-	events := make(chan map[string]any, 64)
-	done := make(chan struct{})
-	var got []map[string]any
-	go func() {
-		for ev := range events {
-			got = append(got, ev)
-		}
-		close(done)
-	}()
-	fake.mu.Lock()
-	fake.sse = cleanTurnFrames("ses_fake_pre")
-	fake.mu.Unlock()
-	// StreamEvents needs the CURRENT /event frames; the fake serves them
-	// fresh per connection, so run the pump directly
-	recycled, err := s.ocServePump(context.Background(), m, "ses_fake_pre", "chat1", events)
-	close(events)
-	<-done
-	if err != nil {
-		t.Fatalf("pump: %v", err)
-	}
-	if recycled {
-		t.Fatalf("a clean turn must not trigger the recycle")
-	}
-	var kinds []string
-	var usage map[string]any
-	for _, ev := range got {
-		kinds = append(kinds, ev["type"].(string))
-		if ev["type"] == "status" {
-			usage, _ = ev["usage"].(map[string]any)
-		}
-	}
-	want := []string{"thinking", "assistant_delta", "tool_use", "tool_result", "status"}
-	if strings.Join(kinds, ",") != strings.Join(want, ",") {
-		t.Fatalf("mapping wrong: got %v want %v", kinds, want)
-	}
-	if got[0]["text"] != "thinking hard" || got[1]["text"] != "the answer" {
-		t.Fatalf("delta texts wrong: %v %v", got[0]["text"], got[1]["text"])
-	}
-	if got[2]["name"] != "opencode:glob" || got[3]["name"] != "opencode:glob" {
-		t.Fatalf("tool names wrong: %v %v", got[2]["name"], got[3]["name"])
-	}
-	if usage == nil || fmt.Sprint(usage["total_tokens"]) != "120" || fmt.Sprint(usage["reasoning_tokens"]) != "10" {
-		t.Fatalf("usage ledger shape wrong: %v", usage)
-	}
-	if got[2]["tool_use_id"] != got[3]["tool_use_id"] {
-		t.Fatalf("the tool pair must share the call id")
-	}
+        events := make(chan map[string]any, 64)
+        done := make(chan struct{})
+        var got []map[string]any
+        go func() {
+                for ev := range events {
+                        got = append(got, ev)
+                }
+                close(done)
+        }()
+        fake.mu.Lock()
+        fake.sse = cleanTurnFrames("ses_fake_pre")
+        fake.mu.Unlock()
+        // StreamEvents needs the CURRENT /api/event frames; the fake serves them
+        // fresh per connection, so run the pump directly
+        recycled, err := s.ocServePump(context.Background(), m, "ses_fake_pre", "chat1", events)
+        close(events)
+        <-done
+        if err != nil {
+                t.Fatalf("pump: %v", err)
+        }
+        if recycled {
+                t.Fatalf("a clean turn must not trigger the recycle")
+        }
+        var kinds []string
+        var usage map[string]any
+        for _, ev := range got {
+                kinds = append(kinds, ev["type"].(string))
+                if ev["type"] == "status" {
+                        usage, _ = ev["usage"].(map[string]any)
+                }
+        }
+        want := []string{"thinking", "assistant_delta", "tool_use", "tool_result", "status"}
+        if strings.Join(kinds, ",") != strings.Join(want, ",") {
+                t.Fatalf("mapping wrong: got %v want %v", kinds, want)
+        }
+        if got[0]["text"] != "thinking hard" || got[1]["text"] != "the answer" {
+                t.Fatalf("delta texts wrong: %v %v", got[0]["text"], got[1]["text"])
+        }
+        if got[2]["name"] != "opencode:glob" || got[3]["name"] != "opencode:glob" {
+                t.Fatalf("tool names wrong: %v %v", got[2]["name"], got[3]["name"])
+        }
+        if got[2]["args"] != `{"pattern":"*"}` {
+                t.Fatalf("the tool args must ride input.ended's serialized text: %v", got[2]["args"])
+        }
+        if usage == nil || fmt.Sprint(usage["total_tokens"]) != "120" || fmt.Sprint(usage["reasoning_tokens"]) != "10" {
+                t.Fatalf("usage ledger shape wrong: %v", usage)
+        }
+        if fmt.Sprint(usage["cache_read"]) != "256" || fmt.Sprint(usage["cost"]) != "0" {
+                t.Fatalf("the 2.x ledger carries cache + cost: %v", usage)
+        }
+        if usage["finish_reason"] != "stop" {
+                t.Fatalf("the finish must ride the terminal: %v", usage["finish_reason"])
+        }
+        if got[2]["tool_use_id"] != got[3]["tool_use_id"] || got[2]["tool_use_id"] != "call_g1" {
+                t.Fatalf("the tool pair must share the call id: %v %v", got[2]["tool_use_id"], got[3]["tool_use_id"])
+        }
 }
 
-// TestOcServeRecycleLaw pins THE RECYCLE LAW: a walled first attempt
-// drops the poisoned serve session; the SECOND attempt opens a FRESH one
-// whose prompt text carries the opening block (persona + history — the
-// message text, never the system field). A second wall answers with the
-// honest error + terminal — never a silent hang.
+// TestOcServeTurnShapeAndModelLaw drives a FULL turn through
+// ocServeStreamTurn: the per-turn model law (SelectModel fires with the
+// {model:{id,providerID}} body before EVERY prompt), the text-only prompt,
+// and basic auth with the Manager's password on every request.
+func TestOcServeTurnShapeAndModelLaw(t *testing.T) {
+        t.Setenv("DOOMALAY_OPENCODE_SERVE_PASSWORD", "rig-pw")
+        fake := &fakeServe{}
+        srv := httptest.NewServer(http.HandlerFunc(fake.handler))
+        defer srv.Close()
+        m := ocserve.New("", "key", nil)
+        m.SetBaseURL(srv.URL)
+
+        dir := t.TempDir()
+        db, err := store.Open(dir)
+        if err != nil {
+                t.Fatalf("store: %v", err)
+        }
+        if err := db.Migrate(); err != nil {
+                t.Fatalf("migrate: %v", err)
+        }
+        s := &Server{db: db}
+        sess := &store.Session{ID: "chat1", Title: "t", Provider: "opencode", Model: "opencode/big-pickle"}
+        if err := db.CreateSession(sess); err != nil {
+                t.Fatalf("create: %v", err)
+        }
+        fake.mu.Lock()
+        fake.sse = cleanTurnFrames("ses_fake_1")
+        fake.mu.Unlock()
+        events := make(chan map[string]any, 64)
+        collect := make(chan []map[string]any, 1)
+        go func() {
+                var got []map[string]any
+                for ev := range events {
+                        got = append(got, ev)
+                }
+                collect <- got
+        }()
+        if err := s.ocServeStreamTurn(context.Background(), m, "chat1", sess, "hello", events); err != nil {
+                t.Fatalf("stream turn: %v", err)
+        }
+        close(events)
+        <-collect
+        fake.mu.Lock()
+        models := append([]map[string]any(nil), fake.modelBodies...)
+        auths := append([]string(nil), fake.sawAuth...)
+        fake.mu.Unlock()
+        if len(models) != 1 {
+                t.Fatalf("the per-turn model law: SelectModel must fire before the prompt, got %d", len(models))
+        }
+        mod, _ := models[0]["model"].(map[string]any)
+        if mod == nil || mod["id"] != "big-pickle" || mod["providerID"] != "opencode" {
+                t.Fatalf("the model block must be {id, providerID}: %v", models[0])
+        }
+        for _, a := range auths {
+                if a != "Basic "+basicAuthFor("opencode", "rig-pw") {
+                        t.Fatalf("every client call must speak the serve password: %q", a)
+                }
+        }
+}
+
+// TestOcServeRecycleLaw pins THE RECYCLE LAW: a walled first attempt drops
+// the poisoned serve session; the SECOND attempt opens a FRESH one whose
+// prompt text carries the opening block (persona + history — the message
+// text, never a system field). A second wall answers with the honest
+// error + terminal — never a silent hang.
 func TestOcServeRecycleLaw(t *testing.T) {
-	fake := &fakeServe{}
-	srv := httptest.NewServer(http.HandlerFunc(fake.handler))
-	defer srv.Close()
-	m := ocserve.New("", "key", nil)
-	m.SetBaseURL(srv.URL)
+        t.Setenv("DOOMALAY_OPENCODE_SERVE_PASSWORD", "rig-pw")
+        fake := &fakeServe{}
+        srv := httptest.NewServer(http.HandlerFunc(fake.handler))
+        defer srv.Close()
+        m := ocserve.New("", "key", nil)
+        m.SetBaseURL(srv.URL)
 
-	dir := t.TempDir()
-	db, err := store.Open(dir)
-	if err != nil {
-		t.Fatalf("store: %v", err)
-	}
-	if err := db.Migrate(); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	s := &Server{db: db}
-	sess := &store.Session{ID: "chat1", Title: "t", Provider: "opencode", Model: "big-pickle", SlidingWindow: 40, Personas: ""}
-	if err := db.CreateSession(sess); err != nil {
-		t.Fatalf("create: %v", err)
-	}
-	db.AppendEvent("chat1", "user", "earlier turn", "")
-	db.AppendEvent("chat1", "assistant", "earlier reply", "")
+        dir := t.TempDir()
+        db, err := store.Open(dir)
+        if err != nil {
+                t.Fatalf("store: %v", err)
+        }
+        if err := db.Migrate(); err != nil {
+                t.Fatalf("migrate: %v", err)
+        }
+        s := &Server{db: db}
+        sess := &store.Session{ID: "chat1", Title: "t", Provider: "opencode", Model: "big-pickle", SlidingWindow: 40, Personas: ""}
+        if err := db.CreateSession(sess); err != nil {
+                t.Fatalf("create: %v", err)
+        }
+        db.AppendEvent("chat1", "user", "earlier turn", "")
+        db.AppendEvent("chat1", "assistant", "earlier reply", "")
 
-	fake.mu.Lock()
-	fake.sse = cleanTurnFrames("ses_fake_2")
-	fake.poisonedTries = 1 // wall once, clean after
-	fake.mu.Unlock()
+        fake.mu.Lock()
+        fake.sse = cleanTurnFrames("ses_fake_2")
+        fake.poisonedTries = 1 // wall once, clean after
+        fake.mu.Unlock()
 
-	events := make(chan map[string]any, 64)
-	collect := make(chan []map[string]any, 1)
-	go func() {
-		var got []map[string]any
-		for ev := range events {
-			got = append(got, ev)
-		}
-		collect <- got
-	}()
-	err = s.ocServeStreamTurn(context.Background(), m, "chat1", sess, "hello now", events)
-	close(events)
-	got := <-collect
-	if err != nil {
-		t.Fatalf("stream turn: %v", err)
-	}
-	// TWO prompts fired: the first (walled) on ses_fake_1, the retry on
-	// the FRESH ses_fake_2 — and the retry's text is the OPENING text
-	// (persona + the replayed history + the message; the in-flight text
-	// exactly once — v1.48.1's trim law rides the bridge too)
-	fake.mu.Lock()
-	texts := append([]string(nil), fake.promptTexts...)
-	fake.mu.Unlock()
-	if len(texts) != 2 {
-		t.Fatalf("the recycle must fire exactly two prompts, got %d", len(texts))
-	}
-	if !strings.Contains(texts[1], "hello now") {
-		t.Fatalf("the retry carries the message: %q", texts[1])
-	}
-	if strings.Count(texts[1], "hello now") != 1 {
-		t.Fatalf("v1.48.1's law: the in-flight message rides the replay EXACTLY ONCE, got %d", strings.Count(texts[1], "hello now"))
-	}
-	if !strings.Contains(texts[1], "earlier turn") {
-		t.Fatalf("the replayed history must ride the opening text")
-	}
-	if strings.Contains(texts[0], "[[System persona") || strings.Contains(texts[1], "[[System persona") {
-		// BOTH attempts open FRESH serve sessions here (the map starts
-		// empty and the wall recycles), so both prompts may carry the
-		// opening block — the LAW this test pins is the recycle itself:
-		// the wall dropped the first session, the retry ran on a FRESH
-		// one. (A bare-harness persona may compose empty — the persona
-		// block's presence is pinned LIVE in the rig.)
-	}
-	// the terminal landed (idle from the clean retry)
-	var sawIdle bool
-	for _, ev := range got {
-		if ev["type"] == "status" && ev["state"] == "idle" {
-			sawIdle = true
-		}
-	}
-	if !sawIdle {
-		t.Fatalf("the clean retry must end with the idle terminal")
-	}
+        events := make(chan map[string]any, 64)
+        collect := make(chan []map[string]any, 1)
+        go func() {
+                var got []map[string]any
+                for ev := range events {
+                        got = append(got, ev)
+                }
+                collect <- got
+        }()
+        err = s.ocServeStreamTurn(context.Background(), m, "chat1", sess, "hello now", events)
+        close(events)
+        got := <-collect
+        if err != nil {
+                t.Fatalf("stream turn: %v", err)
+        }
+        // TWO prompts fired: the first (walled) on ses_fake_1, the retry on
+        // the FRESH ses_fake_2 — and the retry's text is the OPENING text
+        // (persona + the replayed history + the message; the in-flight text
+        // exactly once — v1.48.1's trim law rides the bridge too)
+        fake.mu.Lock()
+        texts := append([]string(nil), fake.promptTexts...)
+        fake.mu.Unlock()
+        if len(texts) != 2 {
+                t.Fatalf("the recycle must fire exactly two prompts, got %d", len(texts))
+        }
+        if !strings.Contains(texts[1], "hello now") {
+                t.Fatalf("the retry carries the message: %q", texts[1])
+        }
+        if strings.Count(texts[1], "hello now") != 1 {
+                t.Fatalf("v1.48.1's law: the in-flight message rides the replay EXACTLY ONCE, got %d", strings.Count(texts[1], "hello now"))
+        }
+        if !strings.Contains(texts[1], "earlier turn") {
+                t.Fatalf("the replayed history must ride the opening text")
+        }
+        // the terminal landed (idle from the clean retry)
+        var sawIdle bool
+        for _, ev := range got {
+                if ev["type"] == "status" && ev["state"] == "idle" {
+                        sawIdle = true
+                }
+        }
+        if !sawIdle {
+                t.Fatalf("the clean retry must end with the idle terminal")
+        }
 }
 
 // TestOcServeRecycleGivesHonestTerminal pins the second-wall branch: the
 // bridge answers with its OWN error + terminal — never a silent hang and
 // never a fallthrough to the walled 403 (which would double-error).
 func TestOcServeRecycleGivesHonestTerminal(t *testing.T) {
-	fake := &fakeServe{}
-	srv := httptest.NewServer(http.HandlerFunc(fake.handler))
-	defer srv.Close()
-	m := ocserve.New("", "key", nil)
-	m.SetBaseURL(srv.URL)
-	// the opening-text composer runs the persona chain — it needs the
-	// store harness (a bare Server would nil-panic inside it)
-	dir := t.TempDir()
-	db, err := store.Open(dir)
-	if err != nil {
-		t.Fatalf("store: %v", err)
-	}
-	if err := db.Migrate(); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	s := &Server{db: db}
-	sess := &store.Session{ID: "chat1", Title: "t", Provider: "opencode", Model: "big-pickle"}
-	if err := db.CreateSession(sess); err != nil {
-		t.Fatalf("create: %v", err)
-	}
-	fake.mu.Lock()
-	fake.poisonedTries = 99 // wall every attempt
-	fake.mu.Unlock()
-	events := make(chan map[string]any, 64)
-	collect := make(chan []map[string]any, 1)
-	go func() {
-		var got []map[string]any
-		for ev := range events {
-			got = append(got, ev)
-		}
-		collect <- got
-	}()
-	if err := s.ocServeStreamTurn(context.Background(), m, "chat1", sess, "hello", events); err != nil {
-		t.Fatalf("stream turn: %v", err)
-	}
-	close(events)
-	got := <-collect
-	var sawErr, sawTerminal bool
-	for _, ev := range got {
-		if ev["type"] == "error" && strings.Contains(fmt.Sprint(ev["message"]), "refused this turn twice") {
-			sawErr = true
-		}
-		if ev["type"] == "status" && ev["state"] == "error" {
-			sawTerminal = true
-		}
-	}
-	if !sawErr || !sawTerminal {
-		t.Fatalf("the second wall needs the honest error + terminal: err=%v terminal=%v", sawErr, sawTerminal)
-	}
+        t.Setenv("DOOMALAY_OPENCODE_SERVE_PASSWORD", "rig-pw")
+        fake := &fakeServe{}
+        srv := httptest.NewServer(http.HandlerFunc(fake.handler))
+        defer srv.Close()
+        m := ocserve.New("", "key", nil)
+        m.SetBaseURL(srv.URL)
+        dir := t.TempDir()
+        db, err := store.Open(dir)
+        if err != nil {
+                t.Fatalf("store: %v", err)
+        }
+        if err := db.Migrate(); err != nil {
+                t.Fatalf("migrate: %v", err)
+        }
+        s := &Server{db: db}
+        sess := &store.Session{ID: "chat1", Title: "t", Provider: "opencode", Model: "big-pickle"}
+        if err := db.CreateSession(sess); err != nil {
+                t.Fatalf("create: %v", err)
+        }
+        fake.mu.Lock()
+        fake.poisonedTries = 99 // wall every attempt
+        fake.mu.Unlock()
+        events := make(chan map[string]any, 64)
+        collect := make(chan []map[string]any, 1)
+        go func() {
+                var got []map[string]any
+                for ev := range events {
+                        got = append(got, ev)
+                }
+                collect <- got
+        }()
+        if err := s.ocServeStreamTurn(context.Background(), m, "chat1", sess, "hello", events); err != nil {
+                t.Fatalf("stream turn: %v", err)
+        }
+        close(events)
+        got := <-collect
+        var sawErr, sawTerminal bool
+        for _, ev := range got {
+                if ev["type"] == "error" && strings.Contains(fmt.Sprint(ev["message"]), "refused this turn twice") {
+                        sawErr = true
+                }
+                if ev["type"] == "status" && ev["state"] == "error" {
+                        sawTerminal = true
+                }
+        }
+        if !sawErr || !sawTerminal {
+                t.Fatalf("the second wall needs the honest error + terminal: err=%v terminal=%v", sawErr, sawTerminal)
+        }
+}
+
+// TestOcServeAuthErrorIsHonest pins the provider.auth branch: a 401 from
+// the serve answers the honest key-error copy + terminal — never the
+// recycle (a bad key is not a gate refusal) and never a silent hang.
+func TestOcServeAuthErrorIsHonest(t *testing.T) {
+        t.Setenv("DOOMALAY_OPENCODE_SERVE_PASSWORD", "rig-pw")
+        fake := &fakeServe{}
+        srv := httptest.NewServer(http.HandlerFunc(fake.handler))
+        defer srv.Close()
+        m := ocserve.New("", "key", nil)
+        m.SetBaseURL(srv.URL)
+        dir := t.TempDir()
+        db, err := store.Open(dir)
+        if err != nil {
+                t.Fatalf("store: %v", err)
+        }
+        if err := db.Migrate(); err != nil {
+                t.Fatalf("migrate: %v", err)
+        }
+        s := &Server{db: db}
+        sess := &store.Session{ID: "chat1", Title: "t", Provider: "opencode", Model: "big-pickle"}
+        if err := db.CreateSession(sess); err != nil {
+                t.Fatalf("create: %v", err)
+        }
+        fake.mu.Lock()
+        fake.authTries = 99 // 401 every attempt
+        fake.mu.Unlock()
+        events := make(chan map[string]any, 64)
+        collect := make(chan []map[string]any, 1)
+        go func() {
+                var got []map[string]any
+                for ev := range events {
+                        got = append(got, ev)
+                }
+                collect <- got
+        }()
+        if err := s.ocServeStreamTurn(context.Background(), m, "chat1", sess, "hello", events); err != nil {
+                t.Fatalf("stream turn: %v", err)
+        }
+        close(events)
+        got := <-collect
+        var sawAuth, sawTerminal bool
+        prompts := 0
+        fake.mu.Lock()
+        prompts = len(fake.promptTexts)
+        fake.mu.Unlock()
+        for _, ev := range got {
+                if ev["type"] == "error" {
+                        if fmt.Sprint(ev["error"]) == "oc_bridge_auth" && strings.Contains(fmt.Sprint(ev["message"]), "rejected the bridge key") {
+                                sawAuth = true
+                        }
+                }
+                if ev["type"] == "status" && ev["state"] == "error" {
+                        sawTerminal = true
+                }
+        }
+        if !sawAuth || !sawTerminal {
+                t.Fatalf("the 401 must answer the honest key error + terminal: auth=%v terminal=%v", sawAuth, sawTerminal)
+        }
+        if prompts != 1 {
+                t.Fatalf("an auth failure answers ONCE with the honest error (a fresh session can't fix a bad key — got %d prompts)", prompts)
+        }
 }
 
 // TestOcServeOpeningTextTrimLaw pins the opening composer against the
@@ -298,49 +437,61 @@ func TestOcServeRecycleGivesHonestTerminal(t *testing.T) {
 // compacted history (the emit runs before dispatch) — the composer trims
 // it and appends exactly once.
 func TestOcServeOpeningTextTrimLaw(t *testing.T) {
-	dir := t.TempDir()
-	db, err := store.Open(dir)
-	if err != nil {
-		t.Fatalf("store: %v", err)
-	}
-	if err := db.Migrate(); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	s := &Server{db: db}
-	sess := &store.Session{ID: "chat1", Title: "t", Provider: "opencode", Model: "big-pickle", SlidingWindow: 40}
-	if err := db.CreateSession(sess); err != nil {
-		t.Fatalf("create: %v", err)
-	}
-	db.AppendEvent("chat1", "user", "first question", "")
-	db.AppendEvent("chat1", "assistant", "first answer", "")
-	// the in-flight emit (the turn persisted it before dispatch)
-	db.AppendEvent("chat1", "user", "the new message", "")
-	text := s.ocServeOpeningText(sess, "the new message")
-	if n := strings.Count(text, "the new message"); n != 1 {
-		t.Fatalf("the in-flight message must ride the opening text EXACTLY ONCE (v1.48.1's law), got %d", n)
-	}
-	if !strings.Contains(text, "first question") || !strings.Contains(text, "first answer") {
-		t.Fatalf("the replayed history must ride the opening text")
-	}
+        dir := t.TempDir()
+        db, err := store.Open(dir)
+        if err != nil {
+                t.Fatalf("store: %v", err)
+        }
+        if err := db.Migrate(); err != nil {
+                t.Fatalf("migrate: %v", err)
+        }
+        s := &Server{db: db}
+        sess := &store.Session{ID: "chat1", Title: "t", Provider: "opencode", Model: "big-pickle", SlidingWindow: 40}
+        if err := db.CreateSession(sess); err != nil {
+                t.Fatalf("create: %v", err)
+        }
+        db.AppendEvent("chat1", "user", "first question", "")
+        db.AppendEvent("chat1", "assistant", "first answer", "")
+        // the in-flight emit (the turn persisted it before dispatch)
+        db.AppendEvent("chat1", "user", "the new message", "")
+        text := s.ocServeOpeningText(sess, "the new message")
+        if n := strings.Count(text, "the new message"); n != 1 {
+                t.Fatalf("the in-flight message must ride the opening text EXACTLY ONCE (v1.48.1's law), got %d", n)
+        }
+        if !strings.Contains(text, "first question") || !strings.Contains(text, "first answer") {
+                t.Fatalf("the replayed history must ride the opening text")
+        }
 }
 
 // TestIsOpenCodeFreeModelSlot pins the dispatch gate's model table (the
 // exact rule fetchOpenCodeModels applies: big-pickle + *-free minus the
 // paid exceptions).
 func TestIsOpenCodeFreeModelSlot(t *testing.T) {
-	cases := map[string]bool{
-		"big-pickle":              true,
-		"opencode/big-pickle":     true,
-		"glm-5.3-flash-free":      true,
-		"minimax-m3.1-flash-free": true,
-		"minimax-m3-free":         false, // the paid exception
-		"qwen3.6-plus-free":       false, // the paid exception
-		"glm-5.3":                 false, // paid
-		"":                        false,
-	}
-	for slot, want := range cases {
-		if got := llm.IsOpenCodeFreeModelSlot(slot); got != want {
-			t.Fatalf("IsOpenCodeFreeModelSlot(%q) = %v, want %v", slot, got, want)
-		}
-	}
+        cases := map[string]bool{
+                "big-pickle":              true,
+                "opencode/big-pickle":     true,
+                "glm-5.3-flash-free":      true,
+                "minimax-m3.1-flash-free": true,
+                "minimax-m3-free":         false, // the paid exception
+                "qwen3.6-plus-free":       false, // the paid exception
+                "glm-5.3":                 false, // paid
+                "":                        false,
+        }
+        for slot, want := range cases {
+                if got := llm.IsOpenCodeFreeModelSlot(slot); got != want {
+                        t.Fatalf("IsOpenCodeFreeModelSlot(%q) = %v, want %v", slot, got, want)
+                }
+        }
+}
+
+// basicAuthFor mirrors the client's own header builder (the pin asserts
+// byte-equality against it — no drift between the fake and the law).
+func basicAuthFor(user, password string) string {
+        return base64Std(user + ":" + password)
+}
+
+// base64Std is the test's own base64 (mirrors the client's encoding — the
+// import stays local so the pin never drifts on a package reshuffle).
+func base64Std(s string) string {
+        return base64.StdEncoding.EncodeToString([]byte(s))
 }
