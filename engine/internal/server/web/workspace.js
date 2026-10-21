@@ -1019,9 +1019,25 @@
         '</span>' +
         (inChat
           ? '<span class="wsx-badge inchat">✓ in chat</span>'
-          : '<span class="wsx-badge read">＋</span>') +
+          : '<span class="wsx-badge read" data-plus="1" title="add to this chat">＋</span>') +
       '</div>' +
       '<div class="wsx-acts" id="wsx-acts-' + esc(ws.id) + '" style="display:none"></div>');
+  }
+
+  // v1.48.3 THE DIRECT PLUS — the ONE shared “add this workspace to the
+  // current chat” action. The user's ask: “Pressing the + should add it to
+  // the chat directly. Instead of user presses + then also has to press
+  // include in this chat.” The ＋ badge runs this DIRECTLY; the expanded
+  // “＋ add to this chat” pill runs the same chain (identical feedback:
+  // the list re-renders with ✓ in chat, the pill count refreshes, the
+  // orbiting stars go live via fireWSChanged — v1.48.2 — and the toast
+  // confirms).
+  function plusBindToChat(ws) {
+    var sid2 = sidNow();
+    if (!sid2) { toast('connect a model first'); return; }
+    api('/api/sessions/' + encodeURIComponent(sid2) + '/workspaces', 'POST', { workspace_id: ws.id })
+      .then(function () { loadGlobals(); refreshPills(); fireWSChanged(sid2); toast(ws.name + ' added to this chat'); })
+      .catch(function (e) { toast(e.message); });
   }
 
   function wireBoundRows(listEl, rows) {
@@ -1037,6 +1053,14 @@
           acts.dataset.wired = '1';
           wireRowActions(acts, ws);
         }
+      });
+      // v1.48.3: the ＋ badge is its own affordance — it ADDS directly
+      // (stopPropagation: the row body keeps its expand-on-click; the
+      // badge never toggles the row).
+      var plus = row.querySelector('[data-plus]');
+      if (plus) plus.addEventListener('click', function (ev) {
+        ev.stopPropagation();
+        plusBindToChat(ws);
       });
     });
   }
@@ -1066,9 +1090,8 @@
           .then(function () { loadGlobals(); refreshPills(); fireWSChanged(sid2); toast('removed from this chat (still saved globally)'); })
           .catch(function (e) { toast(e.message); });
       } else {
-        api('/api/sessions/' + encodeURIComponent(sid2) + '/workspaces', 'POST', { workspace_id: ws.id })
-          .then(function () { loadGlobals(); refreshPills(); fireWSChanged(sid2); toast(ws.name + ' added to this chat'); })
-          .catch(function (e) { toast(e.message); });
+        // v1.48.3: the same shared chain the ＋ badge runs directly
+        plusBindToChat(ws);
       }
     });
     var dr = acts.querySelector('[data-a="drawer"]');
