@@ -981,6 +981,12 @@
     // v1.42.5 THE SWAP: the canonical switch + the registry probe (the
     // manager panel + v1.42.6's portals both ride the ONE switchTo).
     switchTo: switchTo,
+    // v1.42.8 THE VESSEL: the fresh world state for the bundle
+    // publishers + the thumb capture for the import tail (the bytes
+    // land on the ACTIVE canvas row — after switchTo that's the new
+    // world; capture is synchronous-pixels, the PUT rides async).
+    getWorldStateForExport: getWorldStateForExport,
+    captureThumb: captureThumb,
     // v1.42.7 THE MANAGER: the ONE hub-open-from-canvas law — the dock
     // glyph and the manager's browse row both call it (an optional type
     // pre-filters; 'canvas' when the library wave registers it).
@@ -1005,11 +1011,25 @@
     saveNow: saveNow,
     startAnimation: startAnimation,
     worldsProbe: function () {
+      // v1.42.8: the publishers' CANVAS_KEYS mirror this app's
+      // CANVAS_SCOPE_KEYS — the bundle's settings whitelist must be
+      // EXACTLY the canvas-scope pick list (a drift = a bundle that
+      // could smuggle or lose look keys). The probe surfaces it; the
+      // v1428 rig asserts it hard.
+      var parity = null;
+      try {
+        if (window.Publishers) {
+          var a = CANVAS_SCOPE_KEYS, b = window.Publishers.CANVAS_KEYS;
+          parity = a.length === b.length && a.every(function (k, i) { return k === b[i]; });
+        }
+      } catch (e) { parity = 'err'; }
       return {
         active: (window.Worlds && window.Worlds.activeId) ? window.Worlds.activeId() : null,
         switching: switching,
         icons: world.entities.length,
-        canvasScopeKeys: CANVAS_SCOPE_KEYS.length
+        canvasScopeKeys: CANVAS_SCOPE_KEYS.length,
+        canvasKeysParity: parity,
+        provenance: worldProvenance ? worldProvenance.from || worldProvenance.at : null
       };
     },
     // v0.90.1: THE SIM STEPPER for the E2E rigs — advances physics + the
@@ -2789,6 +2809,10 @@
       // the row it belongs to).
       canvas: (window.Worlds && window.Worlds.activeId) ? window.Worlds.activeId() : 'default'
     };
+    // v1.42.8 THE VESSEL: the provenance mark survives saves — an
+    // imported world remembers where it came from (name/author/at);
+    // a world born here carries none (the field is simply absent).
+    if (worldProvenance) state.imported = worldProvenance;
     // the no-op guard: identical body → the last write already holds
     // this exact world (its savedAt stands — the save clock is the
     // content's epoch, not the session's).
@@ -2803,6 +2827,24 @@
     // debounces the engine side to ≥2s + trailing + the teardown flush.
     if (window.Worlds && typeof window.Worlds.save === 'function') window.Worlds.save(state);
   }
+  // v1.42.8 THE VESSEL: getWorldStateForExport() — the FRESH world
+  // state for the bundle publishers (saveNow's exact shape, minus the
+  // write — the live in-memory truth, never a stale engine row).
+  function getWorldStateForExport() {
+    return {
+      offset: { x: offsetX, y: offsetY },
+      scale: scale,
+      currentFamily: currentFamily,
+      icons: world.entities.map(function (c) { return c.serialize(); }),
+      dots: (window.TabGroups) ? window.TabGroups.serialize() : [],
+      settings: (window.Settings) ? pickCanvasScope(window.Settings.getState()) : {}
+    };
+  }
+
+  // v1.42.8: the provenance of the CURRENT world (null = born here).
+  // applyWorldState reads it from the loaded state; saveNow re-emits it.
+  var worldProvenance = null;
+
   function loadState() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -2866,6 +2908,12 @@
   // the caller. opts.boot gates the first-run empty-state card.
   function applyWorldState(saved, opts) {
     opts = opts || {};
+    // v1.42.8 THE VESSEL: the provenance mark rides the loaded state.
+    if (saved && saved.imported && typeof saved.imported === 'object') {
+      worldProvenance = saved.imported;
+    } else {
+      worldProvenance = null;
+    }
     if (saved) {
       offsetX = (saved.offset && saved.offset.x) || 0;
       offsetY = (saved.offset && saved.offset.y) || 0;

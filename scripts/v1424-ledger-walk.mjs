@@ -99,6 +99,15 @@ async function dragIcon(dx, dy) {
 
 (async () => {
   console.log('v1424-ledger-walk — THE LEDGER (the engine home, live as the user)');
+  // v1.42.8 harness law (TWO convictions): (1) the previous run's app
+  // page SURVIVES in agent-browser and its calm-sync flush resurrects
+  // ghost state in the fresh engine's db; (2) the tab's accumulated
+  // HISTORY (50+ entries across re-runs) desyncs the overlay's marker
+  // chain and overshoots drains past the app root. BOTH die with a
+  // full browser reset — close --all; the next command relaunches it
+  // pristine (fresh page, fresh history).
+  try { ab(['close', '--all']); } catch (e) {}
+  await sleep(600);
   try { execSync(`pkill -9 -f '${ENGINE_BIN}' || true`); } catch (e) {}
   execFileSync(process.env.GO_BIN || 'go', ['build', '-o', ENGINE_BIN, './cmd/doomalay'], {
     cwd: path.join(__ROOT, 'engine'),

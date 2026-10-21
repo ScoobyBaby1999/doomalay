@@ -1,16 +1,16 @@
 var,group,role,root_line(s),themes_overriding,scoped_defs,derived_from,triplet_source,fallback_key,css_sites,css_classes,js_reads,js_writes,flags
---accent,derived,,76,,0,,,,176,58,7,0,
+--accent,derived,,76,,0,,,,186,58,7,0,
 --accent-2,derived,,77,,0,,,,64,21,3,0,
 --accent-2-gradient,gradient,,,,0,,,,10,8,0,0,theme.js-resolved (map target: twin alias / ON-var / triplet)
 --accent-2-rgb,triplet,,102,"ember,forest,frost,mono,nebula,ocean,paper,rose,solar",0,,--field-accent-2,,132,44,1,0,
---accent-3,derived,,78,,0,,,,11,3,1,0,
+--accent-3,derived,,78,,0,,,,15,3,1,0,
 --accent-3-gradient,gradient,,,,0,,,,7,7,0,0,theme.js-resolved (map target: twin alias / ON-var / triplet)
 --accent-3-rgb,triplet,,102,"ember,forest,frost,mono,nebula,ocean,paper,rose,solar",0,,--field-accent-3,,25,5,0,0,
 --accent-4,tone,,41,"ember,forest,frost,mono,nebula,ocean,paper,rose,solar",0,,,,7,3,0,0,
 --accent-4-gradient,gradient,,,,0,,,,1,1,0,0,OPTIONAL var — every read carries an in-var fallback (the documented resolver; var-fallback zone)
 --accent-4-rgb,triplet,,103,"ember,forest,frost,mono,nebula,ocean,paper,rose,solar",0,,--accent-4,,5,2,0,0,
 --accent-gradient,gradient,,,,0,,,,19,16,0,0,theme.js-resolved (map target: twin alias / ON-var / triplet)
---accent-rgb,triplet,,102,"ember,forest,frost,mono,nebula,ocean,paper,rose,solar",0,,--field-accent-1,,195,54,1,0,
+--accent-rgb,triplet,,102,"ember,forest,frost,mono,nebula,ocean,paper,rose,solar",0,,--field-accent-1,,215,54,1,0,
 --artt-ind,component,,,,1,,,,6,0,0,0,
 --artt-rail,component,,,,1,,,,2,0,0,0,
 --bg-app,derived,,74,,0,--field-canvas ⊕ --field-surface 8%,,,31,8,2,0,
@@ -18,15 +18,15 @@ var,group,role,root_line(s),themes_overriding,scoped_defs,derived_from,triplet_s
 --bg-app-rgb,triplet,,104,"ember,forest,frost,mono,nebula,ocean,paper,rose,solar",0,,--bg-app,,6,5,0,0,
 --bg-panel,derived,,75,,0,,,,11,8,2,0,
 --bg-panel-rgb,triplet,,104,"ember,forest,frost,mono,nebula,ocean,paper,rose,solar",0,,--field-canvas,,19,12,0,0,
---border,derived,,71,,0,--field-surface ⊕ --field-ink 13%,,,245,145,2,0,
+--border,derived,,71,,0,--field-surface ⊕ --field-ink 13%,,,278,145,2,0,
 --border-rgb,triplet,,106,,0,,--border,,9,8,0,0,
 --border-strong,derived,,72,,0,--field-surface ⊕ --field-ink 24%,,borderStrong,63,27,5,0,
 --border-strong-gradient,gradient,,,,0,,,,1,1,0,0,OPTIONAL var — every read carries an in-var fallback (the documented resolver; var-fallback zone)
---border-strong-rgb,triplet,,,,0,,--border-strong,,1,0,0,0,theme.js-resolved (map target: twin alias / ON-var / triplet)
+--border-strong-rgb,triplet,,,,0,,--border-strong,,2,0,0,0,theme.js-resolved (map target: twin alias / ON-var / triplet)
 --card,derived,,70,,0,--field-surface ⊕ --field-ink 9%,,card,10,9,1,0,
 --card-rgb,triplet,,101,,0,,--card,,3,2,0,0,
---chat-fs,sizing,,147 2189,,0,,,,30,29,0,1,
---chat-scale,sizing,,148 2190,,0,,,,101,45,0,2,
+--chat-fs,sizing,,152 2196,,0,,,,30,29,0,1,
+--chat-scale,sizing,,153 2197,,0,,,,101,45,0,2,
 --d,component,,,,0,,,,5,0,0,19,
 --dd-accent,component,,,,1,,,,4,0,0,2,
 --dl-p,component,,,,0,,,,1,1,0,1,
@@ -35,20 +35,20 @@ var,group,role,root_line(s),themes_overriding,scoped_defs,derived_from,triplet_s
 --field-accent-1,field,Accent 1,35 48,"ember,forest,frost,mono,nebula,ocean,paper,rose,solar",0,,,accent,1,1,0,0,
 --field-accent-2,field,Accent 2,36 49,"ember,forest,frost,mono,nebula,ocean,paper,rose,solar",0,,,accent2,1,1,0,0,
 --field-accent-3,field,Accent 3,37 50,"ember,forest,frost,mono,nebula,ocean,paper,rose,solar",0,,,,1,1,0,0,
---field-canvas,field,Canvas,34 47,"ember,forest,frost,mono,nebula,ocean,paper,rose,solar",0,,,canvas,3,1,0,0,
+--field-canvas,field,Canvas,34 47,"ember,forest,frost,mono,nebula,ocean,paper,rose,solar",0,,,canvas,8,1,0,0,
 --field-ink,field,Ink,33 46,"ember,forest,frost,mono,nebula,ocean,paper,rose,solar",0,,,ink,13,3,0,0,
 --field-surface,field,Surface,32 45,"ember,forest,frost,mono,nebula,ocean,paper,rose,solar",0,,,surface,12,1,0,0,
---fmt-a1,fmt,,2184,,0,,,,17,14,0,0,
+--fmt-a1,fmt,,2191,,0,,,,17,14,0,0,
 --fmt-a1-gradient,fmt,,,,0,,,,3,3,0,0,OPTIONAL var — every read carries an in-var fallback (the documented resolver; var-fallback zone)
 --fmt-a1-ink,fmt,,,,0,,,,3,3,0,0,OPTIONAL var — every read carries an in-var fallback (the documented resolver; var-fallback zone)
---fmt-a2,fmt,,2185,,0,,,,18,13,0,0,
---fmt-a3,fmt,,2186,,0,,,,14,12,0,0,
+--fmt-a2,fmt,,2192,,0,,,,18,13,0,0,
+--fmt-a3,fmt,,2193,,0,,,,14,12,0,0,
 --fmt-a3-gradient,fmt,,,,0,,,,1,1,0,0,OPTIONAL var — every read carries an in-var fallback (the documented resolver; var-fallback zone)
 --fmt-a3-ink,fmt,,,,0,,,,1,1,0,0,OPTIONAL var — every read carries an in-var fallback (the documented resolver; var-fallback zone)
---fmt-bright,fmt,,2187,,0,,,,6,6,0,0,
+--fmt-bright,fmt,,2194,,0,,,,6,6,0,0,
 --fmt-bright-gradient,fmt,,,,0,,,,1,1,0,0,OPTIONAL var — every read carries an in-var fallback (the documented resolver; var-fallback zone)
 --fmt-bright-ink,fmt,,,,0,,,,1,1,0,0,OPTIONAL var — every read carries an in-var fallback (the documented resolver; var-fallback zone)
---fmt-link,fmt,,2188,,0,,,,10,9,0,0,
+--fmt-link,fmt,,2195,,0,,,,10,9,0,0,
 --fmt-link-gradient,fmt,,,,0,,,,1,1,0,0,OPTIONAL var — every read carries an in-var fallback (the documented resolver; var-fallback zone)
 --fmt-link-ink,fmt,,,,0,,,,1,1,0,0,OPTIONAL var — every read carries an in-var fallback (the documented resolver; var-fallback zone)
 --highlight-inset,chrome,,,,0,,,highlight,0,0,0,1,
@@ -61,7 +61,7 @@ var,group,role,root_line(s),themes_overriding,scoped_defs,derived_from,triplet_s
 --mono,component,,,,0,,,,1,0,0,0,OPTIONAL var — every read carries an in-var fallback (the documented resolver; var-fallback zone)
 --notice,tone,,123,"ember,forest,frost,mono,nebula,ocean,paper,rose,solar",0,,,,12,3,0,0,
 --notice-rgb,tone,,123,"ember,forest,frost,mono,nebula,ocean,paper,rose,solar",0,,,,10,1,0,0,
---ok,tone,,117,"ember,forest,frost,mono,nebula,ocean,paper,rose,solar",0,,,ok,56,11,1,0,
+--ok,tone,,117,"ember,forest,frost,mono,nebula,ocean,paper,rose,solar",0,,,ok,58,11,1,0,
 --ok-rgb,tone,,117,"ember,forest,frost,mono,nebula,ocean,paper,rose,solar",0,,,,39,4,0,0,
 --on-accent,chrome,,130,,0,,,,30,13,0,0,
 --on-accent-2,chrome,,,,0,,,,7,7,0,0,theme.js-resolved (map target: twin alias / ON-var / triplet)
@@ -72,7 +72,7 @@ var,group,role,root_line(s),themes_overriding,scoped_defs,derived_from,triplet_s
 --on-ok,chrome,,145,,0,,,,1,1,0,0,
 --on-surface-1,chrome,,,,0,,,,1,1,0,0,theme.js-resolved (map target: twin alias / ON-var / triplet)
 --on-surface-2,chrome,,,,0,,,,1,1,0,0,theme.js-resolved (map target: twin alias / ON-var / triplet)
---p,other,,3986,,1,,,,2,1,0,1,
+--p,other,,3993,,1,,,,2,1,0,1,
 --panel-field-h,component,,,,0,,,,2,2,0,1,
 --panel-field-top,component,,,,0,,,,1,1,0,1,
 --panel-head-off,component,,,,0,,,,1,1,0,1,
@@ -82,38 +82,40 @@ var,group,role,root_line(s),themes_overriding,scoped_defs,derived_from,triplet_s
 --proj-sy,component,,,,1,,,,0,0,0,0,
 --proj-tx,component,,,,1,,,,1,0,4,1,
 --proj-ty,component,,,,1,,,,3,0,0,1,
---raised-chrome,derived,,5427 5429,,0,--field-surface ⊕ --field-ink 5%,,,49,48,0,0,
---raised-ring,derived,,5427 5430,,0,--field-surface ⊕ --field-ink 16%,,,6,5,0,0,
+--raised-chrome,derived,,5434 5436,,0,--field-surface ⊕ --field-ink 5%,,,49,48,0,0,
+--raised-ring,derived,,5434 5437,,0,--field-surface ⊕ --field-ink 16%,,,6,5,0,0,
 --ring,component,,,,1,,,,1,1,0,1,
 --shadow-ink,derived,,93,,0,,,shadow,0,0,1,1,
 --shadow-ink-rgb,triplet,,111,,0,,,,38,28,0,2,
 --slide-d,component,,,,0,,,,1,1,0,1,
 --slide-t,component,,,,0,,,,1,1,0,1,
---surface-1,derived,,58,,0,,,,98,37,1,0,
+--surface-1,derived,,58,,0,,,,101,37,1,0,
 --surface-1-gradient,gradient,,,,0,,,,8,8,0,0,theme.js-resolved (map target: twin alias / ON-var / triplet)
 --surface-1-rgb,triplet,,100,"ember,forest,frost,mono,nebula,ocean,paper,rose,solar",0,,--field-surface,,5,1,0,0,
---surface-2,derived,,59,,0,--field-surface ⊕ --field-ink 5%,,surface2,174,28,3,0,
+--surface-2,derived,,59,,0,--field-surface ⊕ --field-ink 5%,,surface2,199,28,3,0,
 --surface-2-gradient,gradient,,,,0,,,,4,1,0,0,OPTIONAL var — every read carries an in-var fallback (the documented resolver; var-fallback zone)
 --surface-2-rgb,triplet,,100,"ember,forest,frost,mono,nebula,ocean,paper,rose,solar",0,,--surface-2,,4,4,0,0,
 --surface-3,derived,,60,,0,--field-surface ⊕ --field-ink 11%,,,53,22,0,0,
 --surface-3-rgb,triplet,,100,"ember,forest,frost,mono,nebula,ocean,paper,rose,solar",0,,--surface-3,,18,3,0,0,
 --template-rgb,pill,,128,"frost,paper",0,,,,2,1,0,0,documented v0.33 light-theme override
 --template-tint,pill,,128,"frost,paper",0,,,,1,1,0,0,documented v0.33 light-theme override
---text-1,derived,,80,,0,,,,267,133,3,0,
---text-2,derived,,81,,0,--field-ink ⊕ --field-surface 26%,,text2,167,82,1,0,
---text-3,derived,,82,,0,--field-ink ⊕ --field-surface 47%,,,361,128,2,0,
+--text-1,derived,,80,,0,,,,290,133,3,0,
+--text-2,derived,,81,,0,--field-ink ⊕ --field-surface 26%,,text2,189,82,1,0,
+--text-3,derived,,82,,0,--field-ink ⊕ --field-surface 47%,,,394,128,2,0,
 --text-3-dim,derived,,83,,0,--field-ink ⊕ --field-surface 61%,,text3,26,10,1,0,
 --text-3-rgb,triplet,,105,,0,,--text-3,,11,1,0,0,
 --text-shadow,chrome,,141,,0,,,,9,7,0,0,
 --thr,component,,,,1,,,,3,2,0,1,
 --tick-op,component,,,,1,,,,1,1,0,1,
---ui-fs,sizing,,150,,0,,,,106,49,0,1,
---ui-micro-fs,sizing,,154,,0,,,,93,44,0,0,
---ui-small-fs,sizing,,151,,0,,,,340,110,0,1,
+--ui-fs,sizing,,155,,0,,,,106,49,0,1,
+--ui-large-fs,other,,158,,0,,,,6,0,0,0,
+--ui-micro-fs,sizing,,161,,0,,,,96,44,0,0,
+--ui-small-fs,sizing,,156,,0,,,,381,110,0,1,
+--ui-tiny-fs,other,,157,,0,,,,30,0,0,0,
 --veil-ink,chrome,,135,,0,,,,0,0,0,1,
 --veil-ink-rgb,chrome,,136,,0,,,,5,4,0,1,
 --warn,tone,,118,"ember,forest,frost,mono,nebula,ocean,paper,rose,solar",0,,,,44,9,0,0,
---warn-rgb,tone,,118,"ember,forest,frost,mono,nebula,ocean,paper,rose,solar",0,,,,38,8,0,0,
+--warn-rgb,tone,,118,"ember,forest,frost,mono,nebula,ocean,paper,rose,solar",0,,,,41,8,0,0,
 --wb-active-border-color,component,,,,1,,,,0,0,0,0,
 --wb-active-cell-color,component,,,,1,,,,0,0,0,0,
 --wb-active-color,component,,,,1,,,,0,0,0,0,

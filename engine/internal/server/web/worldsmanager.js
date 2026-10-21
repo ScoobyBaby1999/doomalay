@@ -148,6 +148,7 @@
         '<span id="wm-browse-sub" style="color:var(--text-3);font-size:var(--ui-tiny-fs)">…</span></span>' +
       '</button>' +
       '<button id="wm-create" style="display:flex;align-items:center;justify-content:center;gap:8px;width:100%;background:rgba(var(--accent-rgb),0.14);color:var(--accent);border:1px solid rgba(var(--accent-rgb),0.32);border-radius:12px;padding:12px 14px;font-size:var(--ui-small-fs);font-weight:600;cursor:pointer;touch-action:manipulation">＋ create new canvas</button>' +
+      '<button id="wm-import" style="display:flex;align-items:center;justify-content:center;gap:8px;width:100%;background:var(--surface-2);color:var(--text-1);border:1px solid var(--border);border-radius:12px;padding:12px 14px;font-size:var(--ui-small-fs);font-weight:600;cursor:pointer;touch-action:manipulation">⤓ import .doomcanvas</button>' +
       '<div id="wm-note" style="color:var(--text-3);font-size:var(--ui-tiny-fs)"></div>' +
       '<div id="wm-storage" style="color:var(--text-3);font-size:var(--ui-tiny-fs);margin-top:auto"></div>' +
       '</div>';
@@ -428,8 +429,9 @@
     });
   }
 
-  // the row action sheet (long-press or ⋯). Publish rides the bundle
-  // wave (v1.42.8's CanvasPublisher) — a dead button would lie.
+  // the row action sheet (long-press or ⋯). v1.42.8 THE VESSEL: publish
+  // goes LIVE — the sheet's ⤒ row opens the publish sheet (the toggle
+  // tree + the live size + the export).
   function openSheet(id) {
     var row = rowsCache.filter(function (r) { return r.id === id; })[0];
     if (!row) return;
@@ -444,6 +446,7 @@
       '</div>' +
       btn('rename', '✎', 'rename') +
       btn('dup', '⧉', 'duplicate') +
+      btn('pub', '⤒', 'publish .doomcanvas') +
       btn('del', '🗑', 'delete') +
       '</div>';
     window.ConnectOverlay.pushPage(html, {
@@ -455,6 +458,7 @@
             var act = b.getAttribute('data-wm-act');
             if (act === 'rename') doRename(id);
             else if (act === 'dup') doDuplicate(id);
+            else if (act === 'pub') doPublish(id);
             else if (act === 'del') doDelete(id);
           });
         });
@@ -479,6 +483,213 @@
     if (window.ConnectOverlay && window.ConnectOverlay.isOpen()) {
       try { window.ConnectOverlay.close(); } catch (e) {}
     }
+  }
+
+  // ── v1.42.8 THE VESSEL: publish + import ─────────────────────────
+
+  // doPublish(id) — the active row exports the LIVE truth; another row
+  // exports its engine state. collect() gathers everything ONCE (the
+  // sheet's toggles only filter — the preview IS the truth).
+  function doPublish(id) {
+    var row = rowsCache.filter(function (r) { return r.id === id; })[0];
+    if (!row) return;
+    if (!window.CanvasBundle) { note('the bundle writer is unavailable'); return; }
+    note('reading the world…');
+    var live = (id === activeId());
+    var pre = live
+      ? Promise.resolve({ live: true })
+      : fetch('/api/canvases/' + encodeURIComponent(id))
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .then(function (d) { return { state: d && d.canvas && d.canvas.state, name: (d && d.name) || row.name }; });
+    pre.then(function (src) {
+      if (!src.live && !src.state) throw new Error('the world could not be read');
+      var worldCtx = src.live ? undefined : { state: src.state, name: src.name, id: id };
+      return window.CanvasBundle.collect({}, worldCtx).then(function (collected) {
+        openPublishSheet(row, collected);
+      });
+    }).catch(function (e) { note('publish failed — ' + (e && e.message)); });
+  }
+
+  // the sheet's size math — which files survive the picks
+  function pubPickedBytes(collected, picks) {
+    var f = collected.files, total = 1024;   // the manifest fudge
+    var chatOn = function (sid) { return !picks.chats || picks.chats[sid] !== false; };
+    var assetOwners = {};   // file → [sids]
+    Object.keys(f).forEach(function (n) {
+      if (n.indexOf('chats/') !== 0) return;
+      var sid = n.slice(6, -5);
+      try {
+        (JSON.parse(f[n]).assets || []).forEach(function (a) {
+          (assetOwners[a.file] = assetOwners[a.file] || []).push(sid);
+        });
+      } catch (e) {}
+    });
+    Object.keys(f).forEach(function (n) {
+      var sz = (typeof f[n] === 'string') ? f[n].length : (f[n].byteLength || 0);
+      if (n.indexOf('chats/') === 0) {
+        var sid = n.slice(6, -5);
+        if (!chatOn(sid)) return;
+        total += sz;
+        if (picks.history === false) total -= (collected.chatHistoryBytes || {})[sid] || 0;
+      } else if (n.indexOf('assets/') === 0) {
+        var owners = assetOwners[n] || [];
+        var ownerOn = owners.some(chatOn);
+        if (!ownerOn) return;
+        if (picks.assets && picks.assets[n] === false) return;
+        total += sz;
+      } else if (n.indexOf('children/') === 0) {
+        var cid = n.slice(9, -11);
+        if (picks.children && picks.children[cid] === false) return;
+        total += sz;
+      } else if (n === 'iconsets.json') {
+        if (picks.iconsets === false) return;
+        total += sz;
+      } else {
+        total += sz;   // settings/canvas/manifest ride with the world
+      }
+    });
+    return Math.max(0, total);
+  }
+
+  // the publish sheet — a pushed page (the two-surface law): the
+  // toggle tree + the LIVE size + the export. Zero body appenders.
+  function openPublishSheet(row, collected) {
+    var picks = { history: true, iconsets: true, chats: {}, assets: {}, children: {} };
+    // seed the picks from the tree (all ON — the collected default)
+    (collected.tree || []).forEach(function walk(t) {
+      if (t.kind === 'chat') picks.chats[t.sid] = true;
+      else if (t.kind === 'asset') picks.assets[t.file] = true;
+      else if (t.kind === 'child') picks.children[t.cid] = true;
+      (t.children || []).forEach(walk);
+    });
+    function sizeEl() { return document.getElementById('wm-pub-size'); }
+    function recompute() {
+      var el = sizeEl();
+      if (el) el.textContent = '≈ ' + fmtSize(pubPickedBytes(collected, picks)) + ' · ' +
+        (window.CanvasBundle && window.CanvasBundle.probe ? 'format 1.0' : '');
+    }
+    function toggleRowHTML(t, depth) {
+      var pad = 10 + depth * 18;
+      var glyph = t.locked ? '⊛' : (t.on !== false ? '☑' : '☐');
+      return '<div data-wm-tg="' + esc(t.id) + '" style="display:flex;align-items:center;gap:9px;padding:8px ' + pad + 'px 8px 10px;border:1px solid var(--border);border-radius:10px;background:var(--surface-2);cursor:' + (t.locked ? 'default' : 'pointer') + ';touch-action:manipulation' + (t.locked ? ';opacity:0.65' : '') + '">' +
+        '<span style="width:18px;text-align:center;flex:none;color:var(--text-2)">' + glyph + '</span>' +
+        '<span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:1px">' +
+          '<span style="color:var(--text-1);font-size:var(--ui-small-fs)">' + esc(t.label) + (t.locked ? ' <span style="color:var(--text-3)">(always)</span>' : '') + '</span>' +
+          '<span style="color:var(--text-3);font-size:var(--ui-tiny-fs)">' + esc(t.detail || '') + '</span>' +
+        '</span></div>' +
+        (t.children || []).map(function (c) { return toggleRowHTML(c, depth + 1); }).join('');
+    }
+    var warnHTML = (collected.warnings || []).slice(0, 4).map(function (w) {
+      return '<div style="color:var(--text-3);font-size:var(--ui-tiny-fs)">⚠ ' + esc(w) + '</div>';
+    }).join('');
+    var html = '<div id="wm-pub" style="padding:18px 16px;display:flex;flex-direction:column;gap:10px;max-height:100%;overflow-y:auto">' +
+      '<div style="display:flex;flex-direction:column;gap:2px">' +
+        '<div style="font-size:var(--ui-large-fs);font-weight:700;color:var(--text-1)">Publish "' + esc(row.name) + '"</div>' +
+        '<div style="color:var(--text-3);font-size:var(--ui-tiny-fs)">one .doomcanvas file — chats keep their keys home (BYOK)</div>' +
+      '</div>' +
+      '<div style="display:flex;flex-direction:column;gap:5px">' + (collected.tree || []).map(function (t) { return toggleRowHTML(t, 0); }).join('') + '</div>' +
+      '<div id="wm-pub-size" style="color:var(--text-2);font-size:var(--ui-small-fs);font-weight:600"></div>' +
+      warnHTML +
+      '<button id="wm-pub-export" style="display:flex;align-items:center;justify-content:center;gap:8px;width:100%;background:rgba(var(--accent-rgb),0.14);color:var(--accent);border:1px solid rgba(var(--accent-rgb),0.32);border-radius:12px;padding:12px 14px;font-size:var(--ui-small-fs);font-weight:600;cursor:pointer;touch-action:manipulation">⤓ export .doomcanvas</button>' +
+      '<div id="wm-pub-note" style="color:var(--text-3);font-size:var(--ui-tiny-fs)"></div>' +
+      '</div>';
+    window.ConnectOverlay.pushPage(html, {
+      onSwap: function () {
+        var root = window.ConnectOverlay.getContentEl();
+        if (!root) return;
+        var noteEl = document.getElementById('wm-pub-note');
+        function setNote(t) { if (noteEl) noteEl.textContent = t || ''; }
+        root.querySelectorAll('[data-wm-tg]').forEach(function (el) {
+          el.addEventListener('click', function () {
+            var id = el.getAttribute('data-wm-tg');
+            // find the leaf in the tree + flip the pick
+            var found = null;
+            (collected.tree || []).forEach(function walk(t) {
+              if (t.id === id) found = t;
+              (t.children || []).forEach(walk);
+            });
+            if (!found || found.locked) return;
+            var on = found.on !== false;
+            found.on = !on;
+            if (found.kind === 'chat') picks.chats[found.sid] = !on;
+            else if (found.kind === 'asset') picks.assets[found.file] = !on;
+            else if (found.kind === 'child') picks.children[found.cid] = !on;
+            else if (found.id === 'history') picks.history = !on;
+            else if (found.id === 'iconsets') picks.iconsets = !on;
+            else if (found.id === 'look') { /* the look rides the world — the toggle is honest chrome */ }
+            // re-render just the glyph + the size (no page swap)
+            el.querySelector('span').textContent = found.on !== false ? '☑' : '☐';
+            recompute();
+          });
+        });
+        var ex = document.getElementById('wm-pub-export');
+        if (ex) ex.addEventListener('click', function () {
+          setNote('building…');
+          window.CanvasBundle.build(collected, picks).then(function () {
+            window.CanvasBundle.download();
+            setNote('exported — ' + fmtSize(window.CanvasBundle.lastBuilt.bytes.length) + ' written');
+            toast('world exported');
+          }).catch(function (e) { setNote('export failed — ' + (e && e.message)); });
+        });
+        recompute();
+      }
+    });
+  }
+
+  // doImport — the file picker (the input lives INSIDE the overlay
+  // content — the B1 law) → importFromFile → the honest report page.
+  function doImport() {
+    if (!window.CanvasBundle) { note('the bundle reader is unavailable'); return; }
+    var root = window.ConnectOverlay.getContentEl();
+    if (!root) return;
+    var old = document.getElementById('wm-import-input');
+    if (old) old.remove();
+    var inp = document.createElement('input');
+    inp.id = 'wm-import-input';
+    inp.type = 'file';
+    inp.accept = '.doomcanvas,application/zip';
+    inp.style.display = 'none';
+    root.appendChild(inp);
+    inp.addEventListener('change', function () {
+      var f = inp.files && inp.files[0];
+      if (!f) return;
+      note('importing ' + f.name + '…');
+      window.CanvasBundle.importFromFile(f).then(function (res) {
+        openImportReport(res, f.name);
+      }).catch(function (e) {
+        note('import failed — ' + (e && e.message));
+      });
+    });
+    inp.click();
+  }
+
+  function openImportReport(res, fname) {
+    var rows = [];
+    if (res && res.ok) {
+      var c = res.created || {};
+      rows.push('✔ the world landed' + (c.canvas ? ' — row ' + String(c.canvas).slice(0, 12) : ''));
+      if (c.chats) rows.push('· ' + c.chats + ' chat' + (c.chats === 1 ? '' : 's') + ' reborn (fresh sessions, keys stay home)');
+      if (c.children) rows.push('· ' + c.children + ' linked world' + (c.children === 1 ? '' : 's'));
+      if (c.iconsets) rows.push('· ' + c.iconsets + ' icon set' + (c.iconsets === 1 ? '' : 's'));
+      if (c.icons) rows.push('· ' + c.icons + ' icons placed');
+    } else {
+      rows.push('✘ ' + ((res && res.why) || 'the import failed'));
+      if (res && res.rolledBack) rows.push('· everything was rolled back — nothing half-landed');
+    }
+    (res && res.warnings ? res.warnings : []).slice(0, 6).forEach(function (w) {
+      rows.push('⚠ ' + w);
+    });
+    var html = '<div style="padding:18px 16px;display:flex;flex-direction:column;gap:10px">' +
+      '<div style="font-size:var(--ui-large-fs);font-weight:700;color:var(--text-1)">Import "' + esc(fname) + '"</div>' +
+      rows.map(function (r) { return '<div style="color:var(--text-2);font-size:var(--ui-small-fs)">' + esc(r) + '</div>'; }).join('') +
+      '<button id="wm-imp-done" style="display:flex;align-items:center;justify-content:center;width:100%;background:rgba(var(--accent-rgb),0.14);color:var(--accent);border:1px solid rgba(var(--accent-rgb),0.32);border-radius:12px;padding:12px 14px;font-size:var(--ui-small-fs);font-weight:600;cursor:pointer;touch-action:manipulation">done</button>' +
+      '</div>';
+    window.ConnectOverlay.pushPage(html, {
+      onSwap: function () {
+        var d = document.getElementById('wm-imp-done');
+        if (d) d.addEventListener('click', function () { popToRoot(2); refresh(); });
+      }
+    });
   }
 
   // ── the browse row (the hub pre-filter, forward-wired) ───────────
@@ -550,6 +761,10 @@
       if (!window.doomalay || !window.doomalay.switchTo) { note('the switch path is unavailable'); return; }
       doCreate();
     });
+    // v1.42.8 THE VESSEL: the import row — the file picker → the
+    // ladder → the driver → the honest report.
+    var imp = document.getElementById('wm-import');
+    if (imp) imp.addEventListener('click', doImport);
   }
 
   // window-level hold tracking (move/cancel kills the hold; the tap

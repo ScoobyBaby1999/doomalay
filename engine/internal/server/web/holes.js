@@ -38,16 +38,16 @@
     var c = 'var(--' + palette + ')';
     var rgb = 'var(--' + palette + '-rgb)';
     if (style === 'twin') {
-      return 'background:radial-gradient(circle at 50% 50%, var(--surface-1) 0 26%, rgba(' + rgb + ',0.05) 27% 38%, rgba(' + rgb + ',0.35) 39% 46%, var(--bg) 47% 100%);' +
+      return 'background:radial-gradient(circle at 50% 50%, var(--surface-1) 0 26%, rgba(' + rgb + ',0.05) 27% 38%, rgba(' + rgb + ',0.35) 39% 46%, var(--field-canvas) 47% 100%);' +
         'border:2px solid ' + c + ';' +
         'box-shadow:0 0 0 3px rgba(' + rgb + ',0.18), inset 0 0 18px rgba(' + rgb + ',0.25);';
     }
     if (style === 'halo') {
-      return 'background:radial-gradient(circle at 50% 50%, var(--bg) 0 30%, var(--surface-1) 31% 44%, rgba(' + rgb + ',0.3) 45% 52%, transparent 53% 100%);' +
+      return 'background:radial-gradient(circle at 50% 50%, var(--field-canvas) 0 30%, var(--surface-1) 31% 44%, rgba(' + rgb + ',0.3) 45% 52%, transparent 53% 100%);' +
         'border:2px solid rgba(' + rgb + ',0.55);' +
         'box-shadow:0 0 14px rgba(' + rgb + ',0.4);';
     }
-    return 'background:radial-gradient(circle at 50% 50%, var(--bg) 0 40%, var(--surface-1) 41% 62%, rgba(' + rgb + ',0.45) 63% 78%, var(--surface-2) 79% 100%);' +
+    return 'background:radial-gradient(circle at 50% 50%, var(--field-canvas) 0 40%, var(--surface-1) 41% 62%, rgba(' + rgb + ',0.45) 63% 78%, var(--surface-2) 79% 100%);' +
       'border:2px solid ' + c + ';';
   }
 
@@ -396,7 +396,7 @@
     if (T.veil && document.getElementById('hole-veil')) return T.veil;
     var v = document.getElementById('hole-veil');
     if (!v) return null;
-    v.style.background = 'radial-gradient(circle at 50% 50%, var(--bg) 0%, var(--bg) 100%)';
+    v.style.background = 'radial-gradient(circle at 50% 50%, var(--field-canvas) 0%, var(--field-canvas) 100%)';
     v.style.display = '';
     T.veil = v;
     return v;

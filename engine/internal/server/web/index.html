@@ -143,12 +143,19 @@
        disc stays white whatever the theme; the ✓ on an ok-dot stays near-black. */
     --on-brand: #ffffff;
     --on-ok: #06251a;
-    /* text sizes (v0.24 sizing page) */
+    /* text sizes (v0.24 sizing page) — the ladder, small to large:
+       micro (10.5 floor) < tiny 11 < small 12 < ui 14 < large 16.
+       v1.42.8: --ui-tiny-fs + --ui-large-fs land as REAL definitions —
+       the v1.42.4-7 code referenced them before they existed (the
+       census convicted the silent inherit; the metadata lines render
+       at their intended sizes now). */
     --chat-fs: 16px;   /* message bubbles — the chat text size slider */
     --chat-scale: 1;   /* v0.34: chat-fs ÷ 16px — everything in the message
                           scope multiplies its px by this (one look, one lever) */
     --ui-fs: 14px;     /* general text */
     --ui-small-fs: 12px;/* pills, hints, meta, thinking bubbles */
+    --ui-tiny-fs: 11px;/* the tiniest meta rows (row subtitles, footers) */
+    --ui-large-fs: 16px;/* sheet + overlay headings */
     /* v0.25: a FLOOR for the tiniest settings text — calc(--ui-small-fs - 3px)
        could legally render 6.5px ("text overlapping, unreadable" on phones) */
     --ui-micro-fs: max(9.5px, calc(var(--ui-small-fs) - 2px));
@@ -6407,6 +6414,14 @@
      and the portal context (retarget + dive when entered from a hole's
      panel). Rides canvasespanel's data law + the ONE switchTo. -->
 <script src="worldsmanager.js"></script>
+<!-- v1.42.8 THE VESSEL: the .doomcanvas container — OOP component
+     publishers (assets → iconsets → settings → chats → layout →
+     portals; the canvas row LAST) + the 8-rung read ladder (size caps
+     BOTH sizes · truncation · name depth · the whitelist + x-*
+     forward-compat · MAJOR.MINOR · ratio · nesting ≤3 · the rollback
+     journal driver). BYOK: keys are structurally absent. -->
+<script src="publishers.js"></script>
+<script src="canvasbundle.js"></script>
 <script src="chatpanel.js"></script>
 <script src="app.js"></script>
 <script src="ota.js"></script><!-- v1.17.4 THE LIVE UPDATE: the delta OTA banner (appended AFTER the last script — a different position from the termuxsetup.js tag the parallel wave owns, to keep the merge clean) -->

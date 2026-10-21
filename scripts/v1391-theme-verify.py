@@ -24,8 +24,8 @@ rows = list(csv.DictReader(open(os.path.join(SCRIPTS, 'v1391-theme-catalog.csv')
 doc = open(os.path.join(DOCS, 'THEME-VARIABLES.md'), encoding='utf-8').read()
 
 # 1. counts
-check('catalog rows == 140', len(rows) == 140, str(len(rows)))
-check('doc mentions 140 vars', '**140**' in doc)
+check('catalog rows == 142', len(rows) == 142, str(len(rows)))  # v1.42.8: +--ui-tiny-fs +--ui-large-fs (the ladder's missing steps, defined)
+check('doc mentions 142 vars', '**142**' in doc)
 groups = {}
 for r in rows:
     groups[r['group']] = groups.get(r['group'], 0) + 1

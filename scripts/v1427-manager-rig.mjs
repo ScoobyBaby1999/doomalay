@@ -95,6 +95,15 @@ function seedState(icons, savedAt) {
 }
 
 async function boot() {
+  // v1.42.8 harness law (TWO convictions): (1) the previous run's app
+  // page SURVIVES in agent-browser and its calm-sync flush resurrects
+  // ghost state in the fresh engine's db; (2) the tab's accumulated
+  // HISTORY (50+ entries across re-runs) desyncs the overlay's marker
+  // chain and overshoots drains past the app root. BOTH die with a
+  // full browser reset — close --all; the next command relaunches it
+  // pristine (fresh page, fresh history).
+  try { ab(['close', '--all']); } catch (e) {}
+  await sleep(600);
   try { execSync(`pkill -9 -f '${ENGINE_BIN}' || true`); } catch (e) {}
   execFileSync(process.env.GO_BIN || 'go', ['build', '-o', ENGINE_BIN, './cmd/doomalay'], {
     cwd: path.join(__ROOT, 'engine'),
@@ -196,9 +205,11 @@ function openManager() {
   openManager();
   await sleep(900);
   abEval("(function(){var b=document.querySelector('[data-wm-more=wA]');if(b)b.click();return 'clicked'})()");
-  ok('T6 the ⋯ opens the action sheet', await waitFn("document.querySelectorAll('[data-wm-act]').length===3", 6000));
+  // v1.42.8 pin update: the sheet gained 'pub' (publish .doomcanvas) —
+  // the count/contents pin rides the new four-button truth.
+  ok('T6 the ⋯ opens the action sheet', await waitFn("document.querySelectorAll('[data-wm-act]').length===4", 6000));
   ok('T6 the sheet offers rename/duplicate/delete',
-    pstr("(function(){return Array.prototype.map.call(document.querySelectorAll('[data-wm-act]'),function(b){return b.getAttribute('data-wm-act')}).join(',')})()") === 'rename,dup,del');
+    pstr("(function(){return Array.prototype.map.call(document.querySelectorAll('[data-wm-act]'),function(b){return b.getAttribute('data-wm-act')}).join(',')})()") === 'rename,dup,pub,del');
   // back out (Esc pops one level), then the LONG-PRESS path
   abEval("(function(){var e=new KeyboardEvent('keydown',{key:'Escape',bubbles:true});window.dispatchEvent(e);return 'esc'})()");
   await sleep(500);
@@ -208,7 +219,7 @@ function openManager() {
     // the hold: pointerdown → 550ms → the sheet (pointer events, the
     // manager's own hold detector)
     abEval("(function(){var r=document.querySelector('#wm-rows [data-wm-id='+JSON.stringify('"+createdId+"')+']');if(!r)return 'no-row';var b=r.getBoundingClientRect();var ev=new PointerEvent('pointerdown',{bubbles:true,clientX:b.left+20,clientY:b.top+b.height/2,pointerId:7});r.dispatchEvent(ev);return 'held'})()");
-    ok('T6 the long-press opens the SAME sheet', await waitFn("document.querySelectorAll('[data-wm-act]').length===3", 4000));
+    ok('T6 the long-press opens the SAME sheet', await waitFn("document.querySelectorAll('[data-wm-act]').length===4", 4000));
   }
   // dismiss: pop to root
   abEval("(function(){var e=new KeyboardEvent('keydown',{key:'Escape',bubbles:true});window.dispatchEvent(e);return 'esc'})()");
@@ -218,7 +229,7 @@ function openManager() {
   openManager();
   await sleep(900);
   abEval("(function(){var b=document.querySelector('[data-wm-more=wA]');if(b)b.click();return 'clicked'})()");
-  await waitFn("document.querySelectorAll('[data-wm-act]').length===3", 5000);
+  await waitFn("document.querySelectorAll('[data-wm-act]').length===4", 5000);
   abEval("(function(){var b=document.querySelector('[data-wm-act=rename]');if(b)b.click();return 'clicked'})()");
   ok('T7 the rename form opens', await waitFn("!!document.getElementById('wm-rn-in')", 5000));
   abEval("(function(){var i=document.getElementById('wm-rn-in');if(!i)return 'no-input';i.value='Alpha Prime';document.getElementById('wm-rn').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));return 'submitted'})()");
@@ -233,7 +244,7 @@ function openManager() {
 
   // ── T8 the duplicate ─────────────────────────────────────────────
   abEval("(function(){var b=document.querySelector('[data-wm-more=wA]');if(b)b.click();return 'clicked'})()");
-  await waitFn("document.querySelectorAll('[data-wm-act]').length===3", 5000);
+  await waitFn("document.querySelectorAll('[data-wm-act]').length===4", 5000);
   abEval("(function(){var b=document.querySelector('[data-wm-act=dup]');if(b)b.click();return 'clicked'})()");
   await sleep(1400);
   const afterDup = (await api('GET', '/api/canvases')).body.canvases;
@@ -250,7 +261,7 @@ function openManager() {
   // do two via the sheet, then the engine-side for the rest.)
   async function sheetDelete(id) {
     abEval("(function(){var b=document.querySelector('[data-wm-more='+JSON.stringify('"+id+"')+']');if(b)b.click();return 'c'})()");
-    if (!(await waitFn("document.querySelectorAll('[data-wm-act]').length===3", 5000))) return 'no-sheet';
+    if (!(await waitFn("document.querySelectorAll('[data-wm-act]').length===4", 5000))) return 'no-sheet';
     abEval("(function(){var b=document.querySelector('[data-wm-act=del]');if(b)b.click();return 'del'})()");
     if (!(await waitFn("!!document.getElementById('wm-del-y')", 5000))) return 'no-confirm';
     abEval("(function(){var y=document.getElementById('wm-del-y');if(y)y.click();return 'clicked'})()");
@@ -342,10 +353,17 @@ function openManager() {
   // tap the target: re-target + dive
   abEval("(function(){window.__pd=[];var r=document.querySelector('[data-wm-id='+JSON.stringify('" + diveTarget + "')+']');if(r)r.click();return 'tapped'})()");
   ok('T11 the re-target + DIVE lands', await waitFn("(window.__pd||[]).some(d=>d.ok===true&&d.id===" + JSON.stringify(diveTarget) + ")", 15000));
+  // v1.42.8 harness hardening (the flaky-gate-is-a-lying-gate law): the
+  // dive's emerge + the return-hole engine write can outlive a fixed
+  // 400ms — poll up to 8s for the two-way truth instead of one look.
   ok('T11 the two-way law held (a return hole aims home)', await (async () => {
-    await sleep(400);
-    const holes = abJson("JSON.stringify(window.Holes.probe())");
-    return holes && holes.holes.length === 1 && holes.holes[0].target === activeIdNow;
+    const t0 = Date.now();
+    for (;;) {
+      const holes = abJson("JSON.stringify(window.Holes.probe())");
+      if (holes && holes.holes.length === 1 && holes.holes[0].target === activeIdNow) return true;
+      if (Date.now() - t0 > 8000) return false;
+      await sleep(350);
+    }
   })(), pstr("JSON.stringify(window.Holes.probe())"));
   ok('T11 the active world is the dive target', abJson("JSON.stringify(window.doomalay.worldsProbe())").active === diveTarget);
   // ── T12 the laws ─────────────────────────────────────────────────

@@ -93,6 +93,15 @@ function openManagerByFinger() {
 
 (async () => {
   console.log('v1427-manager-walk — THE MANAGER (the real-user story)');
+  // v1.42.8 harness law (TWO convictions): (1) the previous run's app
+  // page SURVIVES in agent-browser and its calm-sync flush resurrects
+  // ghost state in the fresh engine's db; (2) the tab's accumulated
+  // HISTORY (50+ entries across re-runs) desyncs the overlay's marker
+  // chain and overshoots drains past the app root. BOTH die with a
+  // full browser reset — close --all; the next command relaunches it
+  // pristine (fresh page, fresh history).
+  try { ab(['close', '--all']); } catch (e) {}
+  await sleep(600);
   try { execSync(`pkill -9 -f '${ENGINE_BIN}' || true`); } catch (e) {}
   execFileSync(process.env.GO_BIN || 'go', ['build', '-o', ENGINE_BIN, './cmd/doomalay'], {
     cwd: path.join(__ROOT, 'engine'),
@@ -158,7 +167,7 @@ function openManagerByFinger() {
   ok('W5 reopen', await openManagerByFinger());
   await sleep(900);
   abEval("(function(){var b=document.querySelector('[data-wm-more=far]');if(b)b.click();return 'clicked'})()");
-  ok('W5 the sheet opens', await waitFn("document.querySelectorAll('[data-wm-act]').length===3", 6000));
+  ok('W5 the sheet opens', await waitFn("document.querySelectorAll('[data-wm-act]').length===4", 6000));   // v1.42.8: +pub
   abEval("(function(){var b=document.querySelector('[data-wm-act=rename]');if(b)b.click();return 'clicked'})()");
   ok('W5 the rename form', await waitFn("!!document.getElementById('wm-rn-in')", 5000));
   abEval("(function(){var i=document.getElementById('wm-rn-in');i.value='The Far Reaches';document.getElementById('wm-rn').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));return 'saved'})()");
@@ -209,9 +218,15 @@ function openManagerByFinger() {
   abEval("(function(){window.__pd=[];var r=document.querySelector('[data-wm-id=far]');if(r)r.click();return 'through'})()");
   ok('W6 the fall-through lands in The Far Reaches', await waitFn("(window.__pd||[]).some(d=>d.ok===true&&d.id==='far')", 15000));
   ok('W6 the return hole aims home', await (async () => {
-    await sleep(400);
-    const holes = abJson("JSON.stringify(window.Holes.probe())");
-    return holes && holes.holes.length === 1 && holes.holes[0].target === activeId;
+    // v1.42.8 harness hardening: poll (the dive's emerge + the engine
+    // write can outlive a fixed 400ms — a flaky gate is a lying gate)
+    const t0 = Date.now();
+    for (;;) {
+      const holes = abJson("JSON.stringify(window.Holes.probe())");
+      if (holes && holes.holes.length === 1 && holes.holes[0].target === activeId) return true;
+      if (Date.now() - t0 > 8000) return false;
+      await sleep(350);
+    }
   })(), pstr("JSON.stringify(window.Holes.probe())"));
 
   // ── W7 the laws ──────────────────────────────────────────────────
