@@ -66,6 +66,24 @@ own WS protocol; where the bridge cannot run (Android — the CLI is
 glibc-linked), the honest copy names the wall, the desktop truth, and the
 alternatives.
 
+**The pocket bridge** (v1.49 PLAN-V149) — OpenCode's free models on
+ANDROID, the honest way with the fewest gates Android allows. The official
+CLI has no Android build (glibc + non-PIE; upstream closed it as
+not-planned), but guysoft/opencode-termux cross-compiles OpenCode NATIVELY
+for Android/Termux aarch64 — the engine now provisions that client
+itself: with Termux installed and the one-line bootstrap run (both
+existing doomalay flows), ONE TAP on the OpenCode card's "Install
+OpenCode" drives the whole thing through the app's jailed-exec path —
+download (the pinned 52MB v0.2.1 build, SHA256-verified) → unzip → the
+gate-law permission config → a wake-locked `opencode serve` on the shared
+loopback → the v1.48.5 bridge speaks to it unchanged. Free-model turns
+run through the engine's own WS protocol with serve's own usage on the
+ledger; an engine restart adopts the live serve instead of stacking one,
+a died serve re-provisions itself, and every missing gate answers its own
+honest state on the card (Termux missing → the setup hand-off; no key →
+the key prompt; a dead bridge → the wall + alternatives). Desktop
+behavior is byte-unchanged.
+
 **Two new native hands + a retired bridge** (v1.47 PLAN-V147): the
 engine's tool registry grew to 31. `djournal` — the personal journal
 (the authentic Go port of `brain/tools/dt_journal.py`: moods, tags,
