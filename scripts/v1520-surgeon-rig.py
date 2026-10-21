@@ -481,7 +481,7 @@ def rig_c_assert(page=None):
         # the glow must be in the tree: search the pushed files
         found_glow = False
         hard_colors = True
-        for probe in ("engine/internal/server/web/workspaces.js",
+        for probe in ("engine/internal/server/web/workspace.js",
                       "engine/internal/server/web/chatpanel.js",
                       "engine/internal/server/web/styles.css",
                       "engine/internal/server/web/index.html"):
@@ -489,11 +489,12 @@ def rig_c_assert(page=None):
                 fc = gh(f"/repos/ScoobyBaby1999/doomalay/contents/{probe}?ref=main")
                 import base64 as b64mod
                 body = b64mod.b64decode(fc.get("content", "")).decode()
-                if "wsx-glow" in body or ("data-empty" in body and "wsx" in body):
+                # any sane glow design: a glow class/keyframe + the theme
+                # accent var (the theme law) in the same file
+                if ("glow" in body.lower() and "wsx" in body.lower()
+                        and "--accent" in body):
                     found_glow = True
-                    # the theme law: the animation must reference the accent var
-                    if "--accent" in body or "var(--" in body:
-                        hard_colors = False if "--accent" in body else hard_colors
+                    hard_colors = False
             except urllib.error.HTTPError:
                 continue
         check("the glow code rides the pushed tree", found_glow)
