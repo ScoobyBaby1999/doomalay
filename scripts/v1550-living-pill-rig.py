@@ -193,6 +193,20 @@ def serve_children():
 
 
 def start_engine(bin_path, port, data_dir, extra_env, log_prefix):
+    # THE PORT-ADOPTION GUARD (the record-run conviction): a stale engine
+    # on the port would answer the health poll and the rig would adopt a
+    # STRANGER's engine (a leftover ship health-check poisoned two record
+    # runs). The port must be DEAD before we spawn — a dirty port is a
+    # FATAL, never a silent shift (the callers own fixed ports).
+    try:
+        urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=2)
+        raise RuntimeError(
+            f"port {port} is OCCUPIED by a stranger engine — kill it first "
+            f"(pgrep -fa 'doomalay.*--port'), never adopt it")
+    except RuntimeError:
+        raise
+    except Exception:
+        pass  # connection refused — a dead port, ours to take
     log = tempfile.NamedTemporaryFile(prefix=log_prefix, delete=False)
     eng = subprocess.Popen(
         [bin_path, "--port", str(port), "--data-dir", data_dir, "--bind", "127.0.0.1"],
@@ -872,6 +886,11 @@ def android_mode():
 
     # ── A5 — the PWA render law (the static side of the pill ladder) ─────
     print("A5 — the PILL RENDER LAW (the pin suites: order law, the box's death, theme tokens)")
+    # THE NO-LEAK LAW (the ENOSPC conviction): the jail holds the twin zip +
+    # the extracted binary (~600MB per run) — a rig that leaks five of those
+    # fills the sandbox disk and the NEXT run's serve dies on mkdir. The
+    # workdir (jail included) is always reaped before the exit.
+    shutil.rmtree(work, ignore_errors=True)
     for suite in ("scripts/v1552-pill-pin.py", "scripts/v1554-zero-static-pin.py"):
         r = subprocess.run(["python3", os.path.join(ROOT, suite)], capture_output=True)
         tail = r.stdout.decode().strip().splitlines()[-1] if r.stdout else ""
