@@ -522,8 +522,27 @@
       var e = list[i];
       sig = (sig * 31 + ((e.x * 8) | 0)) | 0;
       sig = (sig * 31 + ((e.y * 8) | 0)) | 0;
+      // v1.48.2 THE LIVE STARS: the session bind is part of the identity —
+      // a chat created (or rebound) at REST never changed the position-based
+      // checksum, so the worker kept its stale sessionId-less clone and
+      // skipped the icon's stars until it was physically MOVED.
+      sig = (sig * 31 + sessionHashOf(e)) | 0;
     }
     return sig;
+  }
+  // sessionHashOf — a cheap stable hash of an entity's sessionId, memoized
+  // on the entity (recomputed on rebind: the memo key IS the id). One
+  // strict-equal + one cached int per entity per frame; the full hash runs
+  // only when the id actually changes.
+  function sessionHashOf(e) {
+    var s = e.sessionId || '';
+    if (!s) return 0;
+    if (e._sessHashFor === s) return e._sessHash | 0;
+    var h = 0;
+    for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+    e._sessHashFor = s;
+    e._sessHash = h;
+    return h;
   }
   function entitiesForWorker() {
     var out = [];
@@ -3179,7 +3198,16 @@
       }
     });
     window.addEventListener('doomalay:atoms-changed', function () {
+      // v1.48.2 THE LIVE STARS: the count changed (a workspace connected or
+      // disconnected) — force ONE atoms-only frame with fresh entity clones.
+      // The clones ride only on an entitiesSig change, so an icon AT REST
+      // kept its stale clone (sessionId: '') and the worker skipped its
+      // stars — the user's report: "the chat icon needs to be moved or
+      // refreshed for the orbiting stars to reflect". The forced frame
+      // sends the sessionId-bearing clones NOW; the sig's session-hash
+      // (v1.48.2) keeps every later rebind honest too.
       startAnimation();
+      paintGridFrame(true, true);
     });
 
     // v0.15: recovery.js's boot watchdog — flip the flag once the canvas +
