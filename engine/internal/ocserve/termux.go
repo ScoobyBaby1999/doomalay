@@ -12,18 +12,23 @@ package ocserve
 //     non-PIE, bionic can't load it; upstream closed Android as "not
 //     planned"). The desktop law (v1.48.5: glibc 186MB) is the same truth.
 //   - guysoft/opencode-termux (291★, 30 releases, active Oct 2026) builds
-//     OpenCode NATIVELY for Android/Termux aarch64: Bun patched for
-//     Android seccomp/bionic, WebKit/JSC ported, Zig sigaction fixed —
-//     "all backend services (server, provider, LSP) [working]".
-//   - THE PIN: v0.2.1 "OpenCode 1.17.9 Android/Termux" (Jun 25 2026, the
-//     latest STABLE of the v1 line) — opencode-1.17.9-android-aarch64.zip,
-//     52.0MB, SHA256 0c77d4b8… verified in-sandbox. The zip is FLAT:
-//     `opencode` (a POSIX wrapper that LD_PRELOADs libtagfix, sets
-//     LD_LIBRARY_PATH/OPENTUI_LIB_PATH, disables the x86 filewatcher, then
-//     `exec`s opencode.bin) + opencode.bin + three native libs. Unzip →
-//     run. 1.17.9 speaks the SAME serve API family as the pinned desktop
-//     1.19.3 (POST /session, prompt_async, GET /event SSE,
-//     /session/status) — the ocserve client is byte-compatible.
+//     OpenCode NATIVELY for Android/Termux aarch64.
+//   - THE PIN (v1.51.2 THE YOUNGER GUEST): opencode2 **v1.0.3-rc3** (Oct 18
+//     2026 — the newest release of the 2.x line, carrying the Android
+//     seccomp SIGSYS fix) = OpenCode **2.0.0-android-termux** built on the
+//     official Bun android target. opencode2-1.0.3rc3-android-aarch64.zip,
+//     72.5MB, SHA256 0725f327… verified in-sandbox against the release's
+//     own SHA256SUMS. The zip is FLAT: `opencode2` (a POSIX wrapper that
+//     sets OPENTUI_LIB_PATH + LD_LIBRARY_PATH, disables @parcel/watcher,
+//     then `exec`s opencode2.bin) + opencode2.bin (173MB) + libopentui.so —
+//     NO libtagfix/libc++ (the official Bun android target made them
+//     obsolete). Unzip → run. 2.0.0 speaks the SAME 2.x serve API family
+//     as the pinned desktop 2.1.2 (its route strings carry every core
+//     route: /api/session, :id/model, :id/prompt, /api/event, /api/provider)
+//     — the v1.51.1 ocserve client is byte-compatible. The install also
+//     best-effort removes the retired 1.x files (opencode, opencode.bin,
+//     libtagfix.so, libc++_shared.so) so a v1.49 phone doesn't carry 194MB
+//     of dead weight.
 //   - The app ALREADY owns the gates: termux/setup.sh (the one-line
 //     bootstrap → allow-external-apps = the jailed RUN_COMMAND path) +
 //     the Kotlin loopback bridge (/status, /run, RunWithStdin's
@@ -65,12 +70,12 @@ type TermuxClient interface {
 
 // The pinned Android artifact (THE PIN LAW — the gate "actively evolves";
 // a pinned, community-proven release is the stable contract, the same law
-// as the desktop 1.19.3 pin). Env overrides move it without a release.
+// as the desktop 2.1.2 npm pin). Env overrides move it without a release.
 const (
-        androidZipURLDefault = "https://github.com/guysoft/opencode-termux/releases/download/v0.2.1/opencode-1.17.9-android-aarch64.zip"
-        androidZipSHADefault = "0c77d4b8f286e01ba08c9e9aeca8c73a0e0c655342044ab3a59cf1953093a9b0"
-        androidClientVersion = "1.17.9 (opencode-termux v0.2.1 — the native Android/Termux build)"
-        androidZipSizeHint   = "52MB"
+        androidZipURLDefault = "https://github.com/guysoft/opencode-termux/releases/download/v1.0.3-rc3/opencode2-1.0.3rc3-android-aarch64.zip"
+        androidZipSHADefault = "0725f3278cde20b39e30be1833966c67276a13829ea634f60d91f85ba3d13893"
+        androidClientVersion = "2.0.0 (opencode2 v1.0.3-rc3 — the native Android/Termux build of OpenCode 2)"
+        androidZipSizeHint   = "72.5MB"
 )
 
 // var (not const) so the tests can shorten the waits without touching the
@@ -107,8 +112,8 @@ func androidArtifact() (url, sha string) {
 // the Play/F-Droid layouts differ. The /run contract runs with Termux's
 // own HOME in scope):
 //
-//      $HOME/.doomalay/opencode/            the unzipped client (opencode,
-//                                           opencode.bin, libtagfix.so, …)
+//      $HOME/.doomalay/opencode/            the unzipped client (opencode2,
+//                                           opencode2.bin, libopentui.so)
 //      $HOME/.doomalay/opencode-serve/      the serve CWD: the gate-law
 //                                           opencode.json, key.env (0600),
 //                                           serve.log, serve.pid, bridge.port
@@ -132,7 +137,7 @@ func tmCmdMkdirs() string {
 }
 
 func tmCmdInstallCheck() string {
-        return fmt.Sprintf("test -x %s/opencode && test -f %s && echo __dm_installed__ || echo __dm_missing__",
+        return fmt.Sprintf("test -x %s/opencode2 && test -f %s && echo __dm_installed__ || echo __dm_missing__",
                 tmBinDir, tmServeJSON)
 }
 
@@ -158,8 +163,12 @@ func tmCmdShaCheck(sha string) string {
 
 func tmCmdUnzip() string {
         // busybox's unzip is Termux's built-in belt under a missing unzip pkg.
+        // After the extract, the retired 1.x client files leave best-effort —
+        // a v1.49 phone must not carry 194MB of dead opencode/opencode.bin
+        // (the 2.x zip only ships opencode2, opencode2.bin, libopentui.so).
         return fmt.Sprintf("unzip -o %s -d %s/ >/dev/null 2>&1 || busybox unzip -o %s -d %s/ >/dev/null 2>&1; ", tmZipPath, tmBinDir, tmZipPath, tmBinDir) +
-                fmt.Sprintf("chmod +x %s/opencode %s/opencode.bin && echo __dm_unzip_ok__", tmBinDir, tmBinDir)
+                fmt.Sprintf("rm -f %s/opencode %s/opencode.bin %s/libtagfix.so %s/libc++_shared.so 2>/dev/null; ", tmBinDir, tmBinDir, tmBinDir, tmBinDir) +
+                fmt.Sprintf("chmod +x %s/opencode2 %s/opencode2.bin && echo __dm_unzip_ok__", tmBinDir, tmBinDir)
 }
 
 func tmCmdWriteConfig() (command, stdin string) {
@@ -191,12 +200,12 @@ func tmCmdPortProbe() string {
 // The wake-lock (Termux must outlive the Android phantom killer while
 // serving), the key rides key.env (NEVER the command line — ps-safe, the
 // RunWithStdin zero-escaping law wrote it 0600), nohup + `&` detach the
-// serve from the jailed session (the wrapper `exec`s opencode.bin, so
+// serve from the jailed session (the wrapper `exec`s opencode2.bin, so
 // the captured $! stays the serve's real pid), and the pid + port land
 // in their files for reuse/kill.
 func tmCmdSpawn(port int) string {
         return fmt.Sprintf("cd \"%s\" && termux-wake-lock 2>/dev/null; . %s; ", tmServeDir, tmKeyEnv) +
-                fmt.Sprintf("nohup %s/opencode serve --port %d --hostname 127.0.0.1 > %s 2>&1 & ", tmBinDir, port, tmServeLog) +
+                fmt.Sprintf("nohup %s/opencode2 serve --port %d --hostname 127.0.0.1 > %s 2>&1 & ", tmBinDir, port, tmServeLog) +
                 fmt.Sprintf("echo $! > %s; echo %d > %s; echo __dm_spawned__", tmServePid, port, tmPortFile)
 }
 

@@ -157,7 +157,7 @@ func TestV1491CommandShapes(t *testing.T) {
                 t.Fatalf("mkdirs:\n got %q\nwant %q", got, want)
         }
         if got, want := tmCmdInstallCheck(),
-                `test -x $HOME/.doomalay/opencode/opencode && test -f $HOME/.doomalay/opencode-serve/opencode.json && echo __dm_installed__ || echo __dm_missing__`; got != want {
+                `test -x $HOME/.doomalay/opencode/opencode2 && test -f $HOME/.doomalay/opencode-serve/opencode.json && echo __dm_installed__ || echo __dm_missing__`; got != want {
                 t.Fatalf("install check:\n got %q\nwant %q", got, want)
         }
         url, _ := androidArtifact()
@@ -175,12 +175,20 @@ func TestV1491CommandShapes(t *testing.T) {
         if !strings.Contains(tmCmdUnzip(), `busybox unzip`) {
                 t.Fatalf("unzip must carry the busybox belt: %q", tmCmdUnzip())
         }
+        // v1.51.2: the retired 1.x client files leave best-effort (a v1.49
+        // phone must not carry 194MB of dead weight)
+        if !strings.Contains(tmCmdUnzip(), `rm -f $HOME/.doomalay/opencode/opencode $HOME/.doomalay/opencode/opencode.bin $HOME/.doomalay/opencode/libtagfix.so $HOME/.doomalay/opencode/libc++_shared.so`) {
+                t.Fatalf("unzip must clean the retired 1.x files: %q", tmCmdUnzip())
+        }
+        if !strings.Contains(tmCmdUnzip(), `chmod +x $HOME/.doomalay/opencode/opencode2 $HOME/.doomalay/opencode/opencode2.bin`) {
+                t.Fatalf("unzip must chmod the 2.x pair: %q", tmCmdUnzip())
+        }
         spawn := tmCmdSpawn(41234)
         for _, must := range []string{
                 `cd "$HOME/.doomalay/opencode-serve" &&`, // THE RAW-WORKDIR LAW: the bridge passes workdir unexpanded — the command cd's itself
                 `termux-wake-lock`,
                 `. $HOME/.doomalay/opencode-serve/key.env`,
-                `nohup $HOME/.doomalay/opencode/opencode serve --port 41234 --hostname 127.0.0.1 > $HOME/.doomalay/opencode-serve/serve.log 2>&1 &`,
+                `nohup $HOME/.doomalay/opencode/opencode2 serve --port 41234 --hostname 127.0.0.1 > $HOME/.doomalay/opencode-serve/serve.log 2>&1 &`,
                 `echo $! > $HOME/.doomalay/opencode-serve/serve.pid`,
                 `echo 41234 > $HOME/.doomalay/opencode-serve/bridge.port`,
         } {
@@ -199,8 +207,8 @@ func TestV1491CommandShapes(t *testing.T) {
         }
 }
 
-// TestV1491ArtifactPins — the pinned v0.2.1 artifact + the env override law
-// (both URL and SHA move together; a SHA must be 64 hex).
+// TestV1491ArtifactPins — the pinned opencode2 v1.0.3-rc3 artifact + the
+// env override law (both URL and SHA move together; a SHA must be 64 hex).
 func TestV1491ArtifactPins(t *testing.T) {
         url, sha := androidArtifact()
         if url != androidZipURLDefault || sha != androidZipSHADefault {
@@ -279,7 +287,7 @@ func TestV1491EnsureLadder(t *testing.T) {
         // mkdirs → deps → download → sha → unzip → config → key)
         f = readyFake()
         f.behaviors = []fakeBehavior{
-                {substr: "test -x $HOME/.doomalay/opencode/opencode", stdout: "__dm_missing__"},
+                {substr: "test -x $HOME/.doomalay/opencode/opencode2", stdout: "__dm_missing__"},
                 {substr: "mkdir -p", stdout: "__dm_ok__"},
                 {substr: "command -v unzip", stdout: "__dm_deps_ok__"},
                 {substr: "curl -fL", stdout: "__dm_dl_ok__"},
@@ -291,7 +299,7 @@ func TestV1491EnsureLadder(t *testing.T) {
                 t.Fatalf("full install failed: %v", err)
         }
         cmds := f.commands()
-        order := []string{"__probe_status__", "test -x $HOME/.doomalay/opencode/opencode", "mkdir -p", "command -v unzip", "curl -fL", "sha256sum -c", "chmod +x", "cat > $HOME/.doomalay/opencode-serve/opencode.json", "cat > $HOME/.doomalay/opencode-serve/key.env"}
+        order := []string{"__probe_status__", "test -x $HOME/.doomalay/opencode/opencode2", "mkdir -p", "command -v unzip", "curl -fL", "sha256sum -c", "chmod +x", "cat > $HOME/.doomalay/opencode-serve/opencode.json", "cat > $HOME/.doomalay/opencode-serve/key.env"}
         last := -1
         for _, probe := range order[1:] { // the status call is not a command
                 idx := -1
@@ -331,7 +339,7 @@ func TestV1491EnsureLadder(t *testing.T) {
         // the sha rung fails honestly
         f = readyFake()
         f.behaviors = []fakeBehavior{
-                {substr: "test -x $HOME/.doomalay/opencode/opencode", stdout: "__dm_missing__"},
+                {substr: "test -x $HOME/.doomalay/opencode/opencode2", stdout: "__dm_missing__"},
                 {substr: "command -v unzip", stdout: "__dm_deps_ok__"},
                 {substr: "curl -fL", stdout: "__dm_dl_ok__"},
                 {substr: "sha256sum -c", stdout: "__dm_sha_bad__"},
@@ -344,7 +352,7 @@ func TestV1491EnsureLadder(t *testing.T) {
         // deps missing (unzip unavailable) fails honestly BEFORE the download
         f = readyFake()
         f.behaviors = []fakeBehavior{
-                {substr: "test -x $HOME/.doomalay/opencode/opencode", stdout: "__dm_missing__"},
+                {substr: "test -x $HOME/.doomalay/opencode/opencode2", stdout: "__dm_missing__"},
                 {substr: "command -v unzip", stdout: "__dm_deps_missing__"},
         }
         p = &termuxProvisioner{client: f, apiKey: "k", serverPassword: "pw-test", logf: logf}
@@ -355,7 +363,7 @@ func TestV1491EnsureLadder(t *testing.T) {
         // idempotence: an installed marker short-circuits (no download)
         f = readyFake()
         f.behaviors = []fakeBehavior{
-                {substr: "test -x $HOME/.doomalay/opencode/opencode", stdout: "__dm_installed__"},
+                {substr: "test -x $HOME/.doomalay/opencode/opencode2", stdout: "__dm_installed__"},
         }
         p = &termuxProvisioner{client: f, apiKey: "k", serverPassword: "pw-test", logf: logf}
         if err := p.Ensure(ctx); err != nil {
@@ -386,7 +394,7 @@ func TestV1491LaunchReuseAndSpawn(t *testing.T) {
         f := readyFake()
         f.spawnRealServe = true
         f.behaviors = []fakeBehavior{
-                {substr: "test -x $HOME/.doomalay/opencode/opencode", stdout: "__dm_installed__"},
+                {substr: "test -x $HOME/.doomalay/opencode/opencode2", stdout: "__dm_installed__"},
                 {substr: "cat $HOME/.doomalay/opencode-serve/bridge.port", stdout: strconv.Itoa(livePort)},
         }
         p := &termuxProvisioner{client: f, apiKey: "k", serverPassword: "pw-test", logf: func(string, ...any) {}}
@@ -407,7 +415,7 @@ func TestV1491LaunchReuseAndSpawn(t *testing.T) {
         f2 := readyFake()
         f2.spawnRealServe = true
         f2.behaviors = []fakeBehavior{
-                {substr: "test -x $HOME/.doomalay/opencode/opencode", stdout: "__dm_installed__"},
+                {substr: "test -x $HOME/.doomalay/opencode/opencode2", stdout: "__dm_installed__"},
                 {substr: "cat $HOME/.doomalay/opencode-serve/bridge.port", stdout: "41919"},
         }
         defer f2.closePorts()
@@ -427,7 +435,7 @@ func TestV1491LaunchReuseAndSpawn(t *testing.T) {
         androidServeBootWait = 300 * time.Millisecond
         f3 := readyFake()
         f3.behaviors = []fakeBehavior{
-                {substr: "test -x $HOME/.doomalay/opencode/opencode", stdout: "__dm_installed__"},
+                {substr: "test -x $HOME/.doomalay/opencode/opencode2", stdout: "__dm_installed__"},
                 {substr: "tail -n 20", stdout: "some crash line"},
         }
         p3 := &termuxProvisioner{client: f3, apiKey: "k", logf: func(string, ...any) {}}
@@ -450,7 +458,7 @@ func TestV1491ManagerTermuxLifecycle(t *testing.T) {
         f := readyFake()
         f.spawnRealServe = true
         f.behaviors = []fakeBehavior{
-                {substr: "test -x $HOME/.doomalay/opencode/opencode", stdout: "__dm_installed__"},
+                {substr: "test -x $HOME/.doomalay/opencode/opencode2", stdout: "__dm_installed__"},
         }
         defer f.closePorts()
 
