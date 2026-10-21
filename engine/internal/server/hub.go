@@ -8,14 +8,20 @@ package server
 // token connect flow (the token NEVER reaches the PWA — engine-side only).
 //
 // {type} is validated against the hub registry → 404 unknown library.
-// Body caps: publish = 12MB raw (a 6MB PNG base64-inflates to ~8MB; payload
-// text is separately capped at 64KB, the PNG at 6MB after decode).
+// Body caps: publish JSON = 26MB raw (a 6MB PNG base64-inflates to ~8MB;
+// payload text is capped per-type at the registry's PayloadMaxBytes —
+// 64KB text types, 24MB themes). v1.54: canvas/chat ride MULTIPART
+// (meta JSON ≤26MB + raw payload bytes ≤ the spec tier) and stream back
+// via GET /api/hub/{type}/payload/{repo}/{id} (never buffered, never
+// stored locally — the payload-bypass law).
 
 import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -26,12 +32,11 @@ import (
 
 const (
 	hubPublishMaxBytes = 26 << 20 // raw JSON body (pngBase64 + payload + overhead); themes carry photo dataURLs
-	hubPayloadMaxBytes = 64 << 10 // payload text (a persona .md / template .json)
-	// v0.52: a THEME payload is a full look bundle — theme, gradients,
-	// photos and bump maps as dataURLs inside the JSON — so it rides
-	// the same generous cap the web importer allows (lookio.js: 24MB).
-	hubThemePayloadMaxBytes = 24 << 20
-	hubPNGMaxBytes          = 6 << 20 // card background PNG
+	// v1.54: the per-type PAYLOAD caps moved to the registry —
+	// hub.LibrarySpec.PayloadMaxBytes() (one truth: persona 64KB, theme
+	// 24MB, canvas 96MB, chat 40MB). The old 64KB + theme-special-case
+	// constants died with the move.
+	hubPNGMaxBytes = 6 << 20 // card background PNG
 )
 
 // hubType validates {type} against the registry and writes the 404 on
@@ -451,22 +456,79 @@ func (s *Server) handleHubPublish(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, hubPublishMaxBytes))
-	if err != nil {
-		writeError(w, http.StatusRequestEntityTooLarge, "publish body too large (26MB cap)")
-		return
-	}
+	spec, _ := hub.Get(typ) // hubType validated the lookup
 	var req hub.PublishRequest
-	if err := json.Unmarshal(body, &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
-		return
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+		// v1.54 THE LIBRARY SHIP: the BINARY path — part `meta` (the JSON,
+		// ≤26MB) + part `payload` (raw .doomcanvas/.doomchat bytes, capped
+		// at the spec's tier; a CommitFile needs the bytes anyway, so a
+		// capped read holds the SAME 1× payload the commit path holds —
+		// a temp file would buy nothing). No base64 anywhere: the WebView
+		// posts a Blob-backed FormData, the engine reads bytes.
+		if !spec.BigPayload() {
+			writeError(w, http.StatusBadRequest, "multipart publish is for canvas/chat payloads")
+			return
+		}
+		mr, err := r.MultipartReader()
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid multipart body: "+err.Error())
+			return
+		}
+		maxPayload := int64(spec.PayloadMaxBytes())
+		for {
+			part, err := mr.NextPart()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "invalid multipart body: "+err.Error())
+				return
+			}
+			switch part.FormName() {
+			case "meta":
+				meta, err := io.ReadAll(io.LimitReader(part, hubPublishMaxBytes+1))
+				if err != nil {
+					writeError(w, http.StatusBadRequest, "meta part: "+err.Error())
+					return
+				}
+				if len(meta) > hubPublishMaxBytes {
+					writeError(w, http.StatusRequestEntityTooLarge, "meta part too large (26MB cap)")
+					return
+				}
+				if err := json.Unmarshal(meta, &req); err != nil {
+					writeError(w, http.StatusBadRequest, "invalid meta JSON: "+err.Error())
+					return
+				}
+			case "payload":
+				bytes, err := io.ReadAll(io.LimitReader(part, maxPayload+1))
+				if err != nil {
+					writeError(w, http.StatusBadRequest, "payload part: "+err.Error())
+					return
+				}
+				if int64(len(bytes)) > maxPayload {
+					writeError(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("payload too large (%dMB cap for %s)", maxPayload>>20, typ))
+					return
+				}
+				req.PayloadBytes = bytes
+			}
+		}
+	} else {
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, hubPublishMaxBytes))
+		if err != nil {
+			writeError(w, http.StatusRequestEntityTooLarge, "publish body too large (26MB cap)")
+			return
+		}
+		if err := json.Unmarshal(body, &req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+			return
+		}
+		if len(req.Payload) > spec.PayloadMaxBytes() {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("payload too large (%dMB cap for %s)", int64(spec.PayloadMaxBytes())>>20, typ))
+			return
+		}
 	}
 	if strings.TrimSpace(req.Name) == "" {
 		writeError(w, http.StatusBadRequest, "name is required")
-		return
-	}
-	if len(req.Payload) > hubPayloadMaxBytes && !(typ == "theme" && len(req.Payload) <= hubThemePayloadMaxBytes) {
-		writeError(w, http.StatusBadRequest, "payload too large (64KB cap; 24MB for themes)")
 		return
 	}
 	if b, err := base64.StdEncoding.DecodeString(req.PNGBase64); err == nil && len(b) > hubPNGMaxBytes {
@@ -480,6 +542,45 @@ func (s *Server) handleHubPublish(w http.ResponseWriter, r *http.Request) {
 	}
 	hearted, _ := s.hub.LocalStateFor(typ, item.ID)
 	writeJSON(w, http.StatusOK, map[string]any{"item": item, "repo": item.Repo, "hearted": hearted, "downloaded": true})
+}
+
+// handleHubPayload is GET /api/hub/{type}/payload/{repo}/{id} — the v1.54
+// big-payload STREAM: the engine proxies the CDN body without buffering
+// (the 8MB FetchFile ceiling never applies; a 96MB .doomcanvas flows
+// through). Gated on the local downloaded row — the endorsement gate's
+// twin (no download, no bytes).
+func (s *Server) handleHubPayload(w http.ResponseWriter, r *http.Request) {
+	typ, ok := s.hubType(w, r)
+	if !ok {
+		return
+	}
+	spec, _ := hub.Get(typ)
+	repo := r.PathValue("repo")
+	id := r.PathValue("id")
+	body, n, err := s.hub.PayloadStream(typ, repo, id)
+	if err != nil {
+		hubWriteItemErr(w, err)
+		return
+	}
+	defer body.Close()
+	if n >= 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(n, 10))
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusOK)
+	// Defense in depth for an undeclared length: cap the copy at max+1.
+	// The declared-length check (PayloadStream) is the real gate; a zip
+	// ladder (canvasbundle/chatbundle read) rejects anything over-cap on
+	// the client side regardless.
+	max := int64(spec.PayloadMaxBytes())
+	written, err := io.Copy(w, io.LimitReader(body, max+1))
+	if err != nil {
+		log.Printf("hub: payload stream %s/%s: copied %d bytes: %v", repo, id, written, err)
+	}
+	if written > max {
+		log.Printf("hub: payload stream %s/%s: body exceeded the %d cap mid-stream (%d) — the client ladder rejects", repo, id, max, written)
+	}
 }
 
 // handleHubPersonaHeart is POST /api/hub/persona/heart {id,name} — the

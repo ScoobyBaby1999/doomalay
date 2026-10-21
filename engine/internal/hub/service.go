@@ -11,6 +11,7 @@ import (
         "encoding/json"
         "errors"
         "fmt"
+        "io"
         "log"
         "path"
         "sort"
@@ -824,7 +825,8 @@ func (s *Service) collectionCountContext() map[string][2]int {
 // ItemDetail returns one item's meta + payload: the local copy when it is
 // downloaded (fast path), else a remote fetch without saving.
 func (s *Service) ItemDetail(typ, repo, id string) (Item, string, error) {
-        if _, err := Get(typ); err != nil {
+        spec, err := Get(typ)
+        if err != nil {
                 return Item{}, "", err
         }
         if row, err := GetLocalItem(s.db, typ, id); err == nil && row.DownloadedAt != "" {
@@ -833,6 +835,12 @@ func (s *Service) ItemDetail(typ, repo, id string) (Item, string, error) {
         item, err := s.remoteItem(typ, repo, id)
         if err != nil {
                 return Item{}, "", err
+        }
+        // v1.54 payload-bypass: a big-payload item's detail NEVER drags the
+        // zip through the JSON — the meta (with Size) is the detail view's
+        // truth; the bytes ride the /payload stream on the user's download.
+        if spec.BigPayload() {
+                return s.countsFor(typ, item), "", nil
         }
         payload, err := s.resolvePayload(repo, item.File)
         if err != nil {
@@ -923,7 +931,8 @@ func (s *Service) Download(typ, repo, id string) (Item, string, error) {
 // via=true marks the local row as bundle-downloaded (the member's own
 // displayed +1 is suppressed; a direct re-download clears it).
 func (s *Service) downloadCore(typ, repo, id string, via bool) (Item, string, error) {
-        if _, err := Get(typ); err != nil {
+        spec, err := Get(typ)
+        if err != nil {
                 return Item{}, "", err
         }
         item, err := s.remoteItem(typ, repo, id)
@@ -931,9 +940,17 @@ func (s *Service) downloadCore(typ, repo, id string, via bool) (Item, string, er
                 return Item{}, "", err
         }
         item.ID = id
-        payload, err := s.resolvePayload(repo, item.File)
-        if err != nil {
-                return Item{}, "", err
+        // v1.54 payload-bypass: big-payload types (canvas/chat) NEVER fetch
+        // the zip at download time — the meta row + the downloaded mark is
+        // what the endorsement gate and "my items" need; the payload is
+        // re-streamed on demand via PayloadStream (the /payload route).
+        // Small types keep the classic fetch-and-store shape byte-identical.
+        payload := ""
+        if !spec.BigPayload() {
+                payload, err = s.resolvePayload(repo, item.File)
+                if err != nil {
+                        return Item{}, "", err
+                }
         }
         if err := SaveLocalItem(s.db, item, payload); err != nil {
                 return Item{}, "", err
@@ -1070,6 +1087,12 @@ type PublishRequest struct {
         // ports never read as original (the superpowers-by-obra report).
         Upstream    string         `json:"upstream"`
         StageCount  int            `json:"stageCount"` // v0.58: templates — manual stage count (0 = auto-count the payload)
+        // v1.54 THE LIBRARY SHIP: the BINARY payload path. Canvas/chat
+        // publishes ride multipart/form-data — the `meta` part decodes
+        // into this struct (Payload stays "") and the raw `payload` part
+        // lands here (already bytes — NO base64 inflation, no giant JSON
+        // string in the WebView). nil/empty = the classic string path.
+        PayloadBytes []byte `json:"-"`
         // v0.60 pt C.8: REPO PUBLISHING — the files section. Each file is a
         // repo-relative path (folders allowed) committed at
         // items/<id>/<path> so a bundle carries its companions (docs,
@@ -1142,8 +1165,20 @@ func (s *Service) Publish(typ string, req PublishRequest) (Item, error) {
         if name == "" {
                 return Item{}, errors.New("name is required")
         }
-        if strings.TrimSpace(req.Payload) == "" {
-                return Item{}, errors.New("payload is required")
+        // v1.54: the payload arrives as a string (every pre-v1.54 type)
+        // OR as raw bytes (the canvas/chat multipart path). ONE truth:
+        // payloadBytes feeds the commit; the per-type cap is the spec's.
+        var payloadBytes []byte
+        if len(req.PayloadBytes) > 0 {
+                payloadBytes = req.PayloadBytes
+        } else {
+                if strings.TrimSpace(req.Payload) == "" {
+                        return Item{}, errors.New("payload is required")
+                }
+                payloadBytes = []byte(req.Payload)
+        }
+        if max := spec.PayloadMaxBytes(); len(payloadBytes) > max {
+                return Item{}, fmt.Errorf("payload too large (%dMB cap for %s)", max>>20, spec.Type)
         }
         id := ItemID(name, user)
         repo := user + "/" + spec.RepoName()
@@ -1154,6 +1189,17 @@ func (s *Service) Publish(typ string, req PublishRequest) (Item, error) {
         }
         if _, err := s.ensureRepo(token, user, metricsRepo, metricsTag); err != nil {
                 return Item{}, err
+        }
+        // v1.54: THE LFS SEED — custom extensions (.doomcanvas/.doomchat/
+        // .doomtheme) are NOT in HF's default .gitattributes patterns, so
+        // preupload answers "regular" and a >10MB payload dies at the HF
+        // non-LFS wall. Seed the repo's .gitattributes with our filter=lfs
+        // lines BEFORE the payload commit (types whose payloads can exceed
+        // 10MB only — no extra round-trip for personas).
+        if spec.PayloadMaxBytes() > 10<<20 {
+                if err := s.ensureLFSAttributes(token, repo); err != nil {
+                        return Item{}, err
+                }
         }
 
         now := NowString()
@@ -1168,6 +1214,9 @@ func (s *Service) Publish(typ string, req PublishRequest) (Item, error) {
                 CreatedAt:  now, UpdatedAt: now,
                 Design: normalizeDesign(req.Design),
                 File:   "items/" + id + spec.PayloadExt,
+                // v1.54: the payload size rides the meta (the detail view
+                // and rows show "1.2 MB" without fetching the zip).
+                Size: int64(len(payloadBytes)),
         }
         if png := decodeB64(req.PNGBase64); len(png) > 0 && isPNG(png) {
                 item.Design = Design{Kind: "png"}
@@ -1283,7 +1332,7 @@ func (s *Service) Publish(typ string, req PublishRequest) (Item, error) {
         }
         files = append(files,
                 CommitFile{Path: "items/" + id + ".json", Content: metaJSON},
-                CommitFile{Path: item.File, Content: []byte(req.Payload)},
+                CommitFile{Path: item.File, Content: payloadBytes},
         )
         // v0.60 pt C.8: the companion files — each rides the SAME commit at
         // items/<id>/<path> (the meta already lists them in item.Files).
@@ -1319,13 +1368,85 @@ func (s *Service) Publish(typ string, req PublishRequest) (Item, error) {
         }
 
         // Save locally (the publisher obviously has it) + record the event.
-        if err := SaveLocalItem(s.db, item, req.Payload); err != nil {
+        // v1.54 payload-bypass: a big-payload row stores meta only — the
+        // 96MB zip stays remote (re-streamed on demand); the "my items"
+        // listing never drags payloads it cannot use.
+        localPayload := req.Payload
+        if spec.BigPayload() {
+                localPayload = ""
+        }
+        if err := SaveLocalItem(s.db, item, localPayload); err != nil {
                 return item, nil // remote succeeded; local is a bonus
         }
         _ = MarkDownloaded(s.db, typ, id)
         s.appendMetric("publish", target(repo, id))
         s.Invalidate("") // the library + metrics views changed
         return item, nil
+}
+
+// ensureLFSAttributes seeds the repo's .gitattributes with our payload
+// extensions' filter=lfs lines (v1.54). HF's default .gitattributes routes
+// COMMON binary extensions to LFS but NOT custom ones — without the seed,
+// preupload answers "regular" for a .doomcanvas and any payload >10MB dies
+// at HF's non-LFS wall. Idempotent: fetch, merge only the missing lines,
+// commit only when something changed.
+func (s *Service) ensureLFSAttributes(token, repo string) error {
+        existing := ""
+        if body, err := s.hf.FetchFile(repo, ".gitattributes"); err == nil {
+                existing = string(body)
+        } else if !IsNotFound(err) {
+                return err
+        }
+        missing := false
+        merged := existing
+        if merged != "" && !strings.HasSuffix(merged, "\n") {
+                merged += "\n"
+        }
+        for _, ext := range LFSExts() {
+                line := "*" + ext + " filter=lfs diff=lfs merge=lfs -text"
+                if strings.Contains(existing, "*"+ext+" filter=lfs") {
+                        continue // already tracked
+                }
+                merged += line + "\n"
+                missing = true
+        }
+        if !missing {
+                return nil
+        }
+        return s.hf.CommitFiles(token, repo, "seed LFS attributes", []CommitFile{
+                {Path: ".gitattributes", Content: []byte(merged)},
+        })
+}
+
+// PayloadStream opens the downloaded item's payload for STREAMING (v1.54
+// THE LIBRARY SHIP: the /api/hub/{type}/payload/{repo}/{id} route proxies
+// the CDN body — the engine never buffers a 96MB zip). The endorsement
+// gate rides the download requirement: no local downloaded row, no stream.
+func (s *Service) PayloadStream(typ, repo, id string) (io.ReadCloser, int64, error) {
+        spec, err := Get(typ)
+        if err != nil {
+                return nil, 0, err
+        }
+        row, err := GetLocalItem(s.db, typ, id)
+        if err != nil || row.DownloadedAt == "" {
+                return nil, 0, ErrNotDownloaded
+        }
+        // The repo param must MATCH the row's repo — a downloaded row is
+        // the only stream source, and only from its real remote.
+        if repo != "" && row.Item.Repo != repo {
+                return nil, 0, ErrNotFoundLocal
+        }
+        file := row.Item.File
+        if file == "" {
+                // A pre-v1.54-shaped row (should not happen for big types)
+                // — resolve via the remote meta.
+                item, err := s.remoteItem(typ, repo, id)
+                if err != nil {
+                        return nil, 0, err
+                }
+                file = item.File
+        }
+        return s.hf.StreamFile(repo, file, int64(spec.PayloadMaxBytes()))
 }
 
 // ensureRepo makes sure <user>/<name> exists and carries the tag (tags live

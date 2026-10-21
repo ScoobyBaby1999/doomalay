@@ -501,7 +501,10 @@ func newMockHF(t *testing.T) *mockHF {
                 writeMockJSON(w, map[string]any{"url": "/api/datasets/" + id})
         })
 
-        // preupload: *.png → LFS (dataset repos' default .gitattributes).
+        // preupload: *.png → LFS (dataset repos' default .gitattributes) —
+        // v1.54: and any extension the REPO's own .gitattributes tracks
+        // (mirroring real HF: the seeded *.doomcanvas/*.doomchat/*.doomtheme
+        // filter=lfs lines are what route big payloads to LFS).
         mux.HandleFunc("POST /api/datasets/{user}/{name}/preupload/main", func(w http.ResponseWriter, r *http.Request) {
                 var req struct {
                         Files []struct {
@@ -509,10 +512,21 @@ func newMockHF(t *testing.T) *mockHF {
                         } `json:"files"`
                 }
                 _ = json.NewDecoder(r.Body).Decode(&req)
+                m.mu.Lock()
+                attrs := ""
+                if rp := m.repos[r.PathValue("user")+"/"+r.PathValue("name")]; rp != nil {
+                        if b, ok := rp.files[".gitattributes"]; ok {
+                                attrs = string(b)
+                        }
+                }
+                m.mu.Unlock()
                 var files []map[string]any
                 for _, f := range req.Files {
                         mode := "regular"
                         if strings.HasSuffix(f.Path, ".png") {
+                                mode = "lfs"
+                        }
+                        if ext := pathExtMock(f.Path); ext != "" && strings.Contains(attrs, "*"+ext+" filter=lfs") {
                                 mode = "lfs"
                         }
                         files = append(files, map[string]any{"path": f.Path, "uploadMode": mode})
@@ -762,6 +776,14 @@ func (m *mockHF) file(id, path string) ([]byte, bool) {
 }
 
 func b64enc(b []byte) string { return base64.StdEncoding.EncodeToString(b) }
+
+// pathExtMock is the mock's own path.Ext (kept dependency-free).
+func pathExtMock(p string) string {
+        if i := strings.LastIndexByte(p, '.'); i >= 0 && i > strings.LastIndexByte(p, '/') {
+                return p[i:]
+        }
+        return ""
+}
 
 // newTestService boots a hub Service against the mock + fresh DB + vault.
 func newTestService(t *testing.T, m *mockHF) *Service {

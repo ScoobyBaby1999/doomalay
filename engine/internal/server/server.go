@@ -587,6 +587,9 @@ func (s *Server) routes() {
         s.mux.HandleFunc("GET /api/hub/{type}/downloads", s.handleHubDownloads)
         s.mux.HandleFunc("GET /api/hub/{type}/item/{repo}/{id}", s.handleHubItem)
         s.mux.HandleFunc("GET /api/hub/{type}/png/{repo}/{id}", s.handleHubPNG)
+        // v1.54 THE LIBRARY SHIP: the big-payload stream (canvas/chat) —
+        // the engine proxies the CDN bytes; gated on the downloaded row.
+        s.mux.HandleFunc("GET /api/hub/{type}/payload/{repo}/{id}", s.handleHubPayload)
         s.mux.HandleFunc("POST /api/hub/{type}/download", s.handleHubDownload)
         s.mux.HandleFunc("POST /api/hub/{type}/delete", s.handleHubDelete)
         s.mux.HandleFunc("POST /api/hub/{type}/endorse", s.handleHubEndorse(true))

@@ -134,6 +134,11 @@ type Item struct {
         // — auto-counted from the payload's stages[] at scan/publish time, or
         // the manual override from the publish form. 0 = unknown (never shown).
         StageCount int      `json:"stageCount,omitempty"`
+        // v1.54 THE LIBRARY SHIP: the payload's size in bytes — set at
+        // publish time for the big-payload types (canvas/chat), so the
+        // detail view and the library rows can show "1.2 MB" without
+        // fetching the payload. 0 = unknown (every pre-v1.54 type).
+        Size int64 `json:"size,omitempty"`
         // v0.60 pt C.8: REPO PUBLISHING — the companion files of a multi-file
         // bundle (repo-relative paths, committed at items/<id>/<path>). The
         // repo view lists them; empty = a plain single-payload item.

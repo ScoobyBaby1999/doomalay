@@ -21,6 +21,11 @@ type LibrarySpec struct {
         Tag        string `json:"tag"`         // HF dataset tag that marks repos of this type
         PayloadExt string `json:"payload_ext"` // payload file extension (".md", ".json")
         Desc       string `json:"desc"`        // one-line description for UIs
+        // RepoSuffix overrides the repo-name pluralization ("" = the
+        // Type+"s" default). v1.54: "canvas" would otherwise birth
+        // "doomalay-canvass" (the double-s foot-gun) — canvases ride
+        // "doomalay-canvases" instead.
+        RepoSuffix string `json:"repo_suffix,omitempty"`
         // Hidden libraries never appear in the /api/hub/libraries response (no
         // browsable tab in the panel) but stay fully REGISTERED — bundle member
         // sections, one-press downloads, item serving and repo-file routes all
@@ -32,7 +37,61 @@ type LibrarySpec struct {
 
 // RepoName returns the per-user HF dataset repo name for this library
 // ("<user>/doomalay-personas", "<user>/doomalay-templates", …).
-func (s LibrarySpec) RepoName() string { return "doomalay-" + s.Type + "s" }
+func (s LibrarySpec) RepoName() string {
+        suffix := s.RepoSuffix
+        if suffix == "" {
+                suffix = s.Type + "s"
+        }
+        return "doomalay-" + suffix
+}
+
+// Payload max bytes, ONE truth per payload class (v1.54 — the old
+// server-side 64KB/24MB-theme special case moved here so the canvas and
+// chat tiers live beside the registry, not in an HTTP handler's if-chain).
+const (
+        // payloadMaxDefault matches every text type (a persona .md, a
+        // template .json — the historical 64KB cap).
+        payloadMaxDefault = 64 << 10
+        // payloadMaxTheme: a THEME payload is a full look bundle with photo
+        // dataURLs (the v0.52 precedent — lookio.js: 24MB).
+        payloadMaxTheme = 24 << 20
+        // payloadMaxCanvas: a .doomcanvas rides the SAME ceiling the import
+        // ladder enforces (canvasbundle.js TOTAL_MAX = 96MB) — PLAN-V142
+        // §3.6: "total ≤ 96 MB via LFS".
+        payloadMaxCanvas = 96 << 20
+        // payloadMaxChat: a .doomchat is one session (history folds at 8MB)
+        // + its assets (≤24MB) + the manifest — 40MB with headroom.
+        payloadMaxChat = 40 << 20
+)
+
+// PayloadMaxBytes returns the publish/download payload cap for a library.
+func (s LibrarySpec) PayloadMaxBytes() int {
+        switch s.Type {
+        case "theme":
+                return payloadMaxTheme
+        case "canvas":
+                return payloadMaxCanvas
+        case "chat":
+                return payloadMaxChat
+        }
+        return payloadMaxDefault
+}
+
+// BigPayload reports whether this library's payloads ride the binary
+// transport (multipart publish + the streaming payload route + the
+// payload-bypass local store). v1.54: canvas and chat — theme keeps the
+// base64-in-JSON path it has always ridden (its payloads are look-JSON
+// text with embedded dataURLs, published through the plain form).
+func (s LibrarySpec) BigPayload() bool {
+        return s.Type == "canvas" || s.Type == "chat"
+}
+
+// LFSExts lists the payload extensions this library's repo must track via
+// Git LFS (HF rejects non-LFS files >10MB; custom extensions like
+// .doomcanvas are NOT in HF's default .gitattributes patterns — the repo
+// needs an explicit `*<ext> filter=lfs` line or a large payload commit
+// dies at the 10MB wall). ensureRepo seeds these on first big publish.
+func LFSExts() []string { return []string{".doomcanvas", ".doomchat", ".doomtheme"} }
 
 // registry is the process-wide library table.
 var registry = struct {
@@ -162,5 +221,32 @@ func init() {
                 Tag:        "doomalay-preamble",
                 PayloadExt: ".md",
                 Desc:       "Persona preambles — the app briefing blocks, shared through Hugging Face datasets",
+        })
+        // v1.54 THE LIBRARY SHIP (PLAN-V142 §3.6, the wave's final phase):
+        // CANVAS — a whole world as a .doomcanvas bundle (the v1.42.8
+        // vessel format: layout + chats + assets + portals + child
+        // worlds). Publish rides the worlds manager's publish sheet; a
+        // download lands as a NEW world via CanvasBundle.importBundle.
+        // Payloads ride the binary transport (BigPayload) + LFS.
+        Register(LibrarySpec{
+                Type:       "canvas",
+                Label:      "Canvas Library",
+                Tag:        "doomalay-canvas",
+                PayloadExt: ".doomcanvas",
+                RepoSuffix: "canvases", // "doomalay-canvases", never "doomalay-canvass"
+                Desc:       "Whole worlds — canvases with their chats, looks and portals, shared as .doomcanvas bundles",
+        })
+        // v1.54 THE LIBRARY SHIP: CHAT — one conversation as a .doomchat
+        // bundle (session + tweaks + optional folded history + chat
+        // assets). "Chats are a whole lib section themselves" (the REV 2
+        // ask). A download materializes a new chat icon on the current
+        // canvas, bound to the reborn session (personas land INACTIVE,
+        // auto-tools OFF — the R7 no-auto-activation law).
+        Register(LibrarySpec{
+                Type:       "chat",
+                Label:      "Chat Library",
+                Tag:        "doomalay-chat",
+                PayloadExt: ".doomchat",
+                Desc:       "Single chats — a conversation with its look and assets, shared as .doomchat bundles",
         })
 }

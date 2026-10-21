@@ -284,6 +284,45 @@ func (c *HFClient) FetchFile(repo, path string) ([]byte, error) {
         return c.getJSON("/datasets/"+repo+"/resolve/main/"+path, "")
 }
 
+// StreamFile fetches one repo file WITHOUT the hubMaxBody cap, returning
+// the open body for the caller to stream (v1.54 THE LIBRARY SHIP: the
+// canvas/chat payload route proxies .doomcanvas/.doomchat zips that dwarf
+// the 8MB FetchFile ceiling — the engine never buffers them). The declared
+// Content-Length is verified against max BEFORE the body is handed over;
+// a missing or over-cap length is an error, never a silent truncation.
+func (c *HFClient) StreamFile(repo, path string, max int64) (io.ReadCloser, int64, error) {
+        token := ""
+        if c.tokenFn != nil {
+                token = c.tokenFn()
+        }
+        req, err := http.NewRequest("GET", c.base+"/datasets/"+repo+"/resolve/main/"+path, nil)
+        if err != nil {
+                return nil, 0, err
+        }
+        req.Header.Set("User-Agent", hubUA)
+        if token != "" {
+                req.Header.Set("Authorization", "Bearer "+token)
+        }
+        resp, err := c.client.Do(req)
+        if err != nil {
+                return nil, 0, fmt.Errorf("hf: stream %s: %w", redactPath(path), err)
+        }
+        if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+                body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+                resp.Body.Close()
+                return nil, 0, &HFError{Status: resp.StatusCode, Path: redactPath(path), Body: string(body)}
+        }
+        if n := resp.ContentLength; n >= 0 {
+                if n > max {
+                        resp.Body.Close()
+                        return nil, 0, fmt.Errorf("hf: stream %s: declared %d bytes exceeds the %d cap", redactPath(path), n, max)
+                }
+        }
+        // Unknown length (-1): still guard the copy at the caller via
+        // max+1 reads — the handler wraps io.LimitReader(body, max+1).
+        return resp.Body, resp.ContentLength, nil
+}
+
 // TreeEntry is one repo tree listing entry (the index fallback).
 type TreeEntry struct {
         Type string `json:"type"`

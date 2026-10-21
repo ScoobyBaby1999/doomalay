@@ -37,6 +37,10 @@ type mockHubHF struct {
         commits []string
         srv     *httptest.Server
 
+        // v1.54: the LFS bucket — oid → bytes (the "S3" behind the
+        // presigned PUTs; canvas/chat payloads ride it, like real HF).
+        lfs map[string][]byte
+
         // v0.48: space bookkeeping — creation sdk (assert the Vite-blank
         // trick: STATIC, not docker), secrets set, pause/restart calls, and
         // the runtime snapshot GET /api/spaces/{repo} serves.
@@ -52,6 +56,7 @@ func newMockHubHF(t *testing.T) *mockHubHF {
                 repos:        map[string]map[string][]byte{},
                 tags:         map[string][]string{},
                 likes:        map[string]bool{},
+                lfs:          map[string][]byte{},
                 spaceSDK:     map[string]string{},
                 spaceSecrets: map[string]map[string]string{},
                 spaceCalls:   map[string]int{},
@@ -257,17 +262,35 @@ func newMockHubHF(t *testing.T) *mockHubHF {
                 rest := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/datasets/"), "/")
                 switch {
                 case strings.HasSuffix(rest, "/preupload/main"):
-                        // preupload: everything is a regular git file (the LFS
-                        // path is covered by the hub package's own suite).
+                        // preupload: everything is a regular git file EXCEPT
+                        // what the repo's own .gitattributes tracks (v1.54:
+                        // the seeded *.doomcanvas/*.doomchat/*.doomtheme LFS
+                        // lines route the big payloads — mirroring real HF;
+                        // the *.png default covers card art).
                         var req struct {
                                 Files []struct {
                                         Path string `json:"path"`
                                 } `json:"files"`
                         }
                         _ = json.NewDecoder(r.Body).Decode(&req)
+                        m.mu.Lock()
+                        attrs := ""
+                        if rp := m.repos[rest[:len(rest)-len("/preupload/main")]]; rp != nil {
+                                if b, ok := rp[".gitattributes"]; ok {
+                                        attrs = string(b)
+                                }
+                        }
+                        m.mu.Unlock()
                         var files []map[string]any
                         for _, f := range req.Files {
-                                files = append(files, map[string]any{"path": f.Path, "uploadMode": "regular"})
+                                mode := "regular"
+                                if strings.HasSuffix(f.Path, ".png") {
+                                        mode = "lfs"
+                                }
+                                if ext := hubPathExtMock(f.Path); ext != "" && strings.Contains(attrs, "*"+ext+" filter=lfs") {
+                                        mode = "lfs"
+                                }
+                                files = append(files, map[string]any{"path": f.Path, "uploadMode": mode})
                         }
                         writeHubMockJSON(w, map[string]any{"files": files})
 
@@ -298,6 +321,47 @@ func newMockHubHF(t *testing.T) *mockHubHF {
                 w.WriteHeader(http.StatusOK)
         })
 
+        // v1.54: the LFS protocol — batch (presigned upload hrefs) + the
+        // storage PUT (the "S3"), mirroring real HF (see internal/hub's
+        // mock twin for the shape receipts).
+        mux.HandleFunc("POST /datasets/", func(w http.ResponseWriter, r *http.Request) {
+                esc := r.URL.EscapedPath()
+                const pre, suf = "/datasets/", ".git/info/lfs/objects/batch"
+                if !strings.HasPrefix(esc, pre) || !strings.HasSuffix(esc, suf) {
+                        w.WriteHeader(http.StatusNotFound)
+                        return
+                }
+                repo := strings.TrimSuffix(strings.TrimPrefix(esc, pre), ".git/info/lfs/objects/batch")
+                var req struct {
+                        Objects []struct {
+                                Oid  string `json:"oid"`
+                                Size int    `json:"size"`
+                        } `json:"objects"`
+                }
+                _ = json.NewDecoder(r.Body).Decode(&req)
+                base := "http://" + r.Host
+                var objects []map[string]any
+                for _, o := range req.Objects {
+                        objects = append(objects, map[string]any{
+                                "oid": o.Oid, "size": o.Size,
+                                "actions": map[string]any{"upload": map[string]any{
+                                        "href": base + "/lfs/" + url.PathEscape(repo) + "/" + o.Oid,
+                                }},
+                        })
+                }
+                writeHubMockJSON(w, map[string]any{"transfer": "basic", "objects": objects})
+        })
+        mux.HandleFunc("PUT /lfs/", func(w http.ResponseWriter, r *http.Request) {
+                rest := strings.Trim(strings.TrimPrefix(r.URL.EscapedPath(), "/lfs/"), "/")
+                body, _ := io.ReadAll(r.Body)
+                m.mu.Lock()
+                defer m.mu.Unlock()
+                if i := strings.LastIndexByte(rest, '/'); i >= 0 {
+                        m.lfs[rest[i+1:]] = body
+                }
+                w.WriteHeader(http.StatusOK)
+        })
+
         m.srv = httptest.NewServer(mux)
         t.Cleanup(m.srv.Close)
         return m
@@ -325,11 +389,20 @@ func mockHubCommit(w http.ResponseWriter, m *mockHubHF, repo string, r *http.Req
                                 Path     string `json:"path"`
                                 Content  string `json:"content"`
                                 Encoding string `json:"encoding"`
+                                Oid      string `json:"oid"`
                         } `json:"value"`
                 }
                 if err := json.Unmarshal([]byte(line), &op); err != nil {
                         w.WriteHeader(http.StatusBadRequest)
                         return
+                }
+                if op.Key == "lfsFile" {
+                        // v1.54: an LFS-referenced file resolves from the
+                        // mock's presigned bucket (like real HF's commit).
+                        m.mu.Lock()
+                        files[op.Value.Path] = m.lfs[op.Value.Oid]
+                        m.mu.Unlock()
+                        continue
                 }
                 if op.Key != "file" {
                         continue
@@ -528,7 +601,9 @@ func TestHubLibraries(t *testing.T) {
         // category (the Kronos bundle's entry points publish here) → 6.
         // v1.22.0 THE MIRROR: + preamble — the persona-metadata block
         // (the app briefing as a portable, publishable .md) → 7.
-        if len(got.Libraries) != 7 {
+        // v1.54 THE LIBRARY SHIP: + canvas + chat — whole worlds and single
+        // conversations as bundle types (.doomcanvas/.doomchat) → 9.
+        if len(got.Libraries) != 9 {
                 t.Fatalf("libraries = %+v", got.Libraries)
         }
         byType := map[string]hub.LibrarySpec{}
