@@ -370,3 +370,24 @@ func TestEnsureBinaryVerifiesIntegrity(t *testing.T) {
         }
         _ = zip.OpenReader // keep zip imported (the env-override .zip path)
 }
+
+// TestStablePasswordLaw pins THE STABLE-PASSWORD LAW (the rig's
+// conviction): the password is DERIVED from the key — the same key always
+// derives the same password (a pocket serve that outlives the engine stays
+// adoptable across engine restarts), a different key honestly derives a
+// different one (a key rotation re-spawns with the refreshed key.env).
+func TestStablePasswordLaw(t *testing.T) {
+	t.Setenv("DOOMALAY_OPENCODE_SERVE_PASSWORD", "")
+	m1 := New("", "key-one", nil)
+	m2 := New("", "key-one", nil)
+	m3 := New("", "key-two", nil)
+	if m1.ServerPassword() == "" || m1.ServerPassword() != m2.ServerPassword() {
+		t.Fatalf("the same key must derive the same password (the adoption law)")
+	}
+	if m1.ServerPassword() == m3.ServerPassword() {
+		t.Fatalf("a different key must derive a different password")
+	}
+	if len(m1.ServerPassword()) < 32 || strings.ContainsAny(m1.ServerPassword(), " \t") {
+		t.Fatalf("the derived password must be a clean full HMAC hex (got %q)", m1.ServerPassword())
+	}
+}

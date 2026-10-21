@@ -324,10 +324,10 @@ func TestV1491EnsureLadder(t *testing.T) {
                 t.Fatalf("the config write must carry the gate-law bytes verbatim")
         }
         keyCall := f.find("umask 077")
-        if keyCall == nil || keyCall.stdin != "OPENCODE_API_KEY=oc_sk_test_key_123\nOPENCODE_SERVER_PASSWORD=pw-test\n" {
+        if keyCall == nil || keyCall.stdin != "export OPENCODE_API_KEY=oc_sk_test_key_123\nexport OPENCODE_SERVER_PASSWORD=pw-test\n" {
                 t.Fatalf("the key env file law: %+v", keyCall)
         }
-        if keyCall != nil && !strings.Contains(keyCall.stdin, "OPENCODE_SERVER_PASSWORD=") {
+        if keyCall != nil && !strings.Contains(keyCall.stdin, "export OPENCODE_SERVER_PASSWORD=") {
                 t.Fatalf("the 2.x serve password must ride key.env too (the serve is basic-auth now)")
         }
         for _, c := range f.calls {

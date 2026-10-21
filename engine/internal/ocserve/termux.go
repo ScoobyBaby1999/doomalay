@@ -178,9 +178,12 @@ func tmCmdWriteConfig() (command, stdin string) {
 func tmCmdWriteKey() (command, stdin string) {
         // the key AND the 2.x serve password ride stdin (the RunWithStdin
         // zero-escaping law) as a 0600 env file — NEVER the command line
-        // (ps-safe). __KEY__ + __PW__ replace via strings.Replace (never
-        // Sprintf — a % in a secret must not break it).
-        return fmt.Sprintf("umask 077 && cat > %s", tmKeyEnv), "OPENCODE_API_KEY=__KEY__\nOPENCODE_SERVER_PASSWORD=__PW__\n"
+        // (ps-safe). Every line EXPORTS: a sourced bare `VAR=…` is a shell-local
+        // and never reaches the nohup'd child (the v1510 rig convicted this
+        // live — the serve generated its own random password and the engine's
+        // auth'd health check honestly failed). __KEY__ + __PW__ replace via
+        // strings.Replace (never Sprintf — a % in a secret must not break it).
+        return fmt.Sprintf("umask 077 && cat > %s", tmKeyEnv), "export OPENCODE_API_KEY=__KEY__\nexport OPENCODE_SERVER_PASSWORD=__PW__\n"
 }
 
 func tmKeyStdin(key, serverPassword string) string {
@@ -293,12 +296,19 @@ func (p *termuxProvisioner) installed(ctx context.Context) (bool, error) {
 }
 
 // Ensure installs the guest (idempotent — a re-run overwrites; a finished
-// install short-circuits at the marker).
+// install short-circuits at the marker after a CHEAP REFRESH of the two
+// stdin-written files: the gate-law config + key.env — a key rotation or
+// a password re-derivation must reach the NEXT spawn even when the
+// binary install itself is already done; the v1510 rig convicted the
+// stale-key.env hang otherwise).
 func (p *termuxProvisioner) Ensure(ctx context.Context) error {
         if err := p.statusLadder(ctx); err != nil {
                 return err
         }
         if ok, err := p.installed(ctx); err == nil && ok {
+                if err := p.refreshSecrets(ctx); err != nil {
+                        return err
+                }
                 return nil
         }
         if _, err := p.run(ctx, tmCmdMkdirs(), "", 30_000, ""); err != nil {
@@ -335,6 +345,21 @@ func (p *termuxProvisioner) Ensure(ctx context.Context) error {
                 return fmt.Errorf("pocket bridge: storing the OpenCode key failed: %w", err)
         }
         p.logf("pocket bridge: the native OpenCode client %s is installed", androidClientVersion)
+        return nil
+}
+
+// refreshSecrets rewrites the two stdin-written files on an ALREADY
+// installed guest (the idempotent belt: the config + key.env must always
+// match THIS engine run's gate law + secrets before any spawn).
+func (p *termuxProvisioner) refreshSecrets(ctx context.Context) error {
+        cmd, stdin := tmCmdWriteConfig()
+        if _, err := p.run(ctx, cmd, "", 30_000, stdin); err != nil {
+                return fmt.Errorf("pocket bridge: refreshing the permission config failed: %w", err)
+        }
+        kcmd, _ := tmCmdWriteKey()
+        if _, err := p.run(ctx, kcmd, "", 30_000, tmKeyStdin(p.apiKey, p.serverPassword)); err != nil {
+                return fmt.Errorf("pocket bridge: refreshing the OpenCode key failed: %w", err)
+        }
         return nil
 }
 
