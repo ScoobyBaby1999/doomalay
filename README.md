@@ -92,17 +92,25 @@ own WS protocol; where the bridge cannot run (Android — the CLI is
 glibc-linked), the honest copy names the wall, the desktop truth, and the
 alternatives.
 
-**The pocket bridge** (v1.49 PLAN-V149) — OpenCode's free models on
-ANDROID, the honest way with the fewest gates Android allows. The official
-CLI has no Android build (glibc + non-PIE; upstream closed it as
-not-planned), but guysoft/opencode-termux cross-compiles OpenCode NATIVELY
-for Android/Termux aarch64 — the engine now provisions that client
-itself: with Termux installed and the one-line bootstrap run (both
-existing doomalay flows), ONE TAP on the OpenCode card's "Install
-OpenCode" drives the whole thing through the app's jailed-exec path —
-download (the pinned 52MB v0.2.1 build, SHA256-verified) → unzip → the
-gate-law permission config → a wake-locked `opencode serve` on the shared
-loopback → the v1.48.5 bridge speaks to it unchanged. Free-model turns
+**The pocket bridge** (v1.49 PLAN-V149; v1.51 PLAN-V151 THE SECOND
+TONGUE) — OpenCode's free models on ANDROID, the honest way with the
+fewest gates Android allows. The official CLI has no Android build (glibc
++ non-PIE; upstream closed it as not-planned), but guysoft's
+opencode-termux line cross-compiles OpenCode NATIVELY for Android/Termux
+aarch64 — the engine provisions that client itself: with Termux installed
+and the one-line bootstrap run (both existing doomalay flows), ONE TAP on
+the OpenCode card's "Install OpenCode" drives the whole thing through the
+app's jailed-exec path — download (the pinned 72.5MB opencode2 v1.0.3-rc3
+= OpenCode 2.0.0-android, SHA256-verified) → unzip (+ the retired 1.x
+files leave best-effort) → the 2.x gate-law permission config → a
+wake-locked `opencode2 serve` on the shared loopback. The WHOLE bridge now
+speaks the OpenCode 2.x serve API (PLAN-V151): the desktop pin is the npm
+@opencode/cli 2.1.2 tarball (sha512-verified against the registry's own
+integrity — OpenCode 2 ships as npm; GitHub releases stay 1.x), the serve
+is HTTP-basic-auth (the password derives stably from the key so a pocket
+serve that outlives the engine stays adoptable), the turn flow is session
+create → model select → text-only prompt → the v2 SSE vocabulary, and the
+usage ledger carries serve's own tokens + cache + cost (0) end-to-end. Free-model turns
 run through the engine's own WS protocol with serve's own usage on the
 ledger; an engine restart adopts the live serve instead of stacking one,
 a died serve re-provisions itself, and every missing gate answers its own

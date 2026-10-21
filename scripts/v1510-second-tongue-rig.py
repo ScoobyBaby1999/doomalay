@@ -761,8 +761,8 @@ def device_mode():
         sys.exit(0)
     ver = health.get("version", "")
     print(f"  the device answers /api/health: {health}")
-    if not ver.startswith("1.51"):
-        print(f"  SKIP — the device runs {ver}; the second tongue rides the v1.51+ APK "
+    if not ver.startswith("1.53"):
+        print(f"  SKIP — the device runs {ver}; the second tongue rides the v1.53+ APK "
               f"(install the new APK, reopen the app, re-run with --device).")
         sys.exit(0)
     base = TUNNEL
