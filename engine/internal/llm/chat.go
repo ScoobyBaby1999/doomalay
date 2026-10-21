@@ -392,7 +392,7 @@ func runPlainTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- error, r
                 copy(msgs, req.Messages)
                 msgs = append(msgs,
                         Message{Role: "assistant", Content: streamed},
-                        Message{Role: "user", Content: seamNudgeText})
+                        Message{Role: "user", Content: SeamNudgeText})
                 seamReq.Messages = msgs
                 final, err = netSuspendedLoopPlain(ctx, ch, seamReq)
         }
@@ -914,7 +914,7 @@ func friendlyHTTPError(status int, body string, provider string) string {
         // replays still 403) — but the genuine client now rides the engine
         // as the serve bridge: on the DESKTOP engine the free models just
         // work (the bridge takes the turn).
-        // v1.49.2: ANDROID got its own genuine client too — THE POCKET
+        // v1.50.2: ANDROID got its own genuine client too — THE POCKET
         // BRIDGE (PLAN-V149): the native OpenCode client through Termux.
         // This message is what you see when the bridge is not there YET:
         // the copy names the phone's own path, not just the desktop's.
@@ -1740,11 +1740,12 @@ func authHeaders(req ChatRequest) map[string]string {
 // runs runNativeToolsTurn against the mcpbus instead. A request that
 // reaches here without a native search body falls through to a plain
 // streaming completion (the honest no-tools answer).
-// seamNudgeText — the continuation instruction the seam's context rides
+// SeamNudgeText — the continuation instruction the seam's context rides
 // (v1.39.6): continue exactly from the cut, never repeat. The provider leg
 // is not offset-resumable — partial-as-context is the accepted pattern
-// (research §3.6); the event log absorbs the seam.
-const seamNudgeText = "(your previous reply was cut off mid-stream after the text above. Continue that reply exactly from where it stopped — do not repeat any of it.)"
+// (research §3.6); the event log absorbs the seam. v1.50.5 THE CONTINUE:
+// exported — the continue button's engine path rides the SAME nudge.
+const SeamNudgeText = "(your previous reply was cut off mid-stream after the text above. Continue that reply exactly from where it stopped — do not repeat any of it.)"
 
 // netSuspendedLoopPlain — §4's hold-and-continue for the single-completion
 // paths: the suspended machinery (quiet entry — the seam notice is already

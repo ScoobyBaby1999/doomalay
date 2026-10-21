@@ -64,10 +64,12 @@ func humanBytes(n int64) string {
 
 // capFilespec keeps a tool call bounded (also the freeze guard — a model
 // asking for a 5000-file zip can't wedge the loop).
+// v1.50.1 THE WHOLE RETURN: maxExtractFiles (60) is DEAD — the extraction
+// lists EVERY entry. The remaining caps are physics (OOM guards) and they
+// report themselves honestly in the observation — never a silent drop.
 const (
 	maxZipFiles     = 200
 	maxZipUnpacked  = 32 << 20 // 32 MB total uncompressed input
-	maxExtractFiles = 60
 	maxExtractSize  = 400_000 // per text file inlined into the observation
 )
 
@@ -85,7 +87,7 @@ func toolZipCreate(args map[string]any, sink ArtifactSink) string {
 	if len(rawFiles) == 0 {
 		return "OBSERVATION:\nerror: files is required — usage: archive_create {\"name\": \"out.zip\", \"files\": [{\"name\": \"a.txt\", \"content\": \"...\"}]}"
 	}
-	inputs, err := fileInputsFromArgs(rawFiles)
+        inputs, dropped, err := fileInputsFromArgs(rawFiles)
 	if err != nil {
 		return "OBSERVATION:\nerror: " + err.Error()
 	}
@@ -101,6 +103,10 @@ func toolZipCreate(args map[string]any, sink ArtifactSink) string {
 	}
 	obs := fmt.Sprintf("OBSERVATION:\nCreated %q (%s, %d files, %s):\n%s",
 		name, format, len(written), humanBytes(int64(len(out))), strings.Join(written, "\n"))
+        // v1.50.1: the beyond-cap drop is NAMED, never silent.
+        if dropped > 0 {
+                obs += fmt.Sprintf("\nNOT ADDED: %d file(s) beyond the %d-file archive cap — split the work into multiple archives.", dropped, archive.MaxFiles)
+        }
 	if sink != nil {
 		if id, size, err := sink.SaveArtifact(name, out, "model"); err == nil {
 			obs += savedArtifactNote(name, size)
@@ -112,12 +118,17 @@ func toolZipCreate(args map[string]any, sink ArtifactSink) string {
 
 // fileInputsFromArgs converts the tool's files:[{name,content,encoding}]
 // spec into archive.FileInput (with the shared caps + base64 decoding).
-func fileInputsFromArgs(rawFiles []any) ([]archive.FileInput, error) {
+// v1.50.1: returns the count of files dropped beyond archive.MaxFiles so
+// the caller reports it honestly — a silent drop is the sin, the ceiling
+// is physics.
+func fileInputsFromArgs(rawFiles []any) ([]archive.FileInput, int, error) {
 	var inputs []archive.FileInput
 	var total int64
+        dropped := 0
 	for _, rf := range rawFiles {
 		if len(inputs) >= archive.MaxFiles {
-			break
+                        dropped++
+                        continue
 		}
 		f, ok := rf.(map[string]any)
 		if !ok {
@@ -139,21 +150,21 @@ func fileInputsFromArgs(rawFiles []any) ([]archive.FileInput, error) {
 				return r
 			}, content))
 			if err != nil {
-				return nil, fmt.Errorf("file %q has invalid base64 content — %v", fname, err)
+                                return nil, dropped, fmt.Errorf("file %q has invalid base64 content — %v", fname, err)
 			}
 		} else {
 			data = []byte(content)
 		}
 		total += int64(len(data))
 		if total > maxZipUnpacked {
-			return nil, fmt.Errorf("archive contents exceed the %s cap — split into multiple archives", humanBytes(maxZipUnpacked))
+                        return nil, dropped, fmt.Errorf("archive contents exceed the %s cap — split into multiple archives", humanBytes(maxZipUnpacked))
 		}
 		inputs = append(inputs, archive.FileInput{Name: fname, Data: data})
 	}
 	if len(inputs) == 0 {
-		return nil, fmt.Errorf("no usable files in the files list")
+                return nil, dropped, fmt.Errorf("no usable files in the files list")
 	}
-	return inputs, nil
+        return inputs, dropped, nil
 }
 
 // ── zip_extract / archive_extract ───────────────────────────────────────────
@@ -197,16 +208,13 @@ func toolZipExtract(args map[string]any, sink ArtifactSink) string {
 
 	var lines []string
 	var extracted int
-	shown := 0
+        // v1.50.1 THE WHOLE RETURN: every entry lists — the 60-file cap and
+        // its "…(more files truncated)" line are gone. A real archive's
+        // entry count bounds the listing.
 	for _, e := range entries {
 		if e.IsDir {
 			continue
 		}
-		if shown >= maxExtractFiles {
-			lines = append(lines, "  … (more files truncated)")
-			break
-		}
-		shown++
 		content, rerr := archive.Read(data, e.Name)
 		if rerr != nil {
 			lines = append(lines, fmt.Sprintf("  %s (unreadable: %v)", e.Name, rerr))
@@ -221,10 +229,11 @@ func toolZipExtract(args map[string]any, sink ArtifactSink) string {
 				lines = append(lines, fmt.Sprintf("    ↳ extracted as artifact %q", base))
 			}
 		}
+                // v1.50.1: the inline gate is the DESIGNED ceiling (400KB per
+                // text file) — the old second gate at 4,000 bytes died with
+                // the whole-return law: a text file either inlines WHOLE or
+                // (beyond the ceiling) rides as the artifact above.
 		if len(content) <= maxExtractSize && isProbablyText(content) {
-			// small text files also inline into the observation (the model
-			// can read them without another round-trip)
-			if len(content) <= 4000 {
 				lines = append(lines, "    ┌─ contents:")
 				for _, ln := range strings.Split(strings.TrimRight(string(content), "\n"), "\n") {
 					lines = append(lines, "    │ "+ln)
@@ -232,7 +241,6 @@ func toolZipExtract(args map[string]any, sink ArtifactSink) string {
 				lines = append(lines, "    └─")
 			}
 		}
-	}
 	obs := fmt.Sprintf("OBSERVATION:\n%s archive contents (%d files):\n%s", format, len(entries), strings.Join(lines, "\n"))
 	if sink != nil && extracted > 0 {
 		obs += fmt.Sprintf("\n%d files extracted to artifacts.", extracted)
@@ -539,6 +547,10 @@ func toolXlsxCreate(args map[string]any, sink ArtifactSink) string {
 	var sheetsXML strings.Builder
 	sheetRels := ""
 	var worksheets []string
+        // v1.50.1: the row/cell ceilings are physics (a 10k-row sheet through
+        // a tool call wedges the loop) — but their drops are NAMED now,
+        // never silent (the whole-return law).
+        var droppedRows, droppedCells int
 	for i, sh := range sheets {
 		sheetName := fmt.Sprintf("Sheet%d", i+1)
 		if sh.name != "" {
@@ -550,12 +562,14 @@ func toolXlsxCreate(args map[string]any, sink ArtifactSink) string {
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheetData>`)
 		for ri, row := range sh.rows {
 			if ri >= 2000 {
-				break // cap: 2000 rows/sheet through the tool
+                                droppedRows += len(sh.rows) - ri
+                                break // cap: 2000 rows/sheet through the tool (named below)
 			}
 			ws.WriteString(fmt.Sprintf(`<row r="%d">`, ri+1))
 			for ci, cell := range row {
 				if ci >= 256 {
-					break
+                                        droppedCells += len(row) - ci
+                                        break // cap: 256 cells/row (named below)
 				}
 				ref := fmt.Sprintf("%s%d", xlsxCol(ci), ri+1)
 				switch v := cell.(type) {
@@ -627,6 +641,12 @@ func toolXlsxCreate(args map[string]any, sink ArtifactSink) string {
 
 	obs := fmt.Sprintf("OBSERVATION:\nCreated a real Excel workbook %q — %d sheet(s).",
 		name, len(sheets))
+        if droppedRows > 0 {
+                obs += fmt.Sprintf("\nNOT WRITTEN: %d row(s) beyond the 2000-rows-per-sheet cap — split the data across sheets or workbooks.", droppedRows)
+        }
+        if droppedCells > 0 {
+                obs += fmt.Sprintf("\nNOT WRITTEN: %d cell(s) beyond the 256-cells-per-row cap — split wide rows.", droppedCells)
+        }
 	if sink != nil {
 		if _, size, err := sink.SaveArtifact(name, data, "model"); err == nil {
 			obs += savedArtifactNote(name, size)

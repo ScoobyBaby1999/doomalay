@@ -1074,6 +1074,13 @@ func (s *Server) handleChatWS(w http.ResponseWriter, r *http.Request) {
 		switch msgType {
 		case "send":
 			go s.handleTurn(conn, pipe, sessionID, sess, msg)
+		case "continue":
+			// v1.50.5 THE CONTINUE (PLAN-V150 §5): the retry era is
+			// over — the composer's 4th mode resumes the reply
+			// exactly where it stopped (or as close as physics
+			// allows). No user event is ever re-persisted; the
+			// engine masks the trailing error rows itself.
+			go s.handleContinueTurn(conn, pipe, sessionID, sess, msg)
 		case "stop":
 			// v0.19: abort ONLY the in-flight turn(s) for this session.
 			// The old cancel() killed the shared read-loop ctx — after ONE
@@ -1100,6 +1107,200 @@ func (s *Server) handleChatWS(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+}
+
+// continueSpec — the direct proxy's continuation shape: no in-flight
+// user event exists (none was emitted), so no trim and no user append;
+// the nudge rides only when the history ends mid-assistant (the cut
+// shape). "" = the history ends at the user message (the failed-before-
+// content shape) — the model simply answers it.
+type continueSpec struct{ nudge string }
+
+// continueTailIsAssistant reads the log's TAIL (newest first, skipping
+// the non-conversational rows) and reports whether the last conversational
+// event belongs to the ASSISTANT side (assistant / delta / tool rows) —
+// the cut shape, where the seam nudge rides — versus the USER side (the
+// turn died before any content; the model just answers).
+func continueTailIsAssistant(events []*store.Event) bool {
+	for i := len(events) - 1; i >= 0; i-- {
+		switch events[i].EventType {
+		case "error", "status", "hide", "notice", "title":
+			continue // bookkeeping rows never own the tail
+		case "assistant", "assistant_delta", "tool_use", "tool_result", "thinking":
+			return true
+		default:
+			return false // user (or anything else) — the died-before-content shape
+		}
+	}
+	return false
+}
+
+// handleContinueTurn — v1.50.5 THE CONTINUE: resume the conversation
+// exactly where it left off. The user's law: "No more retry whatsoever.
+// Only continue, continue exactly where it left off. Or as close to
+// exactly as possible."
+//
+// The mechanics (deliberately NOT handleTurn's delete-and-regenerate):
+//   - NO user event is emitted/persisted — the user's message already
+//     rides the log exactly once; a retry re-persisted it (the second
+//     [user M] that made chats repeat themselves)
+//   - the trailing 'error' rows are masked with ONE persisted hide event
+//     (the live frontend's existing hide handler drops the bubbles; the
+//     append-only log keeps the audit trail)
+//   - the history is built exactly like a send's (buildHistoryCompacted —
+//     the v1.50.3 honest mask + the v1.50.4 single-voice fold apply)
+//   - tail read: last message assistant (the reply was cut mid-stream,
+//     or the turn died after partial content) → the SeamNudgeText user
+//     nudge rides (the proven v1.39.6 seamless-cut pattern); last message
+//     user (the turn died before any content) → no nudge, the model just
+//     answers it
+//   - dispatch through the same paths a send uses (the ocserve pocket
+//     bridge's own continue stays its wave's surface — an opencode-session
+//     continue falls to the honest normal path here)
+func (s *Server) handleContinueTurn(sender *websocket.Conn, pipe *chatPipe, sessionID string, sess *store.Session, msg map[string]any) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			log.Printf("PANIC recovered in continue-turn %s: %v", sessionID, rec)
+			s.emit(pipe, sessionID, "error", fmtError("panic", "internal error — engine recovered", "", ""), "")
+			s.emit(pipe, sessionID, "status", `{"state":"error","usage":null}`, "")
+		}
+	}()
+
+	// v0.15's universal-401 law: re-fetch per turn (the snapshot went
+	// stale the moment the user switched provider/model in the UI).
+	if fresh, err := s.db.GetSession(sessionID); err == nil && fresh != nil {
+		sess = fresh
+	}
+
+	// the same lock contract as handleTurn (stale-takeover included).
+	release, ok := lockSession(sessionID)
+	if !ok {
+		if takeoverStaleTurn(sessionID, sender) {
+			if turnStale(sessionID) {
+				log.Printf("open door: session %s turn lock held by a silent (stale) client — aborting the stale turn for the continue sender", sessionID)
+				abortTurn(sessionID)
+				release, ok = lockSessionWait(sessionID, 3*time.Second)
+			}
+		}
+	}
+	if !ok {
+		// busy: the honest answer, TERMINAL, and no user event to
+		// orphan (the v0.44 shape persisted the user message first —
+		// a continue has none).
+		s.emit(pipe, sessionID, "error", `{"error":"busy","message":"the previous turn is still running — tap Stop to end it, or wait for it to finish"}`, "")
+		s.emit(pipe, sessionID, "status", `{"state":"error","usage":null}`, "")
+		return
+	}
+	defer release()
+
+	markTurnEvent(sessionID)
+	defer releaseTurnPulse(sessionID)
+	turnGaugeInc(sessionID)
+	defer turnGaugeDec(sessionID)
+
+	// NO user emit — the log already carries the conversation's truth.
+
+	// mask the trailing error rows (consecutive 'error' events from
+	// the end, stopping at the first non-error) — one persisted hide;
+	// the live frontend's hide handler drops the bubbles and every
+	// later replay agrees. The cut shape (no trailing errors — a
+	// length-cut turn ended 'idle') hides nothing.
+	events, err := s.db.ListEvents(sessionID, 0)
+	if err != nil {
+		s.emit(pipe, sessionID, "error", fmtError("continue", "could not read the session log: "+err.Error(), "", ""), "")
+		s.emit(pipe, sessionID, "status", `{"state":"error","usage":null}`, "")
+		return
+	}
+	var errIDs []int64
+	for i := len(events) - 1; i >= 0; i-- {
+		if events[i].EventType != "error" {
+			break
+		}
+		errIDs = append(errIDs, events[i].ID)
+	}
+	if len(errIDs) > 0 {
+		if b, jerr := json.Marshal(errIDs); jerr == nil {
+			s.emit(pipe, sessionID, "hide", string(b), "")
+		}
+	}
+
+	// the tail read drives the nudge: assistant tail = the cut shape
+	// (the seam's continue-exactly nudge); user tail = the turn died
+	// before any content — the model answers the question directly.
+	tailIsAssistant := continueTailIsAssistant(events)
+	nudge := ""
+	if tailIsAssistant {
+		nudge = llm.SeamNudgeText
+	}
+
+	turnCtx, turnCancel := context.WithCancel(context.Background())
+	tcHandle := registerTurnCancel(sessionID, turnCancel, sender)
+	terminal := false
+	defer func() {
+		releaseTurnCancel(sessionID, tcHandle)
+		turnCancel()
+		if !terminal {
+			s.emit(pipe, sessionID, "status", `{"state":"idle","usage":null}`, "")
+		}
+	}()
+
+	// the dispatch: the same paths a send rides. A continuation
+	// carries no template/bundle re-injection (it continues the reply;
+	// it does not restart the method).
+	if rb := s.remoteBrainFor(sess); rb != nil {
+		brainReq := s.continueBrainReq(sessionID, sess, nudge, tailIsAssistant)
+		s.streamFromRemoteBrain(turnCtx, pipe, sessionID, sess, brainReq, "", &terminal, rb)
+	} else if sess.Sandbox == "hf" {
+		s.emitNotice(pipe, sessionID,
+			"HF sandbox not configured — this continuation runs on the device's direct pipeline: no Linux sandbox, no bash, no installs.",
+			"hf-unconfigured")
+		s.streamFromDirectProxy(turnCtx, pipe, sessionID, sess, "", "", "", "", &terminal, &continueSpec{nudge: nudge})
+	} else if s.brain != nil && s.brain.Healthy() {
+		brainReq := s.continueBrainReq(sessionID, sess, nudge, tailIsAssistant)
+		s.streamFromBrain(turnCtx, pipe, sessionID, sess, brainReq, "", &terminal)
+	} else {
+		s.streamFromDirectProxy(turnCtx, pipe, sessionID, sess, "", "", "", "", &terminal, &continueSpec{nudge: nudge})
+	}
+}
+
+// continueBrainReq — the brain-path continuation request: the same
+// per-turn shape handleTurn builds, minus everything a continuation
+// doesn't re-inject (template/bundle), with the message being the nudge
+// (or a plain re-ask when the turn died before content) and the history
+// built exactly like a send's.
+func (s *Server) continueBrainReq(sessionID string, sess *store.Session, nudge string, tailIsAssistant bool) map[string]any {
+	message := nudge
+	if message == "" {
+		// the failed-before-content shape: the brain needs a message;
+		// the history ends at the user's question — answer it.
+		message = "(your previous attempt to answer failed with an error before any reply was sent. Answer the user's last message now.)"
+	}
+	brainReq := map[string]any{
+		"session_id":    sessionID,
+		"message":       message,
+		"model":         sess.Model,
+		"provider":      sess.Provider,
+		"effort":        sess.Effort,
+		"mode":          sess.Mode,
+		"web_search":    sess.WebSearch,
+		"deep_research": sess.DeepResearch,
+		"template_auto": sess.TemplateAuto,
+		"skills_auto":   sess.SkillsAuto,
+		"lib_auto":      sess.LibAuto || sess.TemplateAuto || sess.SkillsAuto,
+		"bot_lib":       (sess.LibAuto || sess.TemplateAuto || sess.SkillsAuto) && s.tweaksBotLibOn(sess.ID),
+		"bot_dl":        (sess.LibAuto || sess.TemplateAuto || sess.SkillsAuto) && s.tweaksBotLibOn(sess.ID) && s.tweaksBotDLOn(sess.ID),
+		"system_prompt": s.systemPromptFor(sess),
+	}
+	hist := s.buildHistoryCompacted(sessionID, sess, sess.SlidingWindow)
+	if sess.SlidingWindow == 0 {
+		hist = s.buildHistoryCompacted(sessionID, sess, 40)
+	}
+	brainHistory := make([]map[string]any, 0, len(hist))
+	for _, m := range hist {
+		brainHistory = append(brainHistory, map[string]any{"role": m.Role, "content": m.Content})
+	}
+	brainReq["history"] = brainHistory
+	return brainReq
 }
 
 // handleTurn runs one chat turn: acquire lock → call brain → persist + forward events → release lock.
@@ -1449,11 +1650,11 @@ func (s *Server) handleTurn(sender *websocket.Conn, pipe *chatPipe, sessionID st
 		}); jerr == nil {
 			_ = pipe.send(b)
 		}
-		s.streamFromDirectProxy(turnCtx, pipe, sessionID, sess, userText, tplID, tplBrief, bundManifest, &terminal)
+		s.streamFromDirectProxy(turnCtx, pipe, sessionID, sess, userText, tplID, tplBrief, bundManifest, &terminal, nil) // v1.50.5: nil = the classic send shape
 	} else if s.brain != nil && s.brain.Healthy() {
 		s.streamFromBrain(turnCtx, pipe, sessionID, sess, brainReq, userText, &terminal)
 	} else {
-		s.streamFromDirectProxy(turnCtx, pipe, sessionID, sess, userText, tplID, tplBrief, bundManifest, &terminal)
+		s.streamFromDirectProxy(turnCtx, pipe, sessionID, sess, userText, tplID, tplBrief, bundManifest, &terminal, nil) // v1.50.5: nil = the classic send shape
 	}
 }
 
@@ -1763,7 +1964,7 @@ func (s *Server) streamFromRemoteBrain(ctx context.Context, pipe *chatPipe, sess
 		tplID, _ := brainReq["template_id"].(string)
 		tplBrief, _ := brainReq["template_brief"].(string)
 		bundManifest, _ := brainReq["bundle_manifest"].(string)
-		s.streamFromDirectProxy(ctx, pipe, sessionID, sess, userText, tplID, tplBrief, bundManifest, terminal)
+		s.streamFromDirectProxy(ctx, pipe, sessionID, sess, userText, tplID, tplBrief, bundManifest, terminal, nil) // v1.50.5: nil = the classic send shape
 		return
 	}
 	guarded, guardFired := guardFirstByte(events, stallKillSeconds(), cancelSpace)
@@ -1781,7 +1982,7 @@ func (s *Server) streamFromRemoteBrain(ctx context.Context, pipe *chatPipe, sess
 		tplID, _ := brainReq["template_id"].(string)
 		tplBrief, _ := brainReq["template_brief"].(string)
 		bundManifest, _ := brainReq["bundle_manifest"].(string)
-		s.streamFromDirectProxy(ctx, pipe, sessionID, sess, userText, tplID, tplBrief, bundManifest, terminal)
+		s.streamFromDirectProxy(ctx, pipe, sessionID, sess, userText, tplID, tplBrief, bundManifest, terminal, nil) // v1.50.5: nil = the classic send shape
 	}
 }
 
@@ -1888,7 +2089,7 @@ func (s *Server) streamFromBrain(ctx context.Context, pipe *chatPipe, sessionID 
 		tplID, _ := brainReq["template_id"].(string)
 		tplBrief, _ := brainReq["template_brief"].(string)
 		bundManifest, _ := brainReq["bundle_manifest"].(string)
-		s.streamFromDirectProxy(ctx, pipe, sessionID, sess, userText, tplID, tplBrief, bundManifest, terminal)
+		s.streamFromDirectProxy(ctx, pipe, sessionID, sess, userText, tplID, tplBrief, bundManifest, terminal, nil) // v1.50.5: nil = the classic send shape
 		return
 	}
 	s.forwardEvents(ctx, pipe, sessionID, sess, userText, s.synthesizeRounds(sessionID, events), errs, terminal)
@@ -1965,7 +2166,7 @@ func (s *Server) synthesizeRounds(sessionID string, events <-chan map[string]any
 // v0.44: tplID/tplBrief carry the composer's active method template (the
 // template pill) into llm.ChatRequest; s.brain's URL arms the
 // template_list/template_show ACTION tools (nil brain = they degrade).
-func (s *Server) streamFromDirectProxy(ctx context.Context, pipe *chatPipe, sessionID string, sess *store.Session, userText, tplID, tplBrief, bundleManifest string, terminal *bool) {
+func (s *Server) streamFromDirectProxy(ctx context.Context, pipe *chatPipe, sessionID string, sess *store.Session, userText, tplID, tplBrief, bundleManifest string, terminal *bool, cont *continueSpec) {
 	if s.vault == nil {
 		s.emit(pipe, sessionID, "error", `{"error":"no_vault","message":"secrets vault not initialized"}`, "")
 		s.emit(pipe, sessionID, "status", `{"state":"error","usage":null}`, "")
@@ -2022,8 +2223,17 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, pipe *chatPipe, sess
 	// append below used to add it AGAIN and every user message
 	// reached the model twice ([user M, user M]) on every provider.
 	// Trim the log's copy; the append supplies it exactly once.
-	history = trimInFlightUser(history, userText)
-	history = append(history, llm.Message{Role: "user", Content: userText})
+	if cont != nil {
+		// v1.50.5 THE CONTINUE: a continuation has NO in-flight user event
+		// (none was emitted) — no trim, no user append; the nudge rides
+		// only for the cut shape (the history ends mid-assistant).
+		if cont.nudge != "" {
+			history = append(history, llm.Message{Role: "user", Content: cont.nudge})
+		}
+	} else {
+		history = trimInFlightUser(history, userText)
+		history = append(history, llm.Message{Role: "user", Content: userText})
+	}
 
 	// v0.17→v0.19: the system message = identity + persona (or the
 	// default prompt) + the artifact protocol — composed fresh each

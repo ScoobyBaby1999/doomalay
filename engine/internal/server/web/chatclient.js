@@ -355,6 +355,24 @@
     }
   };
 
+  // v1.50.5 THE CONTINUE (PLAN-V149 §5): the retry era is over. The
+  // composer's 4th mode sends ONE frame; the engine owns everything else
+  // (no user event re-persisted, the trailing error rows masked
+  // engine-side, the seam nudge when the reply was cut mid-stream).
+  ChatClient.prototype.continueTurn = function () {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.turnActive = true; // the continuation is a live turn
+      this.ws.send(JSON.stringify({ type: 'continue', session_id: this.sessionId })); // the isolation contract twin
+      return true;
+    }
+    // socket down: kick the reconnect (the user can tap again once live —
+    // same contract as a send on a dead socket).
+    if (!this.ws || this.ws.readyState === WebSocket.CLOSED) {
+      this.connect();
+    }
+    return false;
+  };
+
   // v0.37: control frames beyond send/stop (hide — edit/delete/regenerate
   // masking). Same queueing semantics as send: if the socket is down, the
   // frame is dropped (the POST /events endpoint is the fallback path).

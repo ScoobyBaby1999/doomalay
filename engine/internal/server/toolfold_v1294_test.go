@@ -118,6 +118,10 @@ func TestV1294_FoldSlots_OrphansSkipped(t *testing.T) {
         }
 }
 
+// v1.50.2 THE ONE TRUTH re-pin: THE STUB LAW IS DEAD. Every pair rides
+// WHOLE — the old "newest 12 whole, older stubbed to [ran X — output
+// omitted]" silently deleted the model's own findings (the trippy loop:
+// it caught bugs and continuously lost them). 15 pairs = 15 whole slots.
 func TestV1294_FoldSlots_StubLaw(t *testing.T) {
         var events []*store.Event
         events = append(events, &store.Event{ID: 0, EventType: "user", Content: "go"})
@@ -132,24 +136,20 @@ func TestV1294_FoldSlots_StubLaw(t *testing.T) {
         if len(slots) != 16 {
                 t.Fatalf("slot count: %d", len(slots))
         }
-        whole, stubs := 0, 0
+	whole := 0
         for _, s := range slots {
                 if s.isTool {
                         whole++
                 } else if len(s.msgs) == 1 && strings.HasPrefix(s.msgs[0].Content, "[ran ") {
-                        stubs++
+			t.Fatalf("stubs are dead law — found one: %q", s.msgs[0].Content)
                 }
         }
-        if whole != 12 || stubs != 3 {
-                t.Fatalf("stub law: 12 whole + 3 stubs expected, got %d whole + %d stubs", whole, stubs)
+	if whole != 15 {
+		t.Fatalf("whole law: 15 whole pairs expected, got %d", whole)
         }
-        // the NEWEST pair rides whole (the last slot)
-        if !slots[len(slots)-1].isTool {
-                t.Fatalf("the newest pair must ride whole")
-        }
-        // the OLDEST pairs stubbed
-        if !strings.Contains(slots[1].msgs[0].Content, "[ran termux — output omitted") {
-                t.Fatalf("the oldest pair should be a stub: %q", slots[1].msgs[0].Content)
+	// the OLDEST pair rides WHOLE too — its full result text is present
+	if !slots[1].isTool || !strings.Contains(slots[1].msgs[1].Content, "out a") {
+		t.Fatalf("the oldest pair must ride whole: %+v", slots[1])
         }
 }
 
@@ -160,8 +160,11 @@ func TestV1294_FoldSlots_MarkerAndRedact(t *testing.T) {
                 {ID: 2, EventType: "tool_result", Content: toolResultEv(t, "termux", long)},
         }
         slots := foldSlots(events, nil)
-        if !strings.Contains(slots[0].msgs[1].Content, "[truncated: first 6000 of 10000 bytes shown]") {
-                t.Fatalf("the honest marker missing: %.60s", slots[0].msgs[1].Content[len(slots[0].msgs[1].Content)-80:])
+	if slots[0].msgs[1].Content != long {
+		t.Fatalf("v1.50.2 whole law: got %d bytes, want 10000 (no clamp, no marker)", len(slots[0].msgs[1].Content))
+	}
+	if strings.Contains(slots[0].msgs[1].Content, "[truncated") {
+		t.Fatalf("v1.50.2: no clamp marker should exist - nothing was clamped")
         }
 
         // the pasted-PAT hazard: a token in the result NEVER rides the history
@@ -257,32 +260,65 @@ func TestV1294_BuildHistoryCompacted_ToolPairsRide(t *testing.T) {
         }
 }
 
-// the pre-v0.13 delta law still holds around pairs: consecutive deltas
-// fold into the previous plain assistant message; a delta AFTER a pair
-// opens a NEW message (never appends into the tool result).
+// v1.50.4 THE SINGLE VOICE re-pin. The laws:
+//   - consecutive deltas ACCUMULATE into one message (never N fragments)
+//   - the full `assistant` event SEALS: it REPLACES the accumulated
+//     prefix, so a streamed reply rides the model's context EXACTLY ONCE
+//   - a delta after a SEALED assistant message opens a NEW message (the
+//     seal is authoritative; the orphaned-pair shape can never duplicate)
+//   - a delta after a pair opens a NEW message (never into the tool result)
 func TestV1294_FoldSlots_DeltaLawAroundPairs(t *testing.T) {
+	// the streamed shape: deltas + seal -> EXACTLY ONCE
         events := []*store.Event{
+		{ID: 1, EventType: "user", Content: "q"},
+		{ID: 2, EventType: "assistant_delta", Content: "The "},
+		{ID: 3, EventType: "assistant_delta", Content: "cat "},
+		{ID: 4, EventType: "assistant_delta", Content: "sat."},
+		{ID: 5, EventType: "assistant", Content: "The cat sat."},
+	}
+	slots := foldSlots(events, nil)
+	if len(slots) != 2 {
+		t.Fatalf("streamed shape: user + ONE assistant slot, got %d", len(slots))
+	}
+	if slots[1].msgs[0].Content != "The cat sat." {
+		t.Fatalf("the seal must be the sole content (exactly once): %q", slots[1].msgs[0].Content)
+	}
+
+	// the pre-v0.13 shape: deltas with NO seal - the run rides as one message
+	events = []*store.Event{
+		{ID: 1, EventType: "user", Content: "q"},
+		{ID: 2, EventType: "assistant_delta", Content: "part1 "},
+		{ID: 3, EventType: "assistant_delta", Content: "part2"},
+	}
+	slots = foldSlots(events, nil)
+	if len(slots) != 2 || slots[1].msgs[0].Content != "part1 part2" {
+		t.Fatalf("pre-v0.13 delta run should fold into ONE message: %d slots, %q", len(slots), slots[len(slots)-1].msgs[0].Content)
+	}
+
+	// the round shape: seal, then a NEW delta run, then a pair, then a
+	// post-pair delta - each is its own message; the pair is never touched
+	events = []*store.Event{
                 {ID: 1, EventType: "assistant", Content: "part1 "},
-                {ID: 2, EventType: "assistant_delta", Content: "part2"},
+		{ID: 2, EventType: "assistant_delta", Content: "round two text"},
                 {ID: 3, EventType: "tool_use", Content: toolUseEv(t, "termux", `{"action":"exec"}`)},
                 {ID: 4, EventType: "tool_result", Content: toolResultEv(t, "termux", "res")},
                 {ID: 5, EventType: "assistant_delta", Content: "after the pair"},
         }
-        slots := foldSlots(events, nil)
-        if len(slots) != 3 {
-                t.Fatalf("slots: %d", len(slots))
+	slots = foldSlots(events, nil)
+	if len(slots) != 4 {
+		t.Fatalf("round shape: seal + new-run + pair + post-pair = 4 slots, got %d", len(slots))
         }
-        if slots[0].msgs[0].Content != "part1 part2" {
-                t.Fatalf("delta fold broken: %q", slots[0].msgs[0].Content)
+	if slots[0].msgs[0].Content != "part1 " || slots[0].msgs[0].FoldedDone != true {
+		t.Fatalf("the sealed message must stand intact: %+v", slots[0].msgs[0])
         }
-        if !slots[1].isTool {
-                t.Fatalf("slot 1 should be the pair")
+	if slots[1].msgs[0].Content != "round two text" {
+		t.Fatalf("a delta after a seal opens a NEW message: %q", slots[1].msgs[0].Content)
         }
-        if slots[2].isTool {
-                t.Fatalf("slot 2 should be the post-pair delta message")
+	if !slots[2].isTool {
+		t.Fatalf("slot 2 should be the pair")
         }
-        if slots[2].msgs[0].Content != "after the pair" {
-                t.Fatalf("the post-pair delta opens a new message: %q", slots[2].msgs[0].Content)
+	if slots[3].isTool || slots[3].msgs[0].Content != "after the pair" {
+		t.Fatalf("the post-pair delta opens a new message: %+v", slots[3].msgs[0])
         }
 }
 

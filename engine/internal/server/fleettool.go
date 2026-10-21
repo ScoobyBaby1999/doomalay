@@ -33,8 +33,9 @@ import (
 )
 
 const (
-        fleetRosterCap = 30 // rows shown before the honest "N more" line
-        fleetTailLen   = 6  // events in the detail's current-action timeline
+        fleetTailLen = 6 // events in the detail's current-action timeline
+        // v1.50.1 THE WHOLE RETURN: fleetRosterCap (30) is DEAD — the roster
+        // lists EVERY match; a device's real session count bounds the list.
 )
 
 // runFleetAction (v1.47.2) — the DIRECT-PATH fleet ACTION runner: the
@@ -185,20 +186,11 @@ func (s *Server) fleetRoster(filter string) string {
         var b strings.Builder
         fmt.Fprintf(&b, "fleet — %d chat%s, %d running%s",
                 len(matches), pluralS(len(matches)), running, filterSuffix(q))
-        if len(matches) > fleetRosterCap {
-                fmt.Fprintf(&b, "  (showing %d — pass q to narrow)", fleetRosterCap)
-        }
         b.WriteString("\n")
-        shown := 0
+        // v1.50.1 THE WHOLE RETURN: every match rides — no 30-row cap, no
+        // "…and N more". A device's real session count bounds the list.
         for _, r := range matches {
-                if shown >= fleetRosterCap {
-                        break
-                }
-                shown++
                 fmt.Fprintf(&b, "  %s\n", rosterLine(r, time.Now()))
-        }
-        if len(matches) > fleetRosterCap {
-                fmt.Fprintf(&b, "  …and %d more (pass q to filter)\n", len(matches)-fleetRosterCap)
         }
         b.WriteString("\nexpand one: fleet(action='detail', target='<id or title prefix>')")
         return b.String()
@@ -405,16 +397,43 @@ func fleetEventLine(ev *store.Event) string {
         content := strings.TrimSpace(ev.Content)
         switch ev.EventType {
         case "user":
-                return "user: " + snip(content, 90)
+                return "user: " + content
         case "assistant":
-                return "assistant: " + snip(content, 90)
+                return "assistant: " + content
         case "thinking":
-                return "thinking: " + snip(content, 70)
+                return "thinking: " + content
         case "tool_use":
-                // content carries the call's summary (the pill's own text)
-                return "tool_use: " + snip(content, 90)
+                // v1.50.1: the KNOWN JSON shape renders field-by-field (name,
+                // args, summary) — full text, no 90-char snip.
+                var u struct {
+                        Name    string `json:"name"`
+                        Args    string `json:"args"`
+                        Summary string `json:"summary"`
+                }
+                if json.Unmarshal([]byte(content), &u) == nil && u.Name != "" {
+                        line := "tool_use: " + u.Name + " " + u.Args
+                        if u.Summary != "" {
+                                line += " — " + u.Summary
+                        }
+                        return line
+                }
+                return "tool_use: " + content
         case "tool_result":
-                return "tool_result: " + snip(content, 90)
+                // v1.50.1: the KNOWN JSON shape renders field-by-field (name,
+                // summary, full text) — the whole observation rides the row.
+                var p struct {
+                        Name    string `json:"name"`
+                        Summary string `json:"summary"`
+                        Text    string `json:"text"`
+                }
+                if json.Unmarshal([]byte(content), &p) == nil && p.Name != "" {
+                        line := "tool_result: " + p.Name + " — " + p.Text
+                        if p.Summary != "" && p.Summary != p.Text {
+                                line += " (" + p.Summary + ")"
+                        }
+                        return line
+                }
+                return "tool_result: " + content
         case "status":
                 var st struct {
                         State string `json:"state"`
@@ -428,11 +447,11 @@ func fleetEventLine(ev *store.Event) string {
                         Message string `json:"message"`
                 }
                 if json.Unmarshal([]byte(ev.Content), &e) == nil && e.Message != "" {
-                        return "error: " + snip(e.Message, 90)
+                        return "error: " + e.Message
                 }
-                return "error: " + snip(content, 90)
+                return "error: " + content
         }
-        return head + ": " + snip(content, 60)
+        return head + ": " + content
 }
 
 // ── small render helpers ───────────────────────────────────────────
@@ -487,13 +506,7 @@ func isoDayFromUnix(ts float64) string {
         return time.Unix(int64(ts), 0).UTC().Format("2006-01-02")
 }
 
-func snip(s string, n int) string {
-        r := []rune(s)
-        if len(r) <= n {
-                return s
-        }
-        return string(r[:n]) + "…"
-}
+// snip died with v1.50.1 THE WHOLE RETURN — fleet rows carry full text.
 
 func commatizeI(n int) string {
         s := fmt.Sprintf("%d", n)

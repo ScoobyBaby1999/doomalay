@@ -59,16 +59,14 @@ import (
         "github.com/ScoobyBaby1999/doomalay/engine/internal/llm"
 )
 
-// Output caps — mirror the brain's dt_skills so both halves of the port
-// speak the same sizes (a skill body that fits one must fit the other).
-const (
-        skillsReadMax     = 8000  // browsing (companion files)
-        skillsLoadMax     = 40000 // injection (the largest real skill is ~33k)
-        skillsSearchTop   = 8
-        hublibOutMax      = 6000 // dt_spec rule 9 — a few screens max
-        hublibPayloadHead = 3000
-        hublibListMax     = 12
-)
+// v1.50.1 THE WHOLE RETURN (PLAN-V149 §1): the output caps are GONE —
+// every action returns its ENTIRE output (the user's law: "All tool pills
+// must return the entirety of the output"). Context budgeting is NOT this
+// layer's job: the persisted event carries the full bytes (the pill renders
+// them), and the model-facing budget lives in exactly ONE place — the
+// auto-compactor + the context-aware in-turn guard (nativetools.go, §2).
+// The brain's dt_skills twins keep their own sizes (the HF-space surface,
+// out of the engine's reach — the v1.47.0 precedent).
 
 // skillsEntry is one indexed skill (flat frontmatter per agentskills.io).
 type skillsEntry struct {
@@ -403,14 +401,10 @@ func (s *Server) skillsDispatch(action string, get func(string) string, session 
         case "list":
                 var b strings.Builder
                 b.WriteString("SKILLS LIBRARY (load one with the skills tool with {\"action\":\"load\",\"skill\":\"<name>\"}):\n")
-                for i, e := range entries {
-                        if i > 40 {
-                                b.WriteString("… (use search for more)\n")
-                                break
-                        }
-                        b.WriteString("- " + e.Name + " — " + oneLine(e.Description, 120) + "\n")
+                for _, e := range entries {
+                        b.WriteString("- " + e.Name + " — " + flat(e.Description) + "\n")
                 }
-                return clip(b.String(), hublibOutMax), ""
+                return b.String(), ""
         case "search":
                 q := strings.ToLower(strings.TrimSpace(get("q")))
                 if q == "" {
@@ -437,20 +431,16 @@ func (s *Server) skillsDispatch(action string, get func(string) string, session 
                         }
                 }
                 sort.Slice(hits, func(i, j int) bool { return hits[i].s > hits[j].s })
-                top := skillsSearchTop
-                if len(hits) < top {
-                        top = len(hits)
-                }
                 var b strings.Builder
-                if top == 0 {
+                if len(hits) == 0 {
                         b.WriteString("no skill matched " + q + " — the skills tool with {\"action\":\"list\"} shows everything")
                 } else {
                         b.WriteString("SKILL SEARCH HITS (best first):\n")
-                        for i := 0; i < top; i++ {
-                                b.WriteString("- " + hits[i].e.Name + " — " + oneLine(hits[i].e.Description, 140) + "\n")
+                        for _, h := range hits {
+                                b.WriteString("- " + h.e.Name + " — " + flat(h.e.Description) + "\n")
                         }
                 }
-                return clip(b.String(), hublibOutMax), ""
+                return b.String(), ""
         case "load":
                 if !s.sessionLibOn(session) {
                         return "", "the chat's Bot Library is OFF — you can browse and recommend, but loads are refused until the user flips the \U0001F6E0 lib pill (or ✦ tweaks → Bot Library) back on"
@@ -479,7 +469,7 @@ func (s *Server) skillsDispatch(action string, get func(string) string, session 
                         }
                 }
                 text := "SKILL LOADED — " + e.Name + ". Follow this methodology now — it stays armed for this chat's turns.\n\n" +
-                        clip(stripFrontmatter(string(body)), skillsLoadMax, "\n…(body clipped — the skills tool with {\"action\":\"read\",\"skill\":\""+e.Name+"\",\"path\":\"SKILL.md\"} for the tail)")
+                        stripFrontmatter(string(body))
                 return text, ""
         case "files":
                 e := resolveSkill(entries, get("skill"))
@@ -498,7 +488,7 @@ func (s *Server) skillsDispatch(action string, get func(string) string, session 
                         }
                         b.WriteString("- " + k.Name() + "\n")
                 }
-                return clip(b.String(), hublibOutMax), ""
+                return b.String(), ""
         case "read":
                 e := resolveSkill(entries, get("skill"))
                 if e == nil {
@@ -513,7 +503,7 @@ func (s *Server) skillsDispatch(action string, get func(string) string, session 
                 if err != nil {
                         return "", "read failed: " + err.Error()
                 }
-                return clip(string(b), skillsReadMax, "\n…(clipped — the full file rides the load envelope)"), ""
+                return string(b), "" // v1.50.1: the whole file — no cap
         default:
                 return "", "unknown action " + oneLine(action, 30) + ". Valid: bootstrap, list, search, load, files, read."
         }
@@ -571,24 +561,16 @@ func (s *Server) hublibDispatch(action string, get func(string) string, session 
                         return "", "hub: " + err.Error()
                 }
                 var b strings.Builder
-                n := len(items)
-                if n > hublibListMax {
-                        n = hublibListMax
-                }
                 b.WriteString("HUB " + strings.ToUpper(typ) + "S (download with the hublib tool with {\"action\":\"download\",\"type\":\"" + typ + "\",\"repo\":\"…\",\"id\":\"…\"}):\n")
-                for i := 0; i < n; i++ {
-                        it := items[i]
-                        b.WriteString("- " + oneLine(it.Name, 60) +
+                for _, it := range items {
+                        b.WriteString("- " + flat(it.Name) +
                                 " | repo: " + it.Repo + " | id: " + it.ID +
-                                " | " + oneLine(it.Description, 100) + "\n")
+                                " | " + flat(it.Description) + "\n")
                 }
-                if len(items) > n {
-                        b.WriteString("… " + strconv.Itoa(len(items)-n) + " more — narrow the query\n")
-                }
-                if n == 0 {
+                if len(items) == 0 {
                         b.WriteString("(no items matched — try another query or type)")
                 }
-                return clip(b.String(), hublibOutMax), ""
+                return b.String(), ""
         case "get":
                 typ := get("type")
                 if !hublibPMTypes[typ] {
@@ -606,9 +588,8 @@ func (s *Server) hublibDispatch(action string, get func(string) string, session 
                         byline += " — ported from " + up
                 }
                 text := "HUB ITEM — " + item.Name + " (" + typ + ", repo " + item.Repo + ", id " + item.ID + ")\n" +
-                        oneLine(item.Description, 200) + "\n" + byline + "\n\nPAYLOAD HEAD:\n" +
-                        clip(payload, hublibPayloadHead, "\n…(clipped — download it to use)")
-                return clip(text, hublibOutMax), ""
+                        flat(item.Description) + "\n" + byline + "\n\nPAYLOAD:\n" + payload
+                return text, ""
         case "download":
                 if !s.sessionLibOn(session) {
                         return "", "the chat's Bot Library is OFF — you can browse and recommend, but downloads are refused until the user flips ✦ tweaks → Bot Library back on"
@@ -651,9 +632,8 @@ func (s *Server) hublibDispatch(action string, get func(string) string, session 
                 default: // doc
                         useLine = "USE: background reading — consult it when the task touches its subject."
                 }
-                text := "DOWNLOADED — " + item.Name + " (" + typ + "). It is now in the user's library. " + useLine + "\nPAYLOAD:\n" +
-                        clip(payload, skillsLoadMax, "\n…(payload clipped — the hublib tool with {\"action\":\"get\"} re-reads the head)")
-                return clip(text, skillsLoadMax+400), ""
+                text := "DOWNLOADED — " + item.Name + " (" + typ + "). It is now in the user's library. " + useLine + "\nPAYLOAD:\n" + payload
+                return text, ""
         case "bundles":
                 // v0.72: THE BUNDLE LIST — never gated (browsing changes
                 // nothing). One line per bunch: id, badge tag, member
@@ -683,23 +663,19 @@ func (s *Server) hublibDispatch(action string, get func(string) string, session 
                 b.WriteString("\n")
                 n := 0
                 for _, c := range cols {
-                        if n >= hublibListMax {
-                                b.WriteString("… " + strconv.Itoa(len(cols)-n) + " more — narrow the query (q matches ids, member names, descriptions and tags; tag filters by badge)\n")
-                                break
-                        }
                         b.WriteString("- " + c.ID)
                         if c.Tag != "" {
                                 b.WriteString(" | #" + c.Tag)
                         }
                         b.WriteString(" | " + strconv.Itoa(c.Members) + " members (" + byTypeLine(c.ByType) + ")" +
                                 " | ♥ " + strconv.Itoa(c.Hearts) + " | ⤓ " + strconv.Itoa(c.Downloads) +
-                                " | e.g. " + oneLine(c.Sample, 40) + "\n")
+                                " | e.g. " + flat(c.Sample) + "\n")
                         n++
                 }
                 if n == 0 {
                         b.WriteString("(no bundles matched — try a shorter query or a tag, or browse items directly with {\"action\":\"search\"})\n")
                 }
-                return clip(b.String(), hublibOutMax), ""
+                return b.String(), ""
         case "bundle":
                 // v0.72: THE BUNDLE DETAIL — never gated. The member lines
                 // carry the DESCRIPTIONS VERBATIM (they are when-to-use
@@ -739,9 +715,9 @@ func (s *Server) hublibDispatch(action string, get func(string) string, session 
                         total += len(g.Items)
                         if g.Type == "skill" {
                                 for _, it := range g.Items {
-                                        if len(skillHeads) < 3 {
-                                                skillHeads = append(skillHeads, "### "+it.Item.Name+" — "+oneLine(it.Item.Description, 90)+"\n"+clip(stripFrontmatter(it.Payload), 1200, "\n…(head clipped — get the rest via the hublib tool with {\"action\":\"get\",\"type\":\"skill\",\"repo\":\""+it.Item.Repo+"\",\"id\":\""+it.Item.ID+"\"} or load the installed skill)")+"\n")
-                                        }
+                                        // v1.50.1: every skill's FULL body rides the
+                                        // receipt — no 3-head preview, no 1,200 clip.
+                                        skillHeads = append(skillHeads, "### "+it.Item.Name+" — "+flat(it.Item.Description)+"\n"+stripFrontmatter(it.Payload)+"\n")
                                 }
                         }
                 }
@@ -755,7 +731,7 @@ func (s *Server) hublibDispatch(action string, get func(string) string, session 
                         }
                 }
                 b.WriteString("\nNEXT: pick the member that fits the actual sub-problem (descriptions state when to use each), LOAD it before starting, follow it to the letter, and say which member you used and why. Never run the whole bundle at a task it was not designed for — browse first (the hublib tool with {\"action\":\"bundle\",\"id\":\"…\"}), use the smallest fitting member.\n")
-                return clip(b.String(), hublibOutMax), ""
+                return b.String(), ""
         default:
                 return "", "unknown action " + oneLine(action, 30) + ". Valid: search, get, download, bundles, bundle, download_bundle."
         }
@@ -850,17 +826,13 @@ func (s *Server) hublibBundleDetail(rawID string) (string, string) {
         for _, g := range groups {
                 switch g.Type {
                 case "doc":
-                        // docs: census + first names only (reference reading)
+                        // docs: census + every name (reference reading —
+                        // v1.50.1: the full name list, no 4-name cap)
                         var names []string
-                        for i, it := range g.Items {
-                                if i < 4 {
-                                        names = append(names, oneLine(it.Name, 40))
-                                }
+                        for _, it := range g.Items {
+                                names = append(names, flat(it.Name))
                         }
                         b.WriteString("\nDOCS (" + strconv.Itoa(len(g.Items)) + " — background reading; get detail only when a task points at one): " + strings.Join(names, ", "))
-                        if len(g.Items) > 4 {
-                                b.WriteString(" …")
-                        }
                         b.WriteString("\n")
                 default:
                         plural := strings.ToUpper(g.Type) + "S"
@@ -876,12 +848,12 @@ func (s *Server) hublibBundleDetail(rawID string) (string, string) {
                         for _, it := range g.Items {
                                 b.WriteString("- " + it.Name + dlMark(g.Type, it.Repo, it.ID) +
                                         " | repo: " + it.Repo + " | id: " + it.ID +
-                                        " | " + oneLine(it.Description, 130) + "\n")
+                                        " | " + flat(it.Description) + "\n")
                         }
                 }
         }
         b.WriteString("\nDownload EVERYTHING at once: the hublib tool with {\"action\":\"download_bundle\",\"id\":\"" + id + "\"} (gated on the chat's library switches).\n")
-        return clip(b.String(), hublibOutMax), ""
+        return b.String(), ""
 }
 
 // sumMembers totals a by-type census.
@@ -965,13 +937,21 @@ var hublibPMTypes = map[string]bool{
         "persona": true, "theme": true,
 }
 
-// oneLine flattens + clips to n chars.
+// oneLine flattens + clips to n chars (error/usage strings only —
+// v1.50.1: DATA lines ride flat(), never capped).
 func oneLine(s string, n int) string {
         s = strings.Join(strings.Fields(s), " ")
         if len(s) > n {
                 return s[:n] + "…"
         }
         return s
+}
+
+// flat flattens whitespace to single spaces WITHOUT any char cap — the
+// v1.50.1 whole-return law: data lines (descriptions, names, samples)
+// ride their full text.
+func flat(s string) string {
+        return strings.Join(strings.Fields(s), " ")
 }
 
 // clip trims s to max bytes appending tail when cut.

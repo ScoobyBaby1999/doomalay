@@ -160,6 +160,19 @@ type wireToolCall struct {
 func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- error, req ChatRequest) {
         ch <- ChatChunk{Type: "status", State: "running"}
 
+        // v1.50.2 THE ONE TRUTH: the in-turn observation clamp is
+        // CONTEXT-AWARE, not a fixed 24,000. The old ceiling amputated a
+        // 300KB file read even on a 200K-context model — silent data loss
+        // with zero budget pressure (a trippy-loop driver: the model
+        // "found" things the clamp then ate). The budget: 90% of the
+        // model's documented window minus what the in-turn history already
+        // holds. A result rides WHOLE whenever it fits (the common case on
+        // big-context models); when physics says no, ClampMarked carries
+        // the honest totals so the model KNOWS and can re-read slices.
+        // Recomputed per round (history grows); floor 24,000 so a tiny-
+        // window model is never worse off than the old ceiling.
+        obsBudget := turnObsBudget(req.Model, messagesTokens(req.Messages))
+
         // v1.13.4 THE CHAIN: the merged registry (internal Defs + every
         // attached external MCP server's namespaced tools — the 100+ tools
         // horizon) when the bus is up; the pure function serves the
@@ -331,7 +344,7 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
                         ch <- ChatChunk{Type: "notice", Text: "the connection cut mid-reply — holding, and continuing when the network returns (Stop always works)"}
                         history = append(history,
                                 Message{Role: "assistant", Content: roundText},
-                                Message{Role: "user", Content: seamNudgeText})
+                                Message{Role: "user", Content: SeamNudgeText})
                         roundReq.Messages = history
                         err = netSuspendedLoop(ctx, ch, roundReq.Provider, "", func() (bool, error) {
                                 emitted2 := false
@@ -511,7 +524,7 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
                                         Role:       "tool",
                                         ToolCallID: c.ID,
                                         Name:       c.Function.Name,
-                                        Content:    ClampMarked(strings.TrimPrefix(c.SkipText, "OBSERVATION:\n"), 24000), // v1.29.4: the honest marker
+                                        Content:    ClampMarked(strings.TrimPrefix(c.SkipText, "OBSERVATION:\n"), obsBudget), // v1.50.2: context-aware (was a fixed 24,000)
                                 })
                                 continue
                         }
@@ -551,11 +564,14 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
                         // strip the protocol prefix — the wire tool message is plain content
                         // (v1.14.4: renamed obs→obsText — the obs PACKAGE lives here now)
                         obsText := strings.TrimPrefix(observation, "OBSERVATION:\n")
+                        // v1.50.2: recompute per round — every appended result
+                        // eats into the room the next one has.
+                        obsBudget = turnObsBudget(req.Model, messagesTokens(history))
                         history = append(history, Message{
                                 Role:       "tool",
                                 ToolCallID: c.ID,
                                 Name:       c.Function.Name,
-                                Content:    ClampMarked(obsText, 24000), // v1.29.4: the honest marker
+                                Content:    ClampMarked(obsText, obsBudget), // v1.50.2: context-aware (was a fixed 24,000)
                         })
                 }
         }

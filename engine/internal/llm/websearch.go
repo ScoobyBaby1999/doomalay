@@ -115,9 +115,9 @@ func tavilySearch(ctx context.Context, query string, max int, apiKey string) ([]
         out := make([]SearchResult, 0, len(resp.Results))
         for _, r := range resp.Results {
                 out = append(out, SearchResult{
-                        Title:   clamp(r.Title, 160),
+                        Title:   r.Title,
                         URL:     r.URL,
-                        Snippet: clamp(r.Content, 400),
+                        Snippet: r.Content,
                 })
         }
         return out, nil
@@ -182,9 +182,9 @@ func ddgScrape(ctx context.Context, host, query string, max int) ([]SearchResult
                         snippet = strings.TrimSpace(tagRe.ReplaceAllString(snips[i][1], ""))
                 }
                 out = append(out, SearchResult{
-                        Title:   clamp(title, 160),
+                        Title:   title,
                         URL:     href,
-                        Snippet: clamp(snippet, 400),
+                        Snippet: snippet,
                 })
         }
         return out, nil
@@ -288,9 +288,9 @@ func bingParse(page string, max int) []SearchResult {
                         }
                 }
                 out = append(out, SearchResult{
-                        Title:   clamp(title, 160),
+                        Title:   title,
                         URL:     url_,
-                        Snippet: clamp(snippet, 400),
+                        Snippet: snippet,
                 })
         }
         return out
@@ -697,11 +697,13 @@ func htmlToText(html string) string {
 }
 
 // FormatSearchResults renders results as numbered lines for the model:
-// "1. Title - URL\n   snippet".
+// "1. Title - URL\n   snippet". v1.50.1 THE WHOLE RETURN: the snippet rides
+// WHOLE — the 300-char clamp died with the whole-return law (the SERP's own
+// snippet is the search API's output; this layer never amputates it).
 func FormatSearchResults(results []SearchResult) string {
         var b strings.Builder
         for i, r := range results {
-                fmt.Fprintf(&b, "%d. %s - %s\n   %s\n", i+1, r.Title, r.URL, clamp(r.Snippet, 300))
+                fmt.Fprintf(&b, "%d. %s - %s\n   %s\n", i+1, r.Title, r.URL, strings.TrimSpace(r.Snippet))
         }
         return b.String()
 }

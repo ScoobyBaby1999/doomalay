@@ -136,12 +136,23 @@ func (s *Server) maybeCompact(ctx context.Context, pipe *chatPipe, sess *store.S
                 case "user":
                         older = append(older, llm.Message{Role: "user", Content: ev.Content})
                 case "assistant":
-                        older = append(older, llm.Message{Role: "assistant", Content: ev.Content})
+                        // v1.50.4 THE SINGLE VOICE (the summarizer input twin):
+                        // the full event SEALS the accumulating delta run —
+                        // it replaces (never duplicates) the collected text.
+                        if strings.TrimSpace(ev.Content) == "" {
+                                continue
+                        }
+                        if n := len(older); n > 0 && older[n-1].Role == "assistant" && !older[n-1].FoldedDone {
+                                older[n-1].Content = ev.Content
+                                older[n-1].FoldedDone = true
+                        } else {
+                                older = append(older, llm.Message{Role: "assistant", Content: ev.Content, FoldedDone: true})
+                        }
                 case "assistant_delta":
                         if n := len(older); n > 0 && older[n-1].Role == "assistant" && !older[n-1].FoldedDone {
                                 older[n-1].Content += ev.Content
                         } else {
-                                older = append(older, llm.Message{Role: "assistant", Content: ev.Content, FoldedDone: true})
+                                older = append(older, llm.Message{Role: "assistant", Content: ev.Content})
                         }
                 }
         }
@@ -304,7 +315,9 @@ func (s *Server) handleSessionCompact(w http.ResponseWriter, r *http.Request) {
 // and windowed exactly like buildHistory.
 // v1.29.4 THE TOOL MEMORY: the fold is the SLOT fold (toolfold.go) —
 // tool pairs ride the history as the in-turn wire shape, one pair = ONE
-// window slot; results clamped + marked + redacted; older pairs stubbed.
+// window slot. v1.49: results ride WHOLE (redacted, never clamped — the
+// stub law is dead), hides are honored (THE HONEST MASK), and streamed
+// replies fold to exactly one message (THE SINGLE VOICE).
 func (s *Server) buildHistoryCompacted(sessionID string, sess *store.Session, window int) []llm.Message {
         var msgs []llm.Message
         if strings.TrimSpace(sess.CompactSummary) != "" {
@@ -313,6 +326,26 @@ func (s *Server) buildHistoryCompacted(sessionID string, sess *store.Session, wi
         events, err := s.db.ListEvents(sessionID, 0)
         if err != nil {
                 return msgs
+        }
+        // v1.50.3 THE HONEST MASK: the hidden set is REAL here. The old
+        // foldSlots(liveEvents, nil) sent a nil map — every retry/edit/
+        // regenerate hide was ignored by the PRODUCTION history builder
+        // (only the test-only buildHistory applied masks), so the model
+        // kept seeing the dead turn + the re-sent user message and the
+        // chat repeated itself. The hide rows name ids; deletes always
+        // come after their targets, so one pass collects the set. (The
+        // buildHistory port — same law, same shape.)
+        hidden := map[int64]bool{}
+        for _, ev := range events {
+                if ev.EventType != "hide" || ev.Content == "" {
+                        continue
+                }
+                var ids []int64
+                if json.Unmarshal([]byte(ev.Content), &ids) == nil {
+                        for _, id := range ids {
+                                hidden[id] = true
+                        }
+                }
         }
         // v1.29.4: one fold pass over the live segment — the SLOT fold
         // (toolfold.go) owns the law; the boundary is the compact point.
@@ -326,7 +359,7 @@ func (s *Server) buildHistoryCompacted(sessionID string, sess *store.Session, wi
                         liveEvents = append(liveEvents, ev)
                 }
         }
-        live := foldSlots(liveEvents, nil)
+        live := foldSlots(liveEvents, hidden)
         // v1.29.6 THE PERSISTED SKILL: the loaded skill's head rides as a
         // lead-in (the CompactSummary pattern) while the lib gate is on —
         // the model chose to load it; the persistence is state, so the
@@ -425,7 +458,11 @@ func (s *Server) RunDelegate(ctx context.Context, prompt string, modelSlots []st
                                 if res.Err != "" {
                                         m["error"] = res.Err
                                 } else {
-                                        m["text"] = clampServer(res.Text, 2000)
+                                        // v1.50.1 THE WHOLE RETURN: the delegate's
+                                        // 2,000-char clampServer is GONE — the
+                                        // consulted model's FULL reply rides the
+                                        // observation (the whole-return law).
+                                        m["text"] = res.Text
                                 }
                                 results = append(results, m)
                                 mu.Unlock()

@@ -106,10 +106,13 @@ func TestV1153_BuildHistoryHiddenMasking(t *testing.T) {
         }
 }
 
-// TestV1153_BuildHistoryDeltaExactness — a pre-v0.13-style delta session:
-// each assistant_delta is its OWN message (FoldedDone semantics: "so later
-// deltas don't append"), so the bounded TAIL walk must return EXACTLY what
-// the full walk returns — the pin is equivalence, not a fold.
+// TestV1153_BuildHistoryDeltaExactness — v1.50.4 THE SINGLE VOICE re-pin:
+// a delta session folds to EXACTLY ONCE (the 400-delta run accumulates
+// into ONE message and the full `assistant` event REPLACES it), so the
+// bounded TAIL walk must return EXACTLY what the full walk returns — the
+// pin is equivalence AND exactly-once (the old pin held the fragmentation
+// law: "each assistant_delta is its OWN message" — the self-repetition
+// disease this wave killed).
 func TestV1153_BuildHistoryDeltaFoldFallback(t *testing.T) {
         s := newTestServerV1153(t)
         sid := "sess-deltas"
@@ -127,21 +130,22 @@ func TestV1153_BuildHistoryDeltaFoldFallback(t *testing.T) {
         if _, err := s.db.AppendEvent(sid, "assistant", "the modern reply", ""); err != nil {
                 t.Fatal(err)
         }
-        // FoldedDone semantics (llm.Message): each assistant_delta is its OWN
-        // message — the bounded walk must match the full walk's output.
+	// v1.50.4 exactly-once: the whole delta run folds into ONE accumulating
+	// message and the modern full event SEALS it (replaces) — [user, sealed
+	// assistant] = 2 messages, at every window that fits them.
         msgs := s.buildHistory(sid, 40)
-        if len(msgs) != 40 {
-                t.Fatalf("delta session window 40: got %d messages, want 40", len(msgs))
+	if len(msgs) != 2 {
+		t.Fatalf("delta session window 40: got %d messages, want 2 (user + the sealed reply)", len(msgs))
         }
-        if msgs[39].Role != "assistant" || msgs[39].Content != "the modern reply" {
-                t.Fatalf("the last message must be the modern assistant event, got %+v", msgs[39])
+	if msgs[1].Role != "assistant" || msgs[1].Content != "the modern reply" {
+		t.Fatalf("the last message must be the modern assistant event, got %+v", msgs[1])
         }
-        if msgs[38].Content != "d399 " {
-                t.Fatalf("the second-to-last must be the LAST delta (d399), got %q", msgs[38].Content)
+	if msgs[0].Role != "user" || msgs[0].Content != "fold me" {
+		t.Fatalf("the first message must be the user turn, got %+v", msgs[0])
         }
-        // window 2 → the last delta + the modern reply
+	// window 2 → the same 2 messages (the equivalence pin)
         msgs2 := s.buildHistory(sid, 2)
-        if len(msgs2) != 2 || msgs2[1].Content != "the modern reply" || msgs2[0].Content != "d399 " {
+	if len(msgs2) != 2 || msgs2[1].Content != "the modern reply" || msgs2[0].Content != "fold me" {
                 t.Fatalf("window 2: got %+v", msgs2)
         }
 }

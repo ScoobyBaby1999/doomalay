@@ -1,6 +1,7 @@
 package server
 
-// toolfold.go — v1.29.4 THE TOOL MEMORY (PLAN-V130 §4).
+// toolfold.go — v1.29.4 THE TOOL MEMORY (PLAN-V130 §4) · reworked by
+// v1.49 THE UNLOST MIND (PLAN-V149 §2+§4).
 //
 // The disease (the Doobie transcript, the user's words: "kept constantly
 // avoiding execution… researching things it should have known and been
@@ -8,9 +9,8 @@ package server
 // time"): buildHistory/buildHistoryCompacted folded ONLY user/assistant
 // events — every tool_use/tool_result was persisted for the UI replay
 // but NEVER entered the model's history. Every new turn started
-// fact-blind: the model re-read the same files (the transcript re-reads
-// timer 769 twice, the scheduleUpdate region twice), re-ran the same
-// greps, and narrated its plan instead of acting.
+// fact-blind: the model re-read the same files, re-ran the same greps,
+// and narrated its plan instead of acting.
 //
 // The fix: fold COMPLETE (use → result) tool pairs into the history as
 // the exact in-turn wire shape (an assistant message with tool_calls +
@@ -18,15 +18,27 @@ package server
 // conversation. Laws:
 //   · ONE pair = ONE window slot (the 40-message window keeps its
 //     meaning — a tool exchange is one conversational unit)
-//   · per-result clamp at toolFoldBytes with the HONEST marker (totals
-//     carried — the model knows when a read was amputated)
+//   · v1.50.2 THE ONE TRUTH: results ride WHOLE — the v1.30.4 per-result
+//     6,000-byte clamp and the 12-pair stub law are DEAD. They silently
+//     deleted the model's own findings on later turns (the trippy loop:
+//     "it caught bugs and continuously lost and looped over" them).
+//     Context budgeting is NOT this layer's job — the auto-compactor
+//     (70% trigger, counts tool_result bytes since v1.29.4) + the count
+//     window + the context-aware in-turn guard (nativetools.go) own the
+//     budget, in exactly ONE place.
 //   · Redact() on every folded text (the pasted-PAT hazard never rides
 //     the model's context)
-//   · the newest toolFoldKeep pairs ride whole; older pairs collapse to
-//     ONE-line stubs — the model sees THAT it acted, without the bytes
 //   · orphaned uses/results (a turn died mid-call) are skipped —
 //     providers validate call→result sequences
 //   · "OBSERVATION:\n" prefixes stripped (the in-turn wire law)
+//   · v1.50.4 THE SINGLE VOICE: assistant_deltas ACCUMULATE into one
+//     slot and the full `assistant` event SEALS it (its content is
+//     authoritative — it replaces the accumulated prefix). The old
+//     first-delta-sealed-itself bug made every later delta its OWN
+//     model-history message plus the full event as another copy — a
+//     streamed reply rode the model's context N+1 times (in-context
+//     self-repetition + window flooding). A reply now rides EXACTLY
+//     ONCE.
 
 import (
         "encoding/json"
@@ -37,17 +49,19 @@ import (
         "github.com/ScoobyBaby1999/doomalay/engine/internal/store"
 )
 
-const (
-        toolFoldKeep  = 12   // newest pairs riding whole (older → one-line stubs)
-        toolFoldBytes = 6000 // per-result byte clamp (the marker carries totals)
-)
-
 // historySlot — one window-countable unit: a plain message, or a tool
 // PAIR (two wire messages — the assistant tool_calls + the tool result —
 // counting as ONE conversational slot).
 type historySlot struct {
         msgs   []llm.Message
         isTool bool
+}
+
+// isAccumulating reports whether the slot is a single plain assistant
+// message still collecting assistant_delta text (not yet sealed by the
+// full `assistant` event).
+func isAccumulating(s historySlot) bool {
+        return !s.isTool && len(s.msgs) == 1 && s.msgs[0].Role == "assistant" && !s.msgs[0].FoldedDone
 }
 
 // foldSlots folds an event run into window-countable slots. Events the
@@ -66,16 +80,31 @@ func foldSlots(events []*store.Event, hidden map[int64]bool) []historySlot {
                 case "user":
                         slots = append(slots, historySlot{msgs: []llm.Message{{Role: "user", Content: ev.Content}}})
                 case "assistant":
-                        slots = append(slots, historySlot{msgs: []llm.Message{{Role: "assistant", Content: ev.Content}}})
-                case "assistant_delta":
-                        // Pre-v0.13 sessions: fold consecutive deltas into the
-                        // previous assistant message (the slot's single message
-                        // when it is an unsealed plain assistant).
-                        if n := len(slots); n > 0 && !slots[n-1].isTool && len(slots[n-1].msgs) == 1 &&
-                                slots[n-1].msgs[0].Role == "assistant" && !slots[n-1].msgs[0].FoldedDone {
-                                slots[n-1].msgs[0].Content += ev.Content
+                        // v1.50.4: the SEAL. The full event is authoritative —
+                        // it replaces the accumulating slot's content (the
+                        // deltas were its prefix) and marks it sealed; a seal
+                        // with no accumulator opens a sealed slot of its own
+                        // (the non-streaming provider shape). An EMPTY seal
+                        // never wipes an accumulator (belt and suspenders —
+                        // the deltas are the only witness of that text).
+                        if strings.TrimSpace(ev.Content) == "" {
+                                continue
+                        }
+                        if n := len(slots); n > 0 && isAccumulating(slots[n-1]) {
+                                slots[n-1].msgs[0].Content = ev.Content
+                                slots[n-1].msgs[0].FoldedDone = true
                         } else {
                                 slots = append(slots, historySlot{msgs: []llm.Message{{Role: "assistant", Content: ev.Content, FoldedDone: true}}})
+                        }
+                case "assistant_delta":
+                        // v1.50.4: deltas ACCUMULATE into the previous
+                        // assistant slot; the old FoldedDone mis-seal made
+                        // every delta after the first its OWN message — the
+                        // self-repetition disease.
+                        if n := len(slots); n > 0 && isAccumulating(slots[n-1]) {
+                                slots[n-1].msgs[0].Content += ev.Content
+                        } else {
+                                slots = append(slots, historySlot{msgs: []llm.Message{{Role: "assistant", Content: ev.Content}}})
                         }
                 case "tool_use":
                         var p struct {
@@ -132,40 +161,20 @@ func foldSlots(events []*store.Event, hidden map[int64]bool) []historySlot {
                                 continue
                         }
                         text := strings.TrimPrefix(p.Text, "OBSERVATION:\n")
+                        // v1.50.2: the WHOLE result rides — Redact stays (the
+                        // pasted-PAT hazard law is security, not truncation),
+                        // the byte clamp and the stub law are dead.
                         slots = append(slots, historySlot{isTool: true, msgs: []llm.Message{
                                 {Role: "assistant", ToolCalls: json.RawMessage(calls)},
-                                {Role: "tool", ToolCallID: id, Name: u.name, Content: llm.ClampMarked(Redact(text), toolFoldBytes)},
+                                {Role: "tool", ToolCallID: id, Name: u.name, Content: Redact(text)},
                         }})
                 }
         }
 
-        // THE STUB LAW: the newest toolFoldKeep pairs ride whole; older
-        // pairs collapse to one assistant line — the model sees that it
-        // acted without paying the bytes (and the compaction summary owns
-        // the deep past anyway).
-        total := 0
-        for i := range slots {
-                if slots[i].isTool {
-                        total++
-                }
-        }
-        seen := 0
-        for i := range slots {
-                if !slots[i].isTool {
-                        continue
-                }
-                seen++
-                if total-seen >= toolFoldKeep {
-                        name := ""
-                        for _, m := range slots[i].msgs {
-                                if m.Role == "tool" && m.Name != "" {
-                                        name = m.Name
-                                }
-                        }
-                        slots[i] = historySlot{msgs: []llm.Message{{Role: "assistant",
-                                Content: fmt.Sprintf("[ran %s — output omitted (older tool call)]", name)}}}
-                }
-        }
+        // v1.50.2: THE STUB LAW IS DEAD — no "[ran X — output omitted]"
+        // collapsing. Every tool pair rides whole; the auto-compactor owns
+        // the deep past when the context actually nears its limit (the
+        // threshold-driven policy — not a fixed amputation).
         return slots
 }
 

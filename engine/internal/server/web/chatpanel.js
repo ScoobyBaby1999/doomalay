@@ -50,8 +50,14 @@
 //   follow-ups typed mid-reply park on state.queue as compact pills
 //   above the composer and auto-send ONE per successful turn end (a
 //   user STOP or a failure parks them — tap a pill to fire early).
-//   RETRY: resends the last user text with the failed turn's engine
-//   events masked (the regenerate machinery). Enter follows the live
+//   CONTINUE (v1.50.5, the user's law: "No more retry whatsoever — only
+//   continue, exactly where it left off"): the old RETRY (re-send the
+//   user text as a brand-new turn — a second [user M] in the log, the
+//   repeat machine) is DEAD. The continue mode arms on a trailing error
+//   bubble OR a cut reply (finish_reason 'length' / output_cut) and sends
+//   ONE {type:'continue'} frame; the ENGINE owns the resume (no user
+//   event re-persisted, trailing errors masked engine-side, the seam
+//   nudge when the reply was cut mid-stream). Enter follows the live
 //   mode: queue while streaming, send otherwise; Shift+Enter stays a
 //   newline. v0.42 ALSO (spec #5): the in-chat search pill is GONE from
 //   the header dropdown (find — local + global, with the new Aa / Exact
@@ -732,14 +738,14 @@
     send: smSVG('<path d="M12 19V5"/><path d="M5 12l7-7 7 7"/>'),
     stop: smSVG('<rect x="6" y="6" width="12" height="12" rx="2"/>'),
     queue: smSVG('<path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/><path d="M7 6h10"/><path d="M7 12h10"/><path d="M17 18h4"/><path d="M19 16v4"/>'),
-    retry: smSVG('<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>'),
+    continue: smSVG('<path d="M5 4l10 8-10 8V4z"/><path d="M19 5v14"/>'), // v1.50.5: the play-to-the-bar — continue to the end
     chev: smSVG('<path d="m6 9 6 6 6-6"/>', 14)
   };
   var SEND_MODES = {
     send:  { label: 'send',  aria: 'Send the message',      desc: 'Send now' },
     queue: { label: 'queue', aria: 'Queue until the reply finishes', desc: 'Queue until the reply finishes' },
     stop:  { label: 'stop',  aria: 'Stop the running turn', desc: 'Stop the running turn' },
-    retry: { label: 'retry', aria: 'Retry the last message', desc: 'Retry the last message' }
+    continue: { label: 'continue', aria: 'Continue the reply from where it stopped', desc: 'Continue exactly where it left off' }
   };
 
   // lastTurnFailed: the last non-deleted message is an error bubble
@@ -757,27 +763,44 @@
     return null;
   }
 
+  // v1.50.5: the CUT tail — the last reply ended mid-flight (the provider's
+  // finish_reason was 'length' / output_cut; stamped on the last assistant
+  // message by the terminal-status handler). Continue is the way forward.
+  function lastTurnCut(state) {
+    if (!state || !state.messages || !state.messages.length) return false;
+    var last = state.messages[state.messages.length - 1];
+    return last.role === 'assistant' && !!last._cut;
+  }
+
   // The AUTO mode ladder (user spec #4):
   //   empty  + idle          → send   (ghost — nothing to send yet)
   //   empty  + streaming     → stop
   //   text   + streaming     → queue
-  //   empty  + idle + failed → retry
+  //   empty  + idle + failed/cut → continue
   function autoSendMode(state) {
     var hasText = !!(state.draftText && state.draftText.trim());
     if (state.isStreaming) return hasText ? 'queue' : 'stop';
-    if (!hasText && lastTurnFailed(state)) return 'retry';
+    if (!hasText && (lastTurnFailed(state) || lastTurnCut(state))) return 'continue';
     return 'send';
   }
   function sendModePossible(state, mode) {
     if (mode === 'queue' || mode === 'stop') return !!state.isStreaming;
-    if (mode === 'retry') return !state.isStreaming && lastTurnFailed(state) && !!lastUserText(state);
+    if (mode === 'continue') {
+      if (state.isStreaming || lastUserText(state) == null) return false;
+      // armed automatically on a failed/cut turn; possible by hand whenever
+      // the transcript's tail is a reply (the stopped-mid-stream case has
+      // no error bubble and no cut verdict — the menu is its way in).
+      if (lastTurnFailed(state) || lastTurnCut(state)) return true;
+      var last = state.messages[state.messages.length - 1];
+      return !!last && last.role === 'assistant';
+    }
     return true; // 'send' is always possible (it just does nothing with no text)
   }
   function sendModeActionable(state, mode) {
     var hasText = !!(state.draftText && state.draftText.trim());
     if (mode === 'stop') return !!state.isStreaming;
     if (mode === 'queue') return !!state.isStreaming && hasText;
-    if (mode === 'retry') return sendModePossible(state, 'retry');
+    if (mode === 'continue') return sendModePossible(state, 'continue');
     return hasText;
   }
 
@@ -916,12 +939,12 @@
         btn.classList.toggle('sm-on', on);
         btn.classList.toggle('sm-ghost', !on);
         btn.classList.toggle('sm-t-warn', on && mode === 'stop');
-        btn.classList.toggle('sm-t-ok', on && mode === 'retry');
+        btn.classList.toggle('sm-t-ok', on && mode === 'continue'); // v1.50.5: the ok tint rides the continue mode
         var cluster = live.querySelector('#send-cluster');
         if (cluster) {
           cluster.classList.toggle('sm-cluster-on', on && (mode === 'send' || mode === 'queue'));
           cluster.classList.toggle('sm-cluster-warn', on && mode === 'stop');
-          cluster.classList.toggle('sm-cluster-ok', on && mode === 'retry');
+          cluster.classList.toggle('sm-cluster-ok', on && mode === 'continue');
         }
       }
       // v0.94.2: the busy clear is CONTAINS-GUARDED — an unconditional
@@ -1053,34 +1076,34 @@
     }, 100);
   }
 
-  // ── v0.42 RETRY: re-send the last user message as a new turn ───────
-  // The failed turn's engine events are masked first (the same
-  // edit/regenerate machinery — emitHideEvents) so the retry doesn't see
-  // the broken turn as live context, then doSend replays it as the
-  // newest turn. No last user message → the button is disabled.
-  function doRetrySend(bodyEl, icon, state, panel) {
+  // ── v1.50.5 THE CONTINUE: resume exactly where the turn left off ──
+  // The retry era (pop the tail + hide + re-send the user text as a NEW
+  // turn — a second [user M] in the log, the repeat machine) is OVER.
+  // The client now sends ONE {type:'continue'} frame and the ENGINE owns
+  // the rest: no user event is ever re-persisted, the trailing error rows
+  // are masked engine-side (one persisted hide — the live hide handler
+  // drops the bubbles), and the reply continues from the cut (the seam
+  // nudge) or the question is simply answered (the died-before-content
+  // shape). Nothing is popped client-side; nothing is hidden client-side.
+  function doContinueSend(bodyEl, icon, state, panel) {
     if (!state || state.isStreaming) return;
-    var lastUser = null, lu = -1;
-    for (var i = state.messages.length - 1; i >= 0; i--) {
-      if (state.messages[i].role === 'user') { lastUser = state.messages[i]; lu = i; break; }
-    }
-    if (!lastUser || !lastUser.text || lu < 0) return; // retry disabled
+    if (lastUserText(state) == null) return; // nothing to continue from
     if (state._editStash) { // same contract as doSend's edit path
       hideEditBanner(bodyEl, state, icon, panel, false);
       commitEditStash(state);
     }
-    var ids = [];
-    while (state.messages.length && state.messages[state.messages.length - 1].role !== 'user') {
-      var popped = state.messages.pop();
-      if (popped.ei) ids.push(popped.ei);
+    if (!(state.client && state.client.continueTurn && state.client.continueTurn())) {
+      // socket down and the reconnect was kicked — say so (the honest
+      // string names the same button the user just tapped).
+      if (window.Artifacts && window.Artifacts.toast) {
+        window.Artifacts.toast('reconnecting to the engine — tap continue again in a moment');
+      }
+      return;
     }
-    var poppedUser = state.messages.pop();
-    if (poppedUser && poppedUser.ei) ids.push(poppedUser.ei);
-    emitHideEvents(state, ids);
-    var live = (isOwner(state) && currentCtx && currentCtx.bodyEl) ? currentCtx.bodyEl : bodyEl;
-    var mc = live && live.querySelector('#chat-messages');
-    if (mc) rebuildTranscript(mc, state);
-    doSend(lastUser.text, live, icon, state, panel);
+    state.isStreaming = true; // the continuation is a live turn
+    state._holdQueue = false; // a deliberate continue un-parks the queue
+    setSendBusy(bodyEl, true);
+    syncSendButton(bodyEl, state);
   }
 
   // ── v0.42 THE MODE DROPDOWN (the chevron mini-button) ──────────────
@@ -1119,7 +1142,7 @@
 
     var eff = SendMode.mode(state);
     var auto = autoSendMode(state);
-    ['send', 'queue', 'stop', 'retry'].forEach(function (m) {
+    ['send', 'queue', 'stop', 'continue'].forEach(function (m) { // v1.50.5: retry is dead law
       var M = SEND_MODES[m];
       var row = document.createElement('button');
       row.type = 'button';
@@ -1545,11 +1568,18 @@
         }
         rebuildTranscript(bodyEl2.querySelector('#chat-messages'), state);
         if (window.Artifacts && window.Artifacts.toast) {
-          window.Artifacts.toast('switched to ' + (chip.textContent || '').replace(/^⇄/, '').trim() + (lastUser ? ' — retrying' : ''));
+          window.Artifacts.toast('switched to ' + (chip.textContent || '').replace(/^⇄/, '').trim() + (lastUser ? ' — continuing' : ''));
         }
+        // v1.50.5: the recovery rides the CONTINUE frame — the engine owns
+        // it (no re-persisted user message; the trailing error rows are
+        // masked engine-side; the new model answers the question). The old
+        // doSend re-send was the retry shape (a second [user M] in the log
+        // — the repeat machine).
         if (lastUser) {
           setTimeout(function () {
-            if (!state.isStreaming) doSend(lastUser.text, bodyEl2, icon, state, panel2);
+            if (!state.isStreaming && state.client && state.client.continueTurn) {
+              state.client.continueTurn();
+            }
           }, 400);
         }
       });
@@ -1768,7 +1798,7 @@
         return;
       }
       if (mode === 'queue' && state.isStreaming) { enqueueDraft(bodyEl, state, icon, panel); return; }
-      if (mode === 'retry') { doRetrySend(bodyEl, icon, state, panel); return; }
+      if (mode === 'continue') { doContinueSend(bodyEl, icon, state, panel); return; }
       send(); // 'send' (guards empty text + streaming itself)
     }
 
@@ -4711,13 +4741,13 @@
         if (ev.state === 'error' && wasStreaming) {
           var she = {
             role: 'error',
-            text: ev.message || 'the reply was interrupted — tap Retry',
+            text: ev.message || 'the reply was interrupted — tap Continue',
             ts: evTsMs(ev)
           };
           if (ev.i) she.ei = ev.i;
           state.messages.push(she);
           appendMessage(msgContainer, scrollEl, she, bodyEl, state._icon, state);
-          state._holdQueue = true; // an interrupted turn parks the queue — Retry is the way forward
+          state._holdQueue = true; // an interrupted turn parks the queue — Continue is the way forward
         }
         // v0.44 (CAUSE #2): the turn is over — no engine echoes are
         // coming for its optimistic bubbles; drop the pending-send
@@ -4734,6 +4764,20 @@
         // included (the old loop only handled the last message, leaving
         // earlier thinking dots + cursors blinking forever after the turn).
         completeAllStreaming(bodyEl, state);
+        // v1.50.5 THE CONTINUE: the provider's terminal verdict rides the
+        // status usage — finish_reason 'length' / output_cut = the reply
+        // was CUT mid-flight. Stamp the last assistant message so the
+        // continue mode arms (live AND replayed: a reloaded cut turn still
+        // offers the continuation).
+        var cutUsage = ev.usage || null;
+        if (cutUsage && (cutUsage.finish_reason === 'length' || cutUsage.output_cut)) {
+          for (var ci = state.messages.length - 1; ci >= 0; ci--) {
+            if (state.messages[ci].role === 'assistant') {
+              state.messages[ci]._cut = true;
+              break;
+            }
+          }
+        }
         // v0.17 belt-and-suspenders: status idle IS a completion signal —
         // finalize artifacts for every message the trailing 'assistant'
         // event may have missed.
@@ -4838,7 +4882,7 @@
       }
       state.messages.push(emsg);
       appendMessage(msgContainer, scrollEl, emsg, bodyEl, state._icon, state);
-      state._holdQueue = true; // v0.42: the failed turn parks the queue — Retry is the way forward
+      state._holdQueue = true; // v0.42: the failed turn parks the queue — Continue is the way forward
       // v0.42: the error bubble is the LAST turn → the mode machine reads
       // RETRY (was: a hard reset to "Send" that threw the affordance away).
       syncSendButton(bodyEl, state);
@@ -6707,7 +6751,7 @@
         } else if (tries > 100) {
           clearInterval(check);
           setSendBusy(bodyEl, false);
-          var err = 'Still connecting to the engine — tap Retry in a moment.' +
+          var err = 'Still connecting to the engine — tap Continue in a moment.' +
             (state.client && state.client.lastError ? ' (' + state.client.lastError + ')' : '');
           var connErr = { role: 'error', text: err };
           state.messages.push(connErr);

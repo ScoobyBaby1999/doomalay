@@ -92,7 +92,7 @@ func TestV1300_UnbrickedTurn_EmitterArmedTurnReturns(t *testing.T) {
         terminal := false
         done := make(chan struct{})
         go func() {
-                s.streamFromDirectProxy(context.Background(), nil, "unbrick", sess, "run it", "", "", "", &terminal)
+                s.streamFromDirectProxy(context.Background(), nil, "unbrick", sess, "run it", "", "", "", &terminal, nil) // v1.50.5: the continueSpec param
                 close(done)
         }()
         select {
