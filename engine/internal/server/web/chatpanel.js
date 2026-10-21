@@ -5681,6 +5681,33 @@
             if (act === 'read' || act === 'put' || act === 'tree' || act === 'ls') {
               title = act; var w1 = xOf(ga.path); if (w1) body = w1;
             } else if (act === 'readme') { title = 'readme'; var w2 = xOf(ga.ws); if (w2) body = w2; }
+            // v1.48.4 THE INFORMATIVE PILL: the rest of the family speaks
+            // its verb + operand — the user's ask: "instead of showing a
+            // static workspace title followed by a simple formatted
+            // description of the file being read or whatever for the
+            // workspace tool calls, we replace the workspace static text
+            // with a dynamic text of the action being used (grep, view,
+            // ext..) and include the 'what' parameter aswell in the
+            // collapsed pill description." The operand is the action's own
+            // "what" (workspacetool.go's verb/param table: grep→query,
+            // view→what, read→path, pr_*→number/title, create→name/kind);
+            // a missing operand keeps the fallback body (the summary —
+            // never a blank pill).
+            else if (act === 'grep') { title = 'grep'; if (ga.query) body = String(ga.query).slice(0, 40); }
+            else if (act === 'view') { title = 'view'; if (ga.what) body = String(ga.what).slice(0, 40); }
+            else if (act === 'list' || act === 'info' || act === 'fork') { title = act; var w3 = xOf(ga.ws); if (w3) body = w3; }
+            else if (act === 'create' || act === 'discover') { title = act; var w4 = xOf(ga.name || ga.kind); if (w4) body = String(w4).slice(0, 40); }
+            else if (act === 'pr') { title = 'pr'; var w5 = xOf(ga.title || ga.head); if (w5) body = String(w5).slice(0, 40); }
+            else if (act === 'branch') { title = 'branch'; var w6 = xOf(ga.name); if (w6) body = String(w6).slice(0, 40); }
+            else if (act === 'issue_create' || act === 'discussion_post') { title = act; var w7 = xOf(ga.title); if (w7) body = String(w7).slice(0, 40); }
+            else if (act === 'release_create') { title = 'release'; var w8 = xOf(ga.tag); if (w8) body = String(w8).slice(0, 40); }
+            else if (act === 'workflow_dispatch') { title = 'workflow'; var w9 = xOf(ga.workflow); if (w9) body = String(w9).slice(0, 40); }
+            else if (act === 'pr_diff' || act === 'pr_merge' || act === 'issue_close' || act === 'issue_open' ||
+                     act === 'pr_review' || act === 'pr_comment' || act === 'issue_comment') {
+              title = act; if (ga.number) { body = '#' + ga.number; } else if (ga.body) { body = String(ga.body).slice(0, 40); }
+            }
+            else if (act === 'file_delete') { title = 'delete'; var wA = xOf(ga.path); if (wA) body = wA; }
+            else if (act) { title = String(act).slice(0, 12); var wB = xOf(ga.path || ga.ws || ga.query || ga.what); if (wB) body = String(wB).slice(0, 40); }
           }
         }
       }
