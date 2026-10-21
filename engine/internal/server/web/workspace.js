@@ -115,6 +115,22 @@
       // v0.62: the simple empty state (user spec: "nothing here yet…")
       '.wsx-empty{padding:26px 16px;text-align:center;color:var(--text-3);' +
         'font-size:var(--ui-small-fs);font-weight:500}' +
+      // v1.52.8 THE FIRST SPARK: no workspaces connected yet — the pinned
+      // ＋ connect pill breathes in the THEME accent (the one tap that gets
+      // the user their first workspace). Tokens only: the halo rides
+      // --accent-rgb (never a hardcoded color — edit A6); the
+      // [data-a1-grad] gradient rule owns background-image/color only, so
+      // the halo coexists on gradient themes. Reduced-motion users get the
+      // static glow, never the pulse.
+      '.wsx-conn-glow{border-color:rgba(var(--accent-rgb),0.85);' +
+        'animation:wsx-conn-pulse 1.8s ease-in-out infinite}' +
+      '.wsx-conn-glow .wsx-conn-plus,.wsx-conn-glow .wsx-conn-label{' +
+        'text-shadow:0 0 9px rgba(var(--accent-rgb),0.5)}' +
+      '@keyframes wsx-conn-pulse{' +
+        '0%,100%{box-shadow:inset 0 0 12px rgba(var(--accent-rgb),0.05),0 0 2px rgba(var(--accent-rgb),0.12)}' +
+        '50%{box-shadow:inset 0 0 12px rgba(var(--accent-rgb),0.05),0 0 18px rgba(var(--accent-rgb),0.5)}}' +
+      '@media (prefers-reduced-motion: reduce){.wsx-conn-glow{animation:none;' +
+        'box-shadow:inset 0 0 12px rgba(var(--accent-rgb),0.05),0 0 14px rgba(var(--accent-rgb),0.45)}}' +
       // ── v0.62: THE PROVIDER PICKER (user item 6) ───────────────────────
       // The picker root scopes the provider THEME SYNC: data-prov overrides
       // the accent-2 vars inside the overlay so EVERY wsx surface (sign-in
@@ -967,6 +983,13 @@
     });
   }
 
+  // v1.52.8 THE FIRST SPARK — the connect pill's glow toggle (the empty
+  // picker breathes in the theme accent; the first workspace disarms it).
+  function setConnGlow(on) {
+    var conn = document.getElementById('wsx-connect');
+    if (conn) conn.classList.toggle('wsx-conn-glow', !!on);
+  }
+
   function loadGlobals() {
     var listEl = document.getElementById('wsx-list');
     var cntEl = document.getElementById('wsx-count');
@@ -984,6 +1007,10 @@
       var boundIds = {};
       (res[1].workspaces || []).forEach(function (w) { boundIds[w.id] = true; });
       if (cntEl) cntEl.textContent = String(Object.keys(boundIds).length);
+      // v1.52.8 THE FIRST SPARK: empty list = the ＋ connect pill glows in
+      // the theme accent; the first workspace (the same re-render the
+      // plus-bind chain and every picker reopen ride) disarms it.
+      setConnGlow(!rows.length);
       if (!rows.length) {
         // v0.62 (user spec): a simple "nothing here yet…" — not a body of text.
         listEl.innerHTML =
@@ -995,6 +1022,8 @@
       listEl.innerHTML = html;
       wireBoundRows(listEl, rows);
     }).catch(function (e) {
+      // v1.52.8: an error is not a verified empty — the glow never lies.
+      setConnGlow(false);
       listEl.innerHTML = '<div class="wsx-err">' + esc(e.message) + '</div>';
     });
   }
