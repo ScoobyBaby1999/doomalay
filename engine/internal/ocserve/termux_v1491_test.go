@@ -161,16 +161,23 @@ func TestV1491CommandShapes(t *testing.T) {
                 t.Fatalf("install check:\n got %q\nwant %q", got, want)
         }
         url, _ := androidArtifact()
-        // v1.55.1 THE CHECKPOINT LAW pin: `-C -` (resume from the partial
-        // zip's byte offset — a retry never restarts from zero), the
-        // stronger retry ladder, and the live dl.bytes sidecar the stat
-        // loop feeds (the provider pill's ping).
+        // v1.55.5 THE TRUE CHECKPOINT LAW pin: the v1550 rig convicted
+        // curl's own --retry (a mid-body drop restarts the WHOLE transfer
+        // from byte zero — the -C - offset is computed once per invocation
+        // and curl truncates the partial when its retry begins). The retry
+        // ladder now lives in the SHELL: every attempt is a FRESH
+        // `curl -C -` that re-stats the partial zip and asks
+        // `Range: bytes=N-` — the resume holds at EVERY level (within an
+        // install AND across install retries).
         dl := tmCmdDownload(url)
         if !strings.Contains(dl, "-C -") {
                 t.Fatalf("download must be resumable (-C -): %q", dl)
         }
-        if !strings.Contains(dl, "--retry 5 --retry-all-errors") {
-                t.Fatalf("download retry ladder: %q", dl)
+        if strings.Contains(dl, "--retry") {
+                t.Fatalf("curl's own --retry must be GONE (the mid-body drop truncates the partial — the shell ladder replaces it): %q", dl)
+        }
+        if !strings.Contains(dl, `while [ "$n" -lt 5 ]`) || !strings.Contains(dl, `n=$((n+1))`) {
+                t.Fatalf("download shell retry ladder: %q", dl)
         }
         if !strings.Contains(dl, "stat -c %s $HOME/.doomalay/cache/opencode-android.zip > $HOME/.doomalay/cache/dl.bytes") {
                 t.Fatalf("download byte sidecar: %q", dl)

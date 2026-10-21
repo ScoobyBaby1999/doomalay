@@ -164,17 +164,27 @@ func tmCmdDeps() string {
                 `command -v rg >/dev/null 2>&1 || pkg install -y ripgrep >/dev/null 2>&1; true`
 }
 
-// tmCmdDownload — v1.55.1 THE CHECKPOINT LAW: `-C -` makes the PARTIAL ZIP
-// the checkpoint (a retry resumes from its byte offset — progress is never
-// lost), `--retry 5 --retry-all-errors` rides through transient mobile
-// drops, and the stat loop keeps dl.bytes live for the engine's progress
-// poll (the provider pill's ping). The ok/fail marker rides dl.status out
-// of the backgrounded curl (the command's own exit is the stat loop's,
-// not curl's — the marker is the truth the Ensure ladder reads).
+// tmCmdDownload — v1.55.5 THE TRUE CHECKPOINT LAW. The v1550 rig convicted
+// curl's own --retry: on a MID-BODY drop curl's retry loop RESTARTS THE
+// WHOLE TRANSFER FROM BYTE ZERO (the -C - offset is computed once, at
+// invocation — every retry re-sends the original offset and curl truncates
+// the partial when it begins again), so the checkpoint only ever held
+// across SEPARATE invocations. The fix: the retry ladder lives in the
+// SHELL — every attempt is a FRESH `curl -C -` that re-stats the partial
+// zip and asks `Range: bytes=N-` (the byte-level proof the rig pins), so a
+// drop at any point resumes at the exact byte offset. `--connect-timeout
+// 20` per attempt; 5 attempts, 2s apart; the ok/fail marker rides
+// dl.status out of the backgrounded loop (the command's own exit is the
+// stat loop's, not curl's — the marker is the truth the Ensure ladder
+// reads) and the stat loop keeps dl.bytes live for the engine's progress
+// poll (the provider pill's ping).
 func tmCmdDownload(url string) string {
         return "rm -f " + tmDlStatus + "; " +
-                "( curl -fL -C - --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 20 -o " + tmZipPath + " '" + url + "' " +
-                "&& echo __dm_dl_ok__ > " + tmDlStatus + " || echo __dm_dl_fail__ > " + tmDlStatus + " ) & " +
+                "( n=0; while [ \"$n\" -lt 5 ]; do " +
+                "curl -fL -C - --connect-timeout 20 -o " + tmZipPath + " '" + url + "' " +
+                "&& { echo __dm_dl_ok__ > " + tmDlStatus + "; break; }; " +
+                "n=$((n+1)); [ \"$n\" -lt 5 ] && sleep 2; done; " +
+                "[ -f " + tmDlStatus + " ] || echo __dm_dl_fail__ > " + tmDlStatus + " ) & " +
                 "__C=$!; while kill -0 $__C 2>/dev/null; do stat -c %s " + tmZipPath + " > " + tmDlBytes + " 2>/dev/null; sleep 2; done; " +
                 "cat " + tmDlStatus
 }

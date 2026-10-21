@@ -46,24 +46,24 @@ func (s *Server) ocServeDataDir() string {
 // download, spawn, boot) runs under ocServeStartMu, so the only goroutines
 // that ever wait on an install are the ones that genuinely need the bridge
 // (a turn mid-self-heal, the installer itself) — never the API surface.
-func (s *Server) ocServeManager(ctx context.Context) *ocserve.Manager {
+func (s *Server) ocServeManagerErr(ctx context.Context) (*ocserve.Manager, error) {
         // fast path: a healthy manager is answered without the start lock
         s.ocServeMu.Lock()
         m := s.ocServe
         s.ocServeMu.Unlock()
         if m != nil && m.Healthy() {
-                return m
+                return m, nil
         }
         dir := s.ocServeDataDir()
         if dir == "" {
-                return nil
+                return nil, nil
         }
         if s.vault == nil {
-                return nil
+                return nil, nil
         }
         key := s.vault.AsEnv()["OPENCODE_ZEN_API_KEY"]
         if strings.TrimSpace(key) == "" {
-                return nil
+                return nil, nil
         }
         // the slow path — serialized (the start mutex; NOT ocServeMu)
         s.ocServeStartMu.Lock()
@@ -98,9 +98,24 @@ func (s *Server) ocServeManager(ctx context.Context) *ocserve.Manager {
                 s.ocServeMu.Unlock()
         }
         if m.Healthy() {
-                return m
+                return m, nil
         }
         if err := m.Start(ctx); err != nil {
+                // v1.55.5: the REAL failure surfaces (the install route's
+                // honest last_error names the download/spawn truth — the
+                // v1550 rig convicted the old nil-swallow that answered
+                // 'no data dir or key' for a dead download).
+                return nil, err
+        }
+        return m, nil
+}
+
+// ocServeManager is the turn path's wrapper: the healthy manager or nil
+// (the real failure goes to the engine log — the turn path has its own
+// honest copy for every nil reason).
+func (s *Server) ocServeManager(ctx context.Context) *ocserve.Manager {
+        m, err := s.ocServeManagerErr(ctx)
+        if err != nil {
                 log.Printf("ocserve: bridge unavailable: %v", err)
                 return nil
         }

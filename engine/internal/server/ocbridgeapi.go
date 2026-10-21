@@ -231,7 +231,16 @@ func (s *Server) handleOcBridgeInstall(w http.ResponseWriter, r *http.Request) {
                 // download + unzip + boot fits honestly inside it
                 ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
                 defer cancel()
-                m := s.ocServeManager(ctx)
+                m, err := s.ocServeManagerErr(ctx)
+                if err != nil {
+                        // v1.55.5 THE HONEST FAILURE: the install route answers
+                        // the REAL reason (the download/spawn truth — the rig
+                        // convicted the old nil-swallow answering 'no data dir
+                        // or key' for a dead download).
+                        s.ocBridgeSetError(err.Error())
+                        log.Printf("ocserve: install failed: %v", err)
+                        return
+                }
                 if m == nil {
                         s.ocBridgeSetError("the bridge could not start (no data dir or key) — see the engine log")
                         log.Printf("ocserve: install: manager unavailable")
