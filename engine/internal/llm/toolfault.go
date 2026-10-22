@@ -11,6 +11,7 @@
 //
 //	[truncated: first N of M bytes shown]      the observation clamp
 //	[termux: output truncated at 100KB …]        Termux's result cap
+//	[termux: output truncated at the engine's 8MB buffer …]  the engine's own stream memory
 //	… (truncated, N chars)                       the brain-side cuts
 //	[tool_result truncated]                      the MCP layer's cut
 //	REFUSED —                                    a refusal (the blocklist/jail)
@@ -40,7 +41,8 @@ type faultMarker struct {
 var faultMarkers = []faultMarker{
 	{"[truncated:", "the observation was truncated"},
 	{"[tool_result truncated]", "the tool result was truncated"},
-	{"[termux: output truncated", "the device output hit Termux's 100KB cap"},
+	{"[termux: output truncated at 100KB", "the device output hit Termux's 100KB result cap"},
+	{"[termux: output truncated at the engine's 8MB buffer", "the device output hit the engine's 8MB stream buffer"},
 	{"… (truncated", "the tool output was truncated"},
 	{"(truncated,", "the tool output was truncated"},
 	{"truncated —", "the tool output was truncated"},

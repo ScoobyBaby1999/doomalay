@@ -18,9 +18,11 @@ package server
 // laundering dies on both sides).
 //
 // LAWS (the wave's, non-negotiable):
-//   - WHOLE TRUTH: no local output caps anywhere; Termux's own 100KB
-//     result Bundle is the only physics, and it is reported honestly
-//     ("[termux: output truncated at 100KB by Termux's result cap]").
+//   - WHOLE TRUTH: no local output caps anywhere. v1.56.1: EVERY verb
+//     (exec, pkg, ls, read, grep, find) rides the loopback stream, so
+//     Termux's own 100KB result Bundle never truncates a result; the
+//     only ceiling is the engine's own 8MB stream buffer (reported with
+//     the TRUE total when it fires).
 //   - ZERO shell interpolation of model/user strings: every path,
 //     pattern, name, package, command and file content rides a
 //     POSITIONAL ARG (single-quoted on the command line — see
@@ -217,21 +219,21 @@ func (s *Server) runTermuxAction(ctx context.Context, sessionID, argJSON string)
         case "cmds":
                 return s.termuxVerbCmds(ctx)
         case "ls":
-                return s.termuxVerbLs(ctx, get, roots)
+                return s.termuxVerbLs(ctx, sessionID, get, roots)
         case "read":
-                return s.termuxVerbRead(ctx, get, roots)
+                return s.termuxVerbRead(ctx, sessionID, get, roots)
         case "write", "append":
                 return s.termuxVerbWrite(ctx, action, get, roots)
         case "patch":
                 return s.termuxVerbPatch(ctx, get, args, roots)
         case "rm":
-                return s.termuxVerbRm(ctx, get, roots)
+                return s.termuxVerbRm(ctx, sessionID, get, roots)
         case "mkdir":
-                return s.termuxVerbMkdir(ctx, get, roots)
+                return s.termuxVerbMkdir(ctx, sessionID, get, roots)
         case "grep":
-                return s.termuxVerbGrep(ctx, get, args, roots)
+                return s.termuxVerbGrep(ctx, sessionID, get, args, roots)
         case "find":
-                return s.termuxVerbFind(ctx, get, roots)
+                return s.termuxVerbFind(ctx, sessionID, get, roots)
         case "pkg":
                 return s.termuxVerbPkg(ctx, sessionID, get, args)
         case "git_setup":
@@ -425,6 +427,73 @@ func (s *Server) termuxRunScript(ctx context.Context, script string, vargs []str
                 return oc, termuxFailObs(res)
         }
         return oc, ""
+}
+
+// termuxRunScriptStream — v1.56.1 THE UNBOUNDED DEVICE OUTPUT: the
+// jailed file verbs (ls/read/write/rm/mkdir/grep/find) now ride the
+// STREAMING wrapper instead of Termux's 100KB result Bundle. The
+// script's stdout rides the loopback HTTP (the Bundle never sees it),
+// so a 500KB listing or a 2MB grep result arrives WHOLE; the Bundle
+// physics only applies to the old path, which stays as the fallback.
+//
+// The SAME jail law applies (the script is the same static script —
+// the resolve-then-check-then-act prologue is unchanged); the stdout is
+// parsed exactly like the old path: line 1 = the resolved path (the
+// engine's re-check), the rest = the body.
+func (s *Server) termuxRunScriptStream(ctx context.Context, sessionID, script string, vargs []string, roots []string, workdir string, timeoutMS int) (oc termuxOutcome, obs string) {
+        parts := s.termuxStreamRun(ctx, sessionID, script, workdir, timeoutMS, vargs...)
+        if parts.errObs != "" {
+                return oc, parts.errObs
+        }
+        if parts.timedOut {
+                var sb strings.Builder
+                fmt.Fprintf(&sb, "OBSERVATION:\nTIMEOUT — the %ds exec budget ended; the command may still be running in Termux (pass timeout_ms up to 1800000, or session_start it for unbounded)", timeoutMS/1000)
+                if parts.out != "" {
+                        sb.WriteString("; partial stdout:\n" + parts.out)
+                }
+                if parts.errB != "" {
+                        sb.WriteString("\nstderr:\n" + parts.errB)
+                }
+                return oc, sb.String()
+        }
+        stdout := parts.out
+        if idx := strings.IndexByte(stdout, '\n'); idx >= 0 {
+                oc.resolved, oc.body = stdout[:idx], stdout[idx+1:]
+        } else {
+                oc.resolved = stdout
+        }
+        // the exit code: 42 = the jail refused (never executed).
+        if parts.ec == 42 {
+                return oc, termuxJailRefused(firstLineOf(oc.resolved), oc.resolved, roots)
+        }
+        if oc.resolved != "" && !termuxJailOK(oc.resolved, roots) {
+                return oc, termuxJailRefused(firstLineOf(oc.resolved), oc.resolved, roots)
+        }
+        if parts.ec != 0 {
+                return oc, termuxFailObsText(parts.ec, parts.errB, parts.out)
+        }
+        // the streamed path is NOT bundle-bound (the output rode the
+        // loopback HTTP) — oc.res stays nil so the honest marker does
+        // not fire on a 500KB listing. The FALLBACK path (no chunks
+        // landed) IS the bundle physics: the marker must say so.
+        if !parts.gotChunks {
+                oc.res = &termuxbridge.RunResult{Stdout: stdout, Stderr: parts.errB, ExitCode: parts.ec}
+        }
+        return oc, ""
+}
+
+// termuxFailObsText — the honest failure for the streamed path (the
+// full stderr + the stdout, the true exit code).
+func termuxFailObsText(exitCode int, stderr, stdout string) string {
+        var sb strings.Builder
+        fmt.Fprintf(&sb, "OBSERVATION:\nerror: %s (exit %d)", firstLineOf(stderr), exitCode)
+        if stderr != "" {
+                sb.WriteString("\nstderr:\n" + stderr)
+        }
+        if stdout != "" {
+                sb.WriteString("\nstdout:\n" + stdout)
+        }
+        return sb.String()
 }
 
 // termuxRunOne is the single bridge choke point every verb shares: nil
@@ -683,7 +752,7 @@ func (s *Server) termuxPathArgs(get func(string) string, roots []string, need st
 // termuxVerbLs — {path?}: the jailed listing (dirs first, sizes,
 // mtimes, hidden included), emitted by the script, formatted by the
 // engine. FULL output — the only cap is Termux's own.
-func (s *Server) termuxVerbLs(ctx context.Context, get func(string) string, roots []string) string {
+func (s *Server) termuxVerbLs(ctx context.Context, sessionID string, get func(string) string, roots []string) string {
         joined, obs := s.termuxPathArgs(get, roots, "")
         if obs != "" {
                 return obs
@@ -691,7 +760,7 @@ func (s *Server) termuxVerbLs(ctx context.Context, get func(string) string, root
         script := termuxJailScript(nil, `if [ ! -d "$r" ]; then echo "not a directory: $r" >&2; exit 1; fi
 find "$r" -maxdepth 1 -mindepth 1 -printf '%y|%f|%s|%TY-%Tm-%Td %TH:%TM\n' | sort -t'|' -k1,1 -k2,2
 `)
-        oc, obs := s.termuxRunScript(ctx, script, append([]string{joined}, roots...), roots, "", 60000)
+        oc, obs := s.termuxRunScriptStream(ctx, sessionID, script, append([]string{joined}, roots...), roots, "", 60000)
         if obs != "" {
                 return obs
         }
@@ -717,7 +786,7 @@ find "$r" -maxdepth 1 -mindepth 1 -printf '%y|%f|%s|%TY-%Tm-%Td %TH:%TM\n' | sor
 
 // termuxVerbRead — {path}: cat, binary-sniffed inside the script, FULL
 // text (no local cap — the whole-truth law).
-func (s *Server) termuxVerbRead(ctx context.Context, get func(string) string, roots []string) string {
+func (s *Server) termuxVerbRead(ctx context.Context, sessionID string, get func(string) string, roots []string) string {
         joined, obs := s.termuxPathArgs(get, roots, `read needs {"path":"the/file"} (relative to the first bound folder, or absolute inside one)`)
         if obs != "" {
                 return obs
@@ -727,7 +796,7 @@ if head -c 4096 -- "$r" | grep -qP '[\x00-\x08\x0e-\x1f]'; then echo "binary $(s
 echo "text $(stat -c%s -- "$r")"
 cat -- "$r"
 `)
-        oc, obs := s.termuxRunScript(ctx, script, append([]string{joined}, roots...), roots, "", 60000)
+        oc, obs := s.termuxRunScriptStream(ctx, sessionID, script, append([]string{joined}, roots...), roots, "", 60000)
         if obs != "" {
                 return obs
         }
@@ -881,7 +950,7 @@ func termuxArgsBool(args map[string]any, k string) bool {
 // termuxVerbRm — {path}: jailed; the bound roots themselves are
 // REFUSED (never delete the jail — a bare path resolves to the first
 // root, which is exactly the refusal).
-func (s *Server) termuxVerbRm(ctx context.Context, get func(string) string, roots []string) string {
+func (s *Server) termuxVerbRm(ctx context.Context, sessionID string, get func(string) string, roots []string) string {
         joined, obs := s.termuxPathArgs(get, roots, "")
         if obs != "" {
                 return obs
@@ -905,7 +974,7 @@ echo "removed"
 }
 
 // termuxVerbMkdir — {path}: mkdir -p, jailed.
-func (s *Server) termuxVerbMkdir(ctx context.Context, get func(string) string, roots []string) string {
+func (s *Server) termuxVerbMkdir(ctx context.Context, sessionID string, get func(string) string, roots []string) string {
         joined, obs := s.termuxPathArgs(get, roots, `mkdir needs {"path":"the/folder"}`)
         if obs != "" {
                 return obs
@@ -925,7 +994,8 @@ echo "created"
 // v1.56.0 THE SOPHISTICATED GREP (the device twin): the old verb was a
 // plain `grep -rn` — a LITERAL pattern, no context lines, no glob
 // excludes, and its output died at Termux's own 100KB result cap with
-// no way to see the rest.
+// no way to see the rest (v1.56.1: the output now rides the loopback
+// stream — the whole hit list arrives, not the first 100KB).
 //
 // The new verb:
 //   · uses RIPGREP when it is installed (the device's own rg — a real
@@ -939,7 +1009,7 @@ echo "created"
 //
 // The pattern rides as a POSITIONAL argument (zero interpolation — the
 // shell-jail law); the flags are built from validated enums/ints.
-func (s *Server) termuxVerbGrep(ctx context.Context, get func(string) string, args map[string]any, roots []string) string {
+func (s *Server) termuxVerbGrep(ctx context.Context, sessionID string, get func(string) string, args map[string]any, roots []string) string {
         pattern := get("pattern")
         if pattern == "" {
                 return "OBSERVATION:\nerror: grep needs {\"action\":\"grep\",\"args\":{\"pattern\":\"text\",\"path\":\"…\",\"glob\":\"*.go\"}}"
@@ -1030,7 +1100,7 @@ if [ "$rc" -ne 0 ]; then echo "grep failed (exit $rc)" >&2; exit "$rc"; fi
         posArgs := []string{joined, pattern, glob, exclude, flagStr, incStr}
         posArgs = append(posArgs, roots...)
         _ = excStr
-        oc, obs := s.termuxRunScript(ctx, script, posArgs, roots, "", 60000)
+        oc, obs := s.termuxRunScriptStream(ctx, sessionID, script, posArgs, roots, "", 60000)
         if obs != "" {
                 return obs
         }
@@ -1049,7 +1119,7 @@ if [ "$rc" -ne 0 ]; then echo "grep failed (exit $rc)" >&2; exit "$rc"; fi
 
 // termuxVerbFind — {path?, name?}: find by name, FULL output (the
 // 100KB Termux cap is the only physics).
-func (s *Server) termuxVerbFind(ctx context.Context, get func(string) string, roots []string) string {
+func (s *Server) termuxVerbFind(ctx context.Context, sessionID string, get func(string) string, roots []string) string {
         joined, obs := s.termuxPathArgs(get, roots, "")
         if obs != "" {
                 return obs
@@ -1062,7 +1132,7 @@ else
   find "$r" -print
 fi
 `)
-        oc, obs := s.termuxRunScript(ctx, script, append([]string{joined, name}, roots...), roots, "", 60000)
+        oc, obs := s.termuxRunScriptStream(ctx, sessionID, script, append([]string{joined, name}, roots...), roots, "", 60000)
         if obs != "" {
                 return obs
         }
@@ -1470,7 +1540,7 @@ Actions (one JSON object of arguments per tool call):
   {"action":"session_list","args":{}}         every session: name, pid, live/dead, log size, the ps line
   {"action":"session_log","args":{"name":"web","tail":200}}    the session's full log tail
   {"action":"session_kill","args":{"name":"web"}}   SIGTERM → 3s → SIGKILL, honestly reported
-Honesty caps: output is FULL everywhere — the only cap is Termux's own 100KB result bundle, reported when it hits (the live stream bypasses it engine-side, tail + true total). exec pacing is UNBOUND by default; the user can arm an optional per-minute burst cap in ✦ tweaks → Termux. Commands that destroy files, devices or the system power state are refused (never executed).`)
+Honesty caps: output is FULL everywhere — the device output rides the loopback stream, so Termux's own 100KB result bundle does NOT apply (every verb, including the big listings and greps, arrives whole; only the engine's own 8MB stream buffer can cut it, and that is reported with the true total). exec pacing is UNBOUND by default; the user can arm an optional per-minute burst cap in ✦ tweaks → Termux. Commands that destroy files, devices or the system power state are refused (never executed).`)
         return sb.String()
 }
 

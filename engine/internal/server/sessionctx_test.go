@@ -186,7 +186,7 @@ func TestSessionContextPreambleTermuxArm(t *testing.T) {
         for _, pin := range []string{
                 "session_start {\"name\",\"command\"} launches a nohup'd process",
                 "session_list / session_log / session_kill watch and stop them",
-                "Termux's own 100KB result bundle is the only hard cap",
+                "Termux's own 100KB result bundle does NOT apply",
                 "exec pacing is unbound unless the user arms a burst cap",
                 "10-minute budget by default, 30 min max via timeout_ms",
                 "shared storage is FUSE noexec",

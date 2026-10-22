@@ -42,7 +42,13 @@ import (
 // termuxStreamMemCap bounds one stream's buffers (the tail is kept when
 // the cap fires — recent output is the useful output; totalSeen tracks
 // the truth for the honest marker).
-const termuxStreamMemCap = 2 * 1024 * 1024
+//
+// v1.56.1 THE UNBOUNDED DEVICE OUTPUT: the cap rises 2MB → 8MB. The
+// 100KB Termux result-bundle cap is DEAD on the streamed path (the
+// output rides the loopback HTTP — Termux's intent bundle never sees
+// it); this memory cap is the engine's own hygiene, and the honest
+// marker carries the TRUE total when it fires.
+const termuxStreamMemCap = 8 * 1024 * 1024
 
 // termuxStreamGCTTL — a finished/closed stream lives this long for late
 // polls (the wrapper's final curls may trail the result broadcast).
@@ -177,6 +183,33 @@ func (t *termuxStreams) append(st *termuxStream, ch, delta string) bool {
 	return true
 }
 
+// setFull REPLACES one stream's buffer with the COMPLETE log (the
+// wrapper's final ?full=1 POST — the whole-truth path). The true total
+// is the full length (the buffer now holds everything). An empty body
+// is ignored (a zero-byte log never wipes a good buffer).
+func (t *termuxStreams) setFull(st *termuxStream, ch, full string) {
+	if st == nil || full == "" {
+		return
+	}
+	st.mu.Lock()
+	if st.closed {
+		st.mu.Unlock()
+		return
+	}
+	if ch == "e" {
+		st.errS = tailCap(full, termuxStreamMemCap)
+		if len(full) > st.errSeen {
+			st.errSeen = len(full)
+		}
+	} else {
+		st.out = tailCap(full, termuxStreamMemCap)
+		if len(full) > st.outSeen {
+			st.outSeen = len(full)
+		}
+	}
+	st.mu.Unlock()
+}
+
 // complete marks the stream done with the true exit code.
 func (t *termuxStreams) complete(st *termuxStream, ec int) {
 	if st == nil {
@@ -244,6 +277,12 @@ func (s *Server) handleTermuxStreamPost(w http.ResponseWriter, r *http.Request) 
 	if ch != "o" && ch != "e" {
 		ch = "o"
 	}
+	// v1.56.1 THE WHOLE OUTPUT: ?full=1 carries the COMPLETE log file
+	// (the wrapper's final POST) — the engine replaces the buffer with
+	// it, so the observation rides the whole output even when the
+	// incremental flushes were cut. An empty body is ignored (a zero-byte
+	// log must never wipe a good buffer).
+	full := r.URL.Query().Get("full") == "1"
 	body := make([]byte, 0, 4096)
 	buf := make([]byte, 32*1024)
 	for {
@@ -257,6 +296,11 @@ func (s *Server) handleTermuxStreamPost(w http.ResponseWriter, r *http.Request) 
 		if err != nil {
 			break
 		}
+	}
+	if full {
+		s.txstreams.setFull(st, ch, string(body))
+		writeJSON(w, 200, map[string]any{"ok": true})
+		return
 	}
 	s.txstreams.append(st, ch, string(body))
 	writeJSON(w, 200, map[string]any{"ok": true})

@@ -41,20 +41,32 @@ func messagesTokens(msgs []Message) int {
 // model is never worse off than the old fixed ceiling. A generous room on a
 // big-window model means the observation rides WHOLE — the whole-return law.
 //
-// v1.56.0 THE WHOLE TOOL: the floor rises from 24,000 to 256,000 bytes
-// (a 256KB tool result now rides WHOLE on any model). The budget is
-// still the WINDOW's physics — a 300MB file on a 32K-context model is
-// still physics, and the marker says so (ClampMarked carries the
-// totals). The floor is what was amputating results on big-context
-// models for no reason.
+// v1.56.1 THE UNBOUNDED OBSERVATION: the old fixed 256KB floor is
+// DEAD. The budget is now the WINDOW's physics ALONE (90% of the
+// model's documented window minus what the in-turn history already
+// holds) — so a 1M-context model rides a ~3.4MB result WHOLE, a 128K
+// model ~437KB, and only a genuinely tiny window (or a history that
+// already fills it) ever clamps.
+//
+// THE FLOOR (never amputate below what the model can carry): the floor
+// is now 1MB, but it is CAPPED at a QUARTER of the window's own byte
+// size — the floor must never eat a big share of the window it lives
+// in (a 32K-context model gets a ~62KB floor, not a 1MB one that would
+// overflow its window on the very first big result).
 func turnObsBudget(model string, usedTokens int) int {
-        const floorBytes = 256 << 10 // 256 KB
         limit := ContextLimitFor(model)
+        // the window's own byte size (the compact.go heuristic: ≈3.8
+        // chars/token — EstimateTokensN's own ratio).
+        windowBytes := limit * 38 / 10
         roomTokens := limit*90/100 - usedTokens
         if roomTokens < 0 {
                 roomTokens = 0
         }
         budget := roomTokens * 38 / 10
+        floorBytes := 1 << 20 // 1 MB — but never more than a quarter of the window
+        if quarter := windowBytes / 4; floorBytes > quarter {
+                floorBytes = quarter
+        }
         if budget < floorBytes {
                 return floorBytes
         }

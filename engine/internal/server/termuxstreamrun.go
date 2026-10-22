@@ -43,12 +43,13 @@ const termuxStreamScript = `set -u
 url="$1"
 cmd="$2"
 tok="$3"
+shift 3
 d="$HOME/.doomalay/streams"
 mkdir -p -- "$d" 2>/dev/null || d="$(mktemp -d)"
 out="$d/o.$tok"
 err="$d/e.$tok"
 rm -f -- "$out" "$err" 2>/dev/null
-bash -c "$cmd" >"$out" 2>"$err" &
+bash -c "$cmd" bash "$@" >"$out" 2>"$err" &
 p=$!
 o=0
 e=0
@@ -71,7 +72,18 @@ done
 wait "$p"
 ec=$?
 flush
+# v1.56.1 THE WHOLE OUTPUT: the final POST carries the COMPLETE log
+# files (the incremental flushes can be cut by a fast burst — the full
+# POST is the truth). The engine replaces its buffer with it, so the
+# observation rides every byte, not just the flushed tail. The cat
+# below stays as THE FALLBACK (when the loopback curls never landed).
+curl -s -m 120 --data-binary @"$out" "$url?ch=o&full=1" >/dev/null 2>&1 || true
+curl -s -m 120 --data-binary @"$err" "$url?ch=e&full=1" >/dev/null 2>&1 || true
 curl -s -m 3 -X POST "$url?done=1&ec=$ec" >/dev/null 2>&1 || true
+# THE FALLBACK: the broadcast Bundle is 100KB-capped, so this carries
+# as much as fits (the HEAD of each log — the whole output already rode
+# the loopback HTTP above; the Bundle is only the safety net when the
+# loopback never answered).
 cat "$out" 2>/dev/null
 cat "$err" >&2 2>/dev/null
 rm -f -- "$out" "$err" 2>/dev/null
@@ -93,26 +105,51 @@ func (s *Server) termuxStreamURL(token string) string {
 	return fmt.Sprintf("http://%s:%d/api/termux/stream/%s", host, port, token)
 }
 
-// termuxRunStreaming runs ONE long command through the streaming
-// wrapper: registers the stream, blocks on the bridge round-trip (the
-// curls feed the registry live), then composes the observation. The
-// headline parameter rides the observation head ("EXEC DONE" / "PKG
-// INSTALL DONE"); workdir "" (pkg) omits the workdir line.
-func (s *Server) termuxRunStreaming(ctx context.Context, sessionID, headline, command, workdir string, timeoutMS int) string {
+// termuxStreamParts is the raw streaming outcome: the WHOLE stdout and
+// stderr (the streamed buffers — Termux's 100KB PendingIntent bundle
+// never sees them), the TRUE totals, the exit code, and the flags.
+type termuxStreamParts struct {
+	out       string
+	errB      string
+	outSeen   int
+	errSeen   int
+	ec        int
+	gotChunks bool
+	timedOut  bool
+	errObs    string
+	// bundleTrunc: the FALLBACK path (no loopback chunks landed) read the
+	// output out of Termux's 100KB result Bundle — the honest marker must
+	// say so (the streamed path is NOT bundle-bound).
+	bundleTrunc bool
+	// tailOnly: the output came from the wrapper's FALLBACK TAIL (the
+	// loopback curls never landed) — the whole output is elsewhere.
+	tailOnly bool
+}
+
+// termuxStreamRun — the shared streaming core: registers the stream,
+// blocks on the bridge round-trip (the curls feed the registry live),
+// and returns the WHOLE output.
+//
+// v1.56.1 THE UNBOUNDED DEVICE OUTPUT: EVERY jailed verb rides this
+// core (the file verbs too — ls/read/grep/find used to read their
+// output out of Termux's 100KB result Bundle, which amputated a big
+// listing or a big grep; now the output rides the loopback HTTP and
+// the bundle never touches it).
+func (s *Server) termuxStreamRun(ctx context.Context, sessionID, command, workdir string, timeoutMS int, vargs ...string) termuxStreamParts {
+	var parts termuxStreamParts
 	st := s.txstreams.register(sessionID)
 	url := s.termuxStreamURL(st.token)
-	res, errObs := s.termuxRunOne(ctx, termuxCommand(termuxStreamScript, url, command, st.token), workdir, timeoutMS)
+	// the wrapper's own args: the stream URL, the command, the token —
+	// then the command's OWN positional args (the jailed verbs' path +
+	// roots) ride after them (the wrapper shifts past its three).
+	wrapperArgs := append([]string{url, command, st.token}, vargs...)
+	res, errObs := s.termuxRunOne(ctx, termuxCommand(termuxStreamScript, wrapperArgs...), workdir, timeoutMS)
 	if errObs != "" {
 		s.txstreams.closeStream(st)
-		return errObs
+		parts.errObs = errObs
+		return parts
 	}
 	if res.Timeout {
-		// the engine's budget fired: stop accepting chunks (the wrapper
-		// may still run in Termux) + report the honest PARTIAL output —
-		// the accumulated stream IS the partial. When the curls never
-		// landed (the stream buffers are empty), the wrapper died before
-		// its own cat — the logs live on disk under the token's name: ONE
-		// recovery cat reads them (then cleans them up).
 		s.txstreams.closeStream(st)
 		st.mu.Lock()
 		out, errB, outSeen, errSeen := st.out, st.errS, st.outSeen, st.errSeen
@@ -122,33 +159,54 @@ func (s *Server) termuxRunStreaming(ctx context.Context, sessionID, headline, co
 				out, errB = rec.Stdout, rec.Stderr
 			}
 		}
-		var sb strings.Builder
-		fmt.Fprintf(&sb, "OBSERVATION:\nTIMEOUT — the %ds exec budget ended; the command may still be running in Termux (pass timeout_ms up to 1800000, or session_start it for unbounded)", timeoutMS/1000)
-		if out != "" {
-			sb.WriteString("; partial stdout:\n" + out)
-		}
-		if errB != "" {
-			sb.WriteString("\nstderr:\n" + errB)
-		}
-		return sb.String()
+		parts.out, parts.errB, parts.outSeen, parts.errSeen = out, errB, outSeen, errSeen
+		parts.timedOut = true
+		return parts
 	}
-	// compose: the streamed buffers when chunks landed, the broadcast
-	// fallback otherwise (the wrapper's cat carried the logs out).
 	st.mu.Lock()
 	out, errB, outSeen, errSeen, gotChunks, ec := st.out, st.errS, st.outSeen, st.errSeen, st.outSeen+st.errSeen > 0, st.ec
 	st.mu.Unlock()
 	if !gotChunks {
+		// the loopback curls never landed: the broadcast carried the
+		// wrapper's FALLBACK TAIL (the last 32KB of each log) — the whole
+		// output is NOT here, and the observation must say so (the honest
+		// tail marker carries the true length when the bridge knows it).
 		out, errB, outSeen, errSeen = res.Stdout, res.Stderr, len(res.Stdout), len(res.Stderr)
+		parts.bundleTrunc = termuxTruncated(res)
+		parts.tailOnly = true
 	}
 	if !st.done {
-		// the done-curl never landed (the loopback curls failed) — the
-		// wrapper's own exit code is the truth (the broadcast carried it).
 		ec = res.ExitCode
-		// and the entry must not outlive its run: complete it now (the GC
-		// only sweeps done/closed streams — an abandoned never-done entry
-		// would leak forever).
 		s.txstreams.complete(st, ec)
 	}
+	parts.out, parts.errB = out, errB
+	parts.outSeen, parts.errSeen = outSeen, errSeen
+	parts.ec = ec
+	parts.gotChunks = gotChunks
+	return parts
+}
+
+// termuxRunStreaming runs ONE long command through the streaming
+// wrapper and composes the observation. The headline parameter rides
+// the observation head ("EXEC DONE" / "PKG INSTALL DONE"); workdir ""
+// (pkg) omits the workdir line.
+func (s *Server) termuxRunStreaming(ctx context.Context, sessionID, headline, command, workdir string, timeoutMS int) string {
+	parts := s.termuxStreamRun(ctx, sessionID, command, workdir, timeoutMS)
+	if parts.errObs != "" {
+		return parts.errObs
+	}
+	if parts.timedOut {
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "OBSERVATION:\nTIMEOUT — the %ds exec budget ended; the command may still be running in Termux (pass timeout_ms up to 1800000, or session_start it for unbounded)", timeoutMS/1000)
+		if parts.out != "" {
+			sb.WriteString("; partial stdout:\n" + parts.out)
+		}
+		if parts.errB != "" {
+			sb.WriteString("\nstderr:\n" + parts.errB)
+		}
+		return sb.String()
+	}
+	out, errB, outSeen, errSeen, ec, gotChunks := parts.out, parts.errB, parts.outSeen, parts.errSeen, parts.ec, parts.gotChunks
 	var sb strings.Builder
 	sb.WriteString("OBSERVATION:\n" + headline)
 	if workdir != "" {
@@ -172,18 +230,21 @@ func (s *Server) termuxRunStreaming(ctx context.Context, sessionID, headline, co
 			sb.WriteString("\n")
 		}
 	}
-	// THE WHOLE-TRUTH LAW, both editions: the streamed path bypasses
-	// Termux's 100KB bundle (the loopback curls are unbounded), so the cap
-	// is enforced engine-side — the tail rides, the TRUE total reports.
-	// The fallback path (no curls landed) IS the bundle physics — the
-	// original termuxMaybeTrunc law applies byte-identically.
 	if gotChunks {
-		if outSeen > termuxCapBytes || errSeen > termuxCapBytes {
-			fmt.Fprintf(&sb, "[termux: output truncated at 100KB — %d bytes stdout + %d bytes stderr streamed total]\n", outSeen, errSeen)
+		if outSeen > termuxStreamMemCap || errSeen > termuxStreamMemCap {
+			fmt.Fprintf(&sb, "[termux: output truncated at the engine's 8MB buffer — %d bytes stdout + %d bytes stderr streamed total]\n", outSeen, errSeen)
 		}
 		return sb.String()
 	}
-	return termuxMaybeTrunc(res, sb.String())
+	// the FALLBACK path: the output came out of Termux's 100KB result
+	// Bundle (the loopback curls never landed) — the honest marker says
+	// so (the bundle physics is real there).
+	if parts.bundleTrunc {
+		sb.WriteString("\n" + termuxTruncatedMarker)
+	} else if parts.tailOnly {
+		sb.WriteString("\n[termux: the live stream did not answer — this is the broadcast fallback, bounded by Termux's 100KB result bundle]")
+	}
+	return sb.String()
 }
 
 // termuxStreamRecover cats a timed-out wrapper's logs by token (the

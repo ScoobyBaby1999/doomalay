@@ -31,6 +31,7 @@ func TestDetectToolFault_RefusalAndError(t *testing.T) {
 		{"OBSERVATION:\nREFUSED — the command looks like a file destroy", "refused"},
 		{"OBSERVATION:\nerror: arguments must be a JSON object", "failed"},
 		{"OBSERVATION:\n[termux: output truncated at 100KB by Termux's result cap]", "100KB"},
+		{"OBSERVATION:\n[termux: output truncated at the engine's 8MB buffer — 9000000 bytes stdout]", "8MB"},
 	} {
 		rep := DetectToolFault(tc.obs)
 		if !rep.Faulted {

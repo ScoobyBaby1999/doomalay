@@ -1446,3 +1446,19 @@ Honest limits: glm's dynamic reasoning SKIPS recall facts intermittently (the ca
 **THE PROOF.** `scripts/v1560-whole-tools-pin.py` (61 source pins) + `scripts/v1560-whole-tools-rig.py` (15 LIVE checks against a real engine + a local fake GitHub: 5 hits where the old fold found 3, the regex matched only its own line, the globs filtered, the count mode counted, the limit said so, the view route answered). The new package's own pins (12) + the workspace grep's model-facing pins (7) + the hiccup flag's pins (5) + the whole-engine Go suites green (grep · forge · llm · mcpbus · server · store · djournal · surgeon · hub · netx · obs · ota · pmstate · config · archive · hfzero) + vet + node --check + the cross-compiles (linux 55.9MB · linux/arm64 53.3MB · android/arm64 56.2MB).
 
 **HONEST LIMITS.** The ocserve suite's two failures (TestEnsureBinaryVerifiesIntegrity, TestV1491SpawnerKind) are PRE-EXISTING device-shape pins — they fail identically on the clean tree. The forge's code-search rate limit (10 req/min authenticated) still bounds the CANDIDATE path — the engine pages it and the walk falls back to the universal tree scan when the limit bites. The brain (HF-space) twins were changed for the caps, the grep folds and the journal snips; their own dt_spec rule-9 ceiling text is now honest rather than amputating.
+
+## v1.56.1 THE UNBOUNDED OUTPUT (the user's follow-up)
+
+The user's ask: *"Then try to remove the termux cap if possible and the in turn observation 256kb cap if that doesn't cause issues."*
+
+**THE 100KB DEVICE CAP IS DEAD.** Termux's `RUN_COMMAND` returns ONE result Bundle capped at 100 KB — that was the last ceiling in the device hand (a 320 KB read or a 3,000-hit grep came back amputated). The answer was the law already in the tree: the device output rides the **loopback stream**, and the Bundle never sees it. So:
+
+- EVERY jailed verb (`exec`, `pkg`, `ls`, `read`, `grep`, `find`) now rides the **streaming wrapper** — the old non-streaming path is gone from the file verbs.
+- The wrapper POSTs the **COMPLETE log file** (`?full=1`) at the end — the engine *replaces* its buffer with it, so even a burst that cut the incremental flushes loses nothing.
+- The engine's own stream buffer rises 2 MB → **8 MB** (the only ceiling left; when it fires, the marker carries the TRUE totals).
+- The 100 KB marker survives **only** for the fallback path (the loopback never answered) — and there it says the truth.
+- **Proved live**: `TestV1561_DeviceOutputIsNotBundleCapped` (a 320 KB file read arrives with 10,000/10,000 lines) + `TestV1561_DeviceGrepIsNotBundleCapped` (3,000 hits, all of them) — the real wrapper, the real `curl`, the real engine mux.
+
+**THE OBSERVATION CEILING IS NOW THE WINDOW.** The 256 KB fixed floor is dead. The budget is the **window's physics alone** (90 % of the model's documented window minus what the in-turn history already holds), with a **1 MB floor capped at a QUARTER of the model's own window** — a 1 M-context model rides a ~3.4 MB result whole, a 128 K model ~437 KB, and a 32 K model gets a ~62 KB floor (the floor must never eat the window it lives in). The honest marker still carries the totals when physics really says no.
+
+**Battery:** the server suite green (the Termux teach pin re-anchored to the new law), llm · grep · forge green, vet clean, `scripts/v1560-whole-tools-pin.py` (64 source pins) + the live rig (15 checks).

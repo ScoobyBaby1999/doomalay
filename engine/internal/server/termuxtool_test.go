@@ -19,6 +19,7 @@ import (
         "context"
         "encoding/json"
         "fmt"
+        "net"
         "net/http"
         "net/http/httptest"
         "os"
@@ -1233,4 +1234,81 @@ func TestV1211_CmdsInventory(t *testing.T) {
         if !strings.Contains(out, `"action":"cmds"`) || !strings.Contains(out, "WHOLE LINUX USERLAND") {
                 t.Fatalf("the help must teach cmds + the whole-userland capability, got:\n%s", out)
         }
+}
+
+// ── v1.56.1 THE UNBOUNDED DEVICE OUTPUT ─────────────────────────────────
+//
+// The 100KB Termux result-Bundle cap is DEAD: every jailed verb rides
+// the loopback stream, so a big listing / a big grep / a big read
+// arrives WHOLE. These pins prove it LIVE — the fake bridge EXECUTES
+// the real wrapper, the wrapper's curls reach the engine's own mux (the
+// engine listens on a real loopback port for the test), and the
+// observation must carry the WHOLE output (not a 100KB slice).
+
+// v1561StreamServer wires the engine's mux onto a real loopback port
+// (the wrapper's curls need a real HTTP server to reach).
+func v1561StreamServer(t *testing.T, s *Server) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	s.cfg.Port = ln.Addr().(*net.TCPAddr).Port
+	s.cfg.Bind = "127.0.0.1"
+	srv := &httptest.Server{Listener: ln, Config: &http.Server{Handler: s.mux}}
+	srv.Start()
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
+func TestV1561_DeviceOutputIsNotBundleCapped(t *testing.T) {
+	fb := newFakeArmBridge(t)
+	s := newArmServer(t, fb)
+	v1561StreamServer(t, s)
+
+	root := t.TempDir()
+	armTermuxChat(t, s, "big", root)
+
+	// a file BIGGER than Termux's 100KB result Bundle (300KB).
+	big := strings.Repeat("PAYLOAD-LINE-abcdefghijklmnop\n", 10000) // ~320KB
+	if err := os.WriteFile(filepath.Join(root, "big.txt"), []byte(big), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	out := tool(s, "big", "read", `{"path":"big.txt"}`)
+	if !strings.Contains(out, "PAYLOAD-LINE-abcdefghijklmnop") {
+		t.Fatalf("the read did not carry the file:\n%s", out[:min(400, len(out))])
+	}
+	// the WHOLE file must be there: count the lines.
+	if got := strings.Count(out, "PAYLOAD-LINE-abcdefghijklmnop"); got < 9000 {
+		t.Fatalf("the read was amputated: %d of 10000 lines arrived", got)
+	}
+	// and the honest 100KB marker must NOT be there (the Bundle never
+	// saw this output).
+	if strings.Contains(out, "truncated at 100KB") {
+		t.Fatalf("the 100KB bundle marker fired on a streamed read:\n%s", out[:min(400, len(out))])
+	}
+}
+
+func TestV1561_DeviceGrepIsNotBundleCapped(t *testing.T) {
+	fb := newFakeArmBridge(t)
+	s := newArmServer(t, fb)
+	v1561StreamServer(t, s)
+
+	root := t.TempDir()
+	armTermuxChat(t, s, "g", root)
+	// 3000 files, one hit each — the hit list is far past 100KB.
+	for i := 0; i < 3000; i++ {
+		p := filepath.Join(root, fmt.Sprintf("f%04d.txt", i))
+		if err := os.WriteFile(p, []byte("TODO "+fmt.Sprint(i)+"\n"), 0o644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+	out := tool(s, "g", "grep", `{"pattern":"TODO"}`)
+	if got := strings.Count(out, ":TODO "); got < 3000 {
+		t.Fatalf("the grep lost hits: %d of 3000 arrived", got)
+	}
+	if strings.Contains(out, "truncated at 100KB") {
+		t.Fatalf("the 100KB bundle marker fired on a streamed grep")
+	}
 }

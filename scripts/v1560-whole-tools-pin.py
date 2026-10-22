@@ -123,8 +123,17 @@ check("a 0 limit means ALL (the silent default is DEAD)",
 
 # ── 5. THE OBSERVATIONS RIDE WHOLE ─────────────────────────────────
 clamp = read("internal/llm/clampmarked.go")
-check("the in-turn observation floor rises to 256KB",
-      "floorBytes = 256 << 10" in clamp)
+check("the in-turn observation floor rises to 1MB (window-capped)",
+      "floorBytes := 1 << 20" in clamp)
+check("the 100KB device cap is DEAD (the output rides the stream)",
+      "termuxStreamMemCap = 8 * 1024 * 1024" in read("internal/server/termuxstream.go"))
+check("the device verbs ride the streaming wrapper (the Bundle never sees them)",
+      "termuxRunScriptStream" in read("internal/server/termuxtool.go"))
+check("the wrapper POSTs the WHOLE log (the full=1 lane)",
+      "full=1" in read("internal/server/termuxstreamrun.go"))
+check("the live pins prove the 100KB Bundle cap is dead",
+      "TestV1561_DeviceOutputIsNotBundleCapped" in read("internal/server/termuxtool_test.go")
+      and "TestV1561_DeviceGrepIsNotBundleCapped" in read("internal/server/termuxtool_test.go"))
 check("the tree's summary default is DEAD (the full listing rides)",
       'wsArgBool(args, "summary")' in ws_tool)
 check("the batch read's 40-line trim is DEAD (the whole file rides)",
@@ -172,8 +181,9 @@ fault = read("internal/llm/toolfault.go")
 check("the hiccup detector exists", "func DetectToolFault" in fault)
 check("the detector reads the truncation marker",
       '"[truncated:"' in fault)
-check("the detector reads the Termux cap marker",
-      '"[termux: output truncated"' in fault)
+check("the detector reads the Termux cap markers (both editions)",
+      '"[termux: output truncated at 100KB"' in fault
+      and '"[termux: output truncated at the engine' in fault)
 check("the detector reads the refusal markers",
       '"REFUSED —"' in fault and '"JAIL REFUSED"' in fault)
 check("the flag SPEAKS the notice", 'Type: "notice"' in fault)
