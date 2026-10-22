@@ -1517,6 +1517,10 @@
       scrollEl.addEventListener('scroll', function () {
         rememberScroll(state, scrollEl.scrollTop); // v0.34: where the user is
         jumpRead(); // v0.40 pill visibility + the freeze check (v0.78.3: rAF-batched)
+        // v1.63.3 THE DORMANT PAGE: the reader reaching the top of the
+        // mounted window loads one older page (never eager — the open
+        // cost stays the bootstrap's tail window).
+        if (scrollEl.scrollTop < 400) fetchOlderPage(state);
       }, { passive: true });
     }
 
@@ -1803,14 +1807,15 @@
         if (live && scrollEl) scrollEl.scrollTo({ top: live.offsetTop - 6, behavior: 'smooth' });
       }, 120);
     } else if (state.fulfilled && state.messages.length) {
-      // v0.34: back where the user left off (first open — no memory yet —
-      // lands at the bottom, the familiar behavior). Coming back to a
-      // chat they were reading mid-history stays mid-history now.
-      if (state._scrollPos == null) {
-        var m = readScrollMap();
-        if (m && typeof m[icon.id] === 'number') state._scrollPos = m[icon.id];
-      }
-      restoreChatScroll(scrollEl, state);
+      // v1.63.3 THE OPEN LAW: every fresh open lands at the BOTTOM — the
+      // newest messages are what's important (the user's law verbatim:
+      // "Opening the chat for a user should load bottom up not top down.
+      // The most recent chats are what's important"). The v0.34 "back
+      // where the user left off" localStorage restore is the thing that
+      // pointed at the TOP (a stale 0 saved while the transcript was
+      // still mounting — faithfully re-landed on every open); it dies
+      // here. The bottom is the only open position, always.
+      scrollEl.scrollTop = scrollEl.scrollHeight;
     }
 
     // v0.42: the button's behavior IS its mode — one tap dispatcher
@@ -3811,14 +3816,16 @@
   // transport (the ChatClient, its seq cursor PRE-ARMED so the connect asks
   // &since=<maxSeq> and the engine ships only the gap + the live tail).
 
-  // bootstrapHistory: a FRESH state for an EXISTING session fetches the log
-  // in ONE GET (the REST twin of the WS replay — the exact ToJSON wire
-  // shape) and folds it data-only. cb always runs (a failed fetch degrades
+  // bootstrapHistory: a FRESH state for an EXISTING session fetches the
+  // log's TAIL WINDOW in ONE GET (v1.63.3 THE UNLOST TAIL: ?tail=2500 —
+  // "the most recent chats are what's important, older messages can stay
+  // dormant until scrolled to"; a 50MB lifetime log never rides the open
+  // again) and folds it data-only. cb always runs (a failed fetch degrades
   // honestly to today's full WS replay — never a blank panel).
   function bootstrapHistory(state, cb) {
     if (!state || !state.sessionId || state.client ||
         state.messages.length > 0 || (state.lastEventI || 0) > 0) { cb(); return; }
-    fetch('/api/sessions/' + encodeURIComponent(state.sessionId) + '/events')
+    fetch('/api/sessions/' + encodeURIComponent(state.sessionId) + '/events?tail=2500')
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (data) {
         var evs = data && data.events;
@@ -3837,6 +3844,11 @@
             state._bulkLoad = false;
           }
           state._bulkMaxSeq = maxSeq;
+          // v1.63.3: the window's bounds — the oldest seq we hold (the
+          // ?before= page cursor) + whether dormant history exists beyond
+          // it (fetchOlderPage owns the scroll-up law).
+          state._oldestSeq = (typeof evs[0].seq === 'number') ? evs[0].seq : 0;
+          state._hasOlder = !!data.older;
         }
         cb();
       })
@@ -3858,6 +3870,82 @@
     mountAllFormatting(msgs, state);
     scheduleBackfill(msgs, bodyEl.querySelector('#chat-scroll'), state, tailFrom);
     return true;
+  }
+
+  // ── v1.63.3 THE DORMANT PAGE ────────────────────────────────────────
+  // "Older messages can stay dormant until scrolled to": history beyond
+  // the bootstrap's tail window loads ONE page at a time, only when the
+  // reader scrolls to the top of the mounted window (never eagerly — the
+  // open cost stays the tail window; the idle backfill mounts only what
+  // the bootstrap already holds). The page folds through the SAME
+  // data-only handleEvent pipeline (the bulk gate appends to
+  // state.messages; the older slice is then SPLICED to the head), the
+  // already-mounted rows' data-mi indexes shift by the page size, and
+  // the viewport is pixel-compensated so the visible window never moves.
+  function fetchOlderPage(state) {
+    if (!state || !state._hasOlder || !state._oldestSeq || state._olderInFlight) return;
+    if (!(currentCtx && currentCtx.state === state && currentCtx.bodyEl)) return;
+    var bodyEl = currentCtx.bodyEl;
+    var container = bodyEl.querySelector('#chat-messages');
+    var sc = bodyEl.querySelector('#chat-scroll');
+    if (!container || !sc) return;
+    if (state._bfGen && state._bfFrom) return; // the idle backfill still owes rows — it mounts first
+    state._olderInFlight = true;
+    fetch('/api/sessions/' + encodeURIComponent(state.sessionId) + '/events?before=' + state._oldestSeq + '&n=1000')
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (data) {
+        var evs = data && data.events;
+        if (!evs || !evs.length) { state._hasOlder = false; return; }
+        var beforeLen = state.messages.length;
+        state._bulkLoad = true;
+        try {
+          for (var i = 0; i < evs.length; i++) {
+            var ev = evs[i];
+            if (!ev || typeof ev !== 'object') continue;
+            ev._replay = true;
+            handleEvent(ev, state, null, null, null, null, null);
+          }
+        } finally {
+          state._bulkLoad = false;
+        }
+        var added = state.messages.length - beforeLen; // appended at the END (bulk law)
+        if (added > 0) {
+          var olderMsgs = state.messages.splice(beforeLen, added);
+          // the mounted rows' absolute indexes shift by the page size
+          var rows = container.querySelectorAll('[data-mi]');
+          for (var r = 0; r < rows.length; r++) {
+            var mi = parseInt(rows[r].getAttribute('data-mi'), 10);
+            if (!isNaN(mi)) rows[r].setAttribute('data-mi', String(mi + added));
+          }
+          var h0 = sc.scrollHeight;
+          var holder = document.createElement('div');
+          holder.innerHTML = renderMessages(olderMsgs, 0);
+          var frag = document.createDocumentFragment();
+          while (holder.firstChild) frag.appendChild(holder.firstChild);
+          container.insertBefore(frag, container.firstChild);
+          state.messages = olderMsgs.concat(state.messages);
+          mountChunkFormatting(container, state, 0, added);
+          var grew = sc.scrollHeight - h0;
+          if (grew > 0) sc.scrollTop += grew; // pixel-stable viewport
+        }
+        state._oldestSeq = (typeof evs[0].seq === 'number') ? evs[0].seq : state._oldestSeq;
+        state._hasOlder = !!data.older;
+      })
+      .catch(function () { /* offline/shape failure — the next scroll-up retries */ })
+      .then(function () {
+        state._olderInFlight = false;
+        olderCheck(state, sc);
+      });
+  }
+
+  // olderCheck: the dormant-page trigger — the reader is at/near the top
+  // of the mounted window and older history exists → one page loads (the
+  // no-scrollbar case included: a short chat whose window fits the screen
+  // still reaches its top at scrollTop 0).
+  function olderCheck(state, sc) {
+    if (!state || !state._hasOlder) return;
+    if (!sc || !sc.isConnected) return;
+    if (sc.scrollTop < 400) fetchOlderPage(state);
   }
 
   // connectWSFresh: the bind-callback flow for a state that may be fresh —
@@ -6658,7 +6746,14 @@
         state._bfGen = 0;
         return;
       }
-      if (idx <= 0) { state._bfGen = 0; state._bfFrom = 0; return; }   // fully mounted
+      if (idx <= 0) {                                         // fully mounted
+        state._bfGen = 0; state._bfFrom = 0;
+        // v1.63.3 THE DORMANT PAGE: the in-memory window is fully mounted
+        // — if the reader still sits at the top (a short window, or a fast
+        // swipe that outran the idle chunks), the first dormant page loads
+        olderCheck(state, scrollEl || (container.closest ? container.closest('#chat-scroll') : null));
+        return;
+      }
       // v0.97.1: hidden/background tabs throttle requestIdleCallback to
       // near-zero — after a 2s grace the remaining chunks ride a plain
       // timeout (32ms) so a backgrounded open still finishes its history

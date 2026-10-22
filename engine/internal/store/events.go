@@ -266,6 +266,69 @@ func (db *DB) SessionEventSeqLengths(sessionID string) ([][2]int, error) {
         return out, rows.Err()
 }
 
+// SpliceEvent is one row of a splice (v1.63.3 THE SERVE TRUTH RECONCILE):
+// the serve's own completed turn mapped into the engine's event grammar.
+// CreatedAtMs carries the serve's own clock for the row (0 = now) — the
+// recovered transcript keeps its true day dividers.
+type SpliceEvent struct {
+        EventType  string
+        Content    string
+        ToolUseID  string
+        CreatedAtMs int64
+}
+
+// SpliceSessionEvents atomically REPLACES everything after afterSeq with
+// the given rows (v1.63.3 THE UNLOST TAIL): the engine died mid-turn and
+// the boot heal spliced an "interrupted by engine restart" terminal (plus
+// v1.52.3's synthesized never-ran tool results) over the turn's dangling
+// window — while the serve, wake-locked in Termux, COMPLETED the turn.
+// The serve's durable transcript is the whole truth; this vehicle deletes
+// the dangling window (seq > afterSeq) and inserts the mapped rows with
+// fresh monotonic seqs (afterSeq+1…, NEVER a reuse — a client cursor at
+// or below afterSeq re-fetches cleanly). ONE transaction: the log is
+// never seen half-spliced. Returns the inserted row count.
+//
+// SAFETY: the caller owns the trigger (the healed terminal must be the
+// LAST event — nothing the user already saw past it may exist); the rows
+// were never on any wire at their old seqs (the boot heal runs before
+// the server accepts connections, the reconcile before the events GET
+// answers).
+func (db *DB) SpliceSessionEvents(sessionID string, afterSeq int, rows []SpliceEvent) (int, error) {
+        if len(rows) == 0 {
+                return 0, nil
+        }
+        tx, err := db.Begin()
+        if err != nil {
+                return 0, err
+        }
+        defer func() { _ = tx.Rollback() }()
+        if _, err := tx.Exec(`DELETE FROM chat_events WHERE session_id=? AND seq > ?`, sessionID, afterSeq); err != nil {
+                return 0, err
+        }
+        now := float64(time.Now().UnixMilli()) / 1000.0
+        inserted := 0
+        for i, row := range rows {
+                ts := now
+                if row.CreatedAtMs > 0 {
+                        ts = float64(row.CreatedAtMs) / 1000.0
+                }
+                res, err := tx.Exec(`
+INSERT INTO chat_events (session_id, seq, event_type, content, tool_use_id, created_at)
+VALUES (?,?,?,?,?,?)`,
+                        sessionID, afterSeq+1+i, row.EventType, row.Content, row.ToolUseID, ts)
+                if err != nil {
+                        return inserted, err
+                }
+                if n, _ := res.RowsAffected(); n > 0 {
+                        inserted++
+                }
+        }
+        if err := tx.Commit(); err != nil {
+                return 0, err
+        }
+        return inserted, nil
+}
+
 // EventToJSON serializes an Event for the PWA. Matches the wire format
 // the PWA's streamWorker expects.
 // v0.39: seq rides on replayed events — the resume handshake (&since=N)

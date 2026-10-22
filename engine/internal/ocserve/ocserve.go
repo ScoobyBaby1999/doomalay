@@ -62,6 +62,7 @@ import (
         "io"
         "net"
         "net/http"
+        "net/url"
         "os"
         "os/exec"
         "path"
@@ -1001,6 +1002,155 @@ func (m *Manager) DeleteSession(serveSess string) error {
                 msg = msg[:120]
         }
         return fmt.Errorf("ocserve delete session: HTTP %d, body %q", resp.StatusCode, msg)
+}
+
+// ServeContentPart is one part of a serve transcript message's content
+// (v1.63.3 THE UNLOST TAIL — the shapes LIVE-CAPTURED against the pinned
+// 2.1.2 with a real tool-using turn):
+//
+//      {"type":"reasoning","text":…,"native":{…},"time":{created,completed}}
+//      {"type":"tool","id":"call_…","name":"read","executed":bool,
+//       "state":{"status":"completed"|"error"|"running"|"pending",
+//                "input":{…},"content":[{"type":"text","text":…}],
+//                "metadata":{"truncated":bool},"error":{"type":…,"message":…}},
+//       "time":{created,ran,completed}}
+//      {"type":"text","text":…}
+type ServeContentPart struct {
+        Type string `json:"type"`
+        Text string `json:"text"`
+        ID   string `json:"id"`
+        Name string `json:"name"`
+        State *struct {
+                Status   string          `json:"status"`
+                Input    json.RawMessage `json:"input"`
+                Content  []struct {
+                        Type string `json:"type"`
+                        Text string `json:"text"`
+                } `json:"content"`
+                Metadata *struct {
+                        Truncated *bool `json:"truncated"`
+                } `json:"metadata"`
+                Error *struct {
+                        Type    string `json:"type"`
+                        Message string `json:"message"`
+                } `json:"error"`
+        } `json:"state"`
+        Time *struct {
+                Created   int64 `json:"created"`
+                Ran       int64 `json:"ran"`
+                Completed int64 `json:"completed"`
+        } `json:"time"`
+}
+
+// ServeMessage is one entry of the serve's durable transcript
+// (GET /api/session/{id}/message — newest-first, cursor-paginated).
+// Types live-captured: user (top-level text) · assistant (content parts,
+// model, tokens, cost, finish) · idle (the turn marker: outcome ∈
+// succeeded|failed|interrupted + error) · model-switched. The whole-truth
+// law: unknown types ride the list untouched — the mapper degrades them
+// honestly, never drops them silently.
+type ServeMessage struct {
+        Type    string `json:"type"`
+        Text    string `json:"text"`
+        ID      string `json:"id"`
+        Agent   string `json:"agent"`
+        Content []ServeContentPart `json:"content"`
+        Finish  string `json:"finish"`
+        Model   *struct {
+                ID         string `json:"id"`
+                ProviderID string `json:"providerID"`
+                Variant    string `json:"variant"`
+        } `json:"model"`
+        Tokens *struct {
+                Input    int64 `json:"input"`
+                Output   int64 `json:"output"`
+                Reasoning int64 `json:"reasoning"`
+                Cache    struct {
+                        Read  int64 `json:"read"`
+                        Write int64 `json:"write"`
+                } `json:"cache"`
+        } `json:"tokens"`
+        Cost    *float64 `json:"cost"`
+        Outcome string   `json:"outcome"`
+        Error   *struct {
+                Type    string `json:"type"`
+                Message string `json:"message"`
+                Status  int    `json:"status"`
+        } `json:"error"`
+        Time struct {
+                Created    int64 `json:"created"`
+                Streaming  int64 `json:"streamed"`
+                Completed  int64 `json:"completed"`
+        } `json:"time"`
+}
+
+// ListSessionMessages walks the serve's DURABLE transcript (the whole
+// truth — v1.63.3 THE SERVE TRUTH RECONCILE's source) and answers it in
+// CHRONOLOGICAL order (oldest-first). The wire is newest-first with
+// base64 cursor pagination (live-probed: ?limit=N returns the newest N;
+// ?cursor=<cursor.next> walks older); this reader reverses each page and
+// stops when the cursor runs out. Bounded: maxPages × perPage entries
+// (the reconcile's turn window is small; a runaway transcript answers
+// what it holds — the caller's own bounds apply).
+func (m *Manager) ListSessionMessages(serveSess string, maxPages int) ([]ServeMessage, error) {
+        if serveSess == "" {
+                return nil, errors.New("ocserve: empty session id")
+        }
+        m.mu.Lock()
+        base, pw := m.baseURL, m.serverPassword
+        m.mu.Unlock()
+        if base == "" {
+                return nil, errors.New("ocserve: not running")
+        }
+        if maxPages <= 0 {
+                maxPages = 4
+        }
+        const perPage = 500
+        var chrono []ServeMessage
+        cursor := ""
+        for page := 0; page < maxPages; page++ {
+                u := fmt.Sprintf("%s/api/session/%s/message?limit=%d", base, serveSess, perPage)
+                if cursor != "" {
+                        u += "&cursor=" + url.QueryEscape(cursor)
+                }
+                ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+                req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+                if err != nil {
+                        cancel()
+                        return nil, err
+                }
+                req.Header.Set("Accept", "application/json")
+                req.Header.Set("Authorization", "Basic "+basicAuth("opencode", pw))
+                resp, err := http.DefaultClient.Do(req)
+                if err != nil {
+                        cancel()
+                        return nil, err
+                }
+                var out struct {
+                        Data []ServeMessage `json:"data"`
+                        Cursor struct {
+                                Next string `json:"next"`
+                        } `json:"cursor"`
+                }
+                decodeErr := json.NewDecoder(io.LimitReader(resp.Body, 32<<20)).Decode(&out)
+                resp.Body.Close()
+                cancel()
+                if resp.StatusCode != 200 {
+                        return nil, fmt.Errorf("ocserve list messages: HTTP %d", resp.StatusCode)
+                }
+                if decodeErr != nil {
+                        return nil, fmt.Errorf("ocserve list messages: %w", decodeErr)
+                }
+                // the wire is newest-first — reverse into chronological order
+                for i := len(out.Data) - 1; i >= 0; i-- {
+                        chrono = append(chrono, out.Data[i])
+                }
+                if len(out.Data) < perPage || out.Cursor.Next == "" {
+                        break // the head — everything rides
+                }
+                cursor = out.Cursor.Next
+        }
+        return chrono, nil
 }
 
 // ScratchDir answers the serve's scratch directory (its cwd/HOME — where

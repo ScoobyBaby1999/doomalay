@@ -473,18 +473,68 @@ func (s *Server) handleSessionsAppendEvent(w http.ResponseWriter, r *http.Reques
         writeJSON(w, 201, persisted)
 }
 
-// handleSessionsEvents is GET /api/sessions/{id}/events?since=N — replay
-// the event log. since=0 returns all events.
+// handleSessionsEvents is GET /api/sessions/{id}/events — replay the
+// event log.
+//
+// v1.63.3 THE UNLOST TAIL shapes:
+//   - ?since=N          → the gap replay (rows with seq > N; the WS
+//                          resume handshake) — unchanged, the live tail.
+//   - ?tail=N           → the BOOTSTRAP window: the newest N rows +
+//                          "older": whether dormant history exists
+//                          beyond the window (the fresh open mounts the
+//                          tail; older pages ride ?before on scroll-up —
+//                          "the most recent chats are what's important,
+//                          older messages can stay dormant until scrolled
+//                          to").
+//   - ?before=SEQ&n=N   → one DORMANT page: up to N rows with seq < SEQ
+//                          (oldest-first) + "older" again.
+// No params → the whole log (the legacy/export shape, unchanged).
+//
+// v1.63.3 THE SERVE TRUTH RECONCILE hooks here: a bootstrap-shape GET on
+// a log whose last event is the healed terminal first gives the serve's
+// own completed turn the chance to land whole (bounded, best-effort,
+// serialized — a miss costs one tail read and the healed log stands).
 func (s *Server) handleSessionsEvents(w http.ResponseWriter, r *http.Request) {
         id := r.PathValue("id")
-        sinceStr := r.URL.Query().Get("since")
+        q := r.URL.Query()
+        sinceStr := q.Get("since")
         since := 0
         if sinceStr != "" {
                 if n, err := strconv.Atoi(sinceStr); err == nil {
                         since = n
                 }
         }
-        events, err := s.db.ListEvents(id, since)
+        if since == 0 {
+                // the bootstrap shape — the reconcile's hook (an open never re-runs
+                // it: a spliced log ends in a REAL terminal, the trigger dies)
+                s.ocServeReconcileIfHealed(id)
+        }
+        var (
+                events []*store.Event
+                err    error
+                older  bool
+        )
+        switch {
+        case q.Get("tail") != "":
+                n := 2500
+                if v, e := strconv.Atoi(q.Get("tail")); e == nil && v > 0 {
+                        n = v
+                }
+                events, older, err = s.db.ListEventsTailN(id, n)
+        case q.Get("before") != "":
+                before, e1 := strconv.Atoi(q.Get("before"))
+                n := 1000
+                if v, e2 := strconv.Atoi(q.Get("n")); e2 == nil && v > 0 {
+                        n = v
+                }
+                if e1 != nil || before < 1 {
+                        writeError(w, 400, "before must be a seq number")
+                        return
+                }
+                events, older, err = s.db.ListEventsBefore(id, before, n)
+        default:
+                events, err = s.db.ListEvents(id, since)
+        }
         if err != nil {
                 writeError(w, 500, "list events: "+err.Error())
                 return
@@ -494,7 +544,7 @@ func (s *Server) handleSessionsEvents(w http.ResponseWriter, r *http.Request) {
                 b, _ := ev.ToJSON()
                 out = append(out, b)
         }
-        writeJSON(w, 200, map[string]any{"events": out, "session_id": id})
+        writeJSON(w, 200, map[string]any{"events": out, "session_id": id, "older": older})
 }
 
 // generateID returns a short unique ID (timestamp prefix + random hex).
