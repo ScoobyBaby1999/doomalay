@@ -48,6 +48,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/ScoobyBaby1999/doomalay/engine/internal/llm"
+	"github.com/ScoobyBaby1999/doomalay/engine/internal/netx"
 	"io"
 	"net/http"
 	"path"
@@ -1366,13 +1367,21 @@ echo "identity: $(git config --global user.name) <$(git config --global user.ema
 // ghLoginFor — the GitHub API's /user login for the token (best-effort;
 // the identity only, never fatal).
 func ghLoginFor(ctx context.Context, tok string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", "https://api.github.com/user", nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Authorization", "Bearer "+tok)
-	req.Header.Set("Accept", "application/vnd.github+json")
-	resp, err := http.DefaultClient.Do(req)
+	// v1.61.2 THE PATIENT WIRE: the raw http.DefaultClient is DEAD —
+	// no netx transport (the Android DNS fix never applied here), no
+	// retry (a transient blip killed git_setup). The login now rides
+	// the netx transport + RetryDo (3 attempts, transient classes
+	// only); an exhausted error carries the honest (retried 3x).
+	client := &http.Client{Timeout: 15 * time.Second, Transport: netx.Transport()}
+	resp, err := netx.RetryDo(ctx, client, func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, "GET", "https://api.github.com/user", nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+tok)
+		req.Header.Set("Accept", "application/vnd.github+json")
+		return req, nil
+	}, 3, time.Second)
 	if err != nil {
 		return "", err
 	}

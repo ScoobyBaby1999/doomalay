@@ -25,7 +25,6 @@ import (
         "math/rand"
         "net/http"
         "os"
-        "regexp"
         "runtime"
         "strconv"
         "strings"
@@ -34,6 +33,7 @@ import (
         "time"
 
         "github.com/ScoobyBaby1999/doomalay/engine/internal/mcpbus"
+        "github.com/ScoobyBaby1999/doomalay/engine/internal/netx"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/obs"
 )
 
@@ -2585,33 +2585,12 @@ func netLadderStream(ctx context.Context, req ChatRequest, ch chan<- ChatChunk, 
 // network/provider blip (worth a silent retry) rather than an auth or
 // protocol failure (retrying is pointless).
 func isTransientNetErr(err error) bool {
-        if err == nil {
-                return false
-        }
-        s := err.Error()
-        // v0.93.2 THE MISTRAL TLS CLASS: 'tls: bad record MAC' (and the tls/
-        // handshake family) is mid-stream TLS record corruption — carrier
-        // NAT rebinds, mobile-network proxies, connection reuse through
-        // flaky middleboxes (the Go issue tracker's own diagnosis: 'network
-        // corruption of some sort'). The user's live hit: Mistral tool
-        // chains died terminal on api.mistral.ai with
-        //   Post "https://api.mistral.ai/v1/chat/completions": remote error:
-        //   tls: bad record MAC
-        // The cure is EXACTLY what the pause ladder does — retry on a FRESH
-        // connection (Go's transport discards the poisoned one). These are
-        // transient by nature; auth/protocol errors never match this set.
-        //
-        // v1.52.1 THE DNS RUNG: the trippy (2).md log convicted the DNS
-        // class as TERMINAL — the device's resolver (system + DoH) dropped
-        // for ~3 minutes and the SAME user message died 5 times in a row:
-        //   netx: no address for "integrate.api.nvidia.com" (system resolver
-        //   and DNS-over-HTTPS both failed)
-        // DNS death on a phone is a walking outage ( captive-portal capture,
-        // wifi handoff, airplane-mode edge) — it comes back, and when it
-        // does the ladder's fresh dial lands. No such host / lookup /
-        // no address / SERVFAIL now ride the pause ladder like every other
-        // transient net class instead of an instant terminal error.
-        return regexp.MustCompile(`(?i)timeout|context deadline|connection reset|broken pipe|unexpected EOF|refused|temporary|HTTP 5[0-9][0-9]|503|502|network|went silent|no data|bad record mac|tls:|record mac|handshake failure|no such host|no address|lookup|dns|server misbehaving|SERVFAIL`).MatchString(s)
+        // v1.61.2 THE PATIENT WIRE: the class set moved to netx.IsTransient
+        // (one truth — the tool-side retry wire and the turn-level pause
+        // ladder classify with the SAME regex; the set is byte-identical,
+        // every class live-convicted on the device: the v0.93.2 TLS
+        // bad-record rung, the v1.52.1 DNS walking-outage rung).
+        return netx.IsTransient(err)
 }
 
 // mergeUsage sums two usage reports (nil-safe).

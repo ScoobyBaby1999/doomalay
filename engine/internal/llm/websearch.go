@@ -445,6 +445,14 @@ func isPublicIP(ip net.IP) bool {
 // returns the FULL content — the model's context window is guarded by the
 // spec-driven 92% guard (announced, v1.14.1), never by a silent cut here.
 // PLAN-V119 §v1.19.1: "tool/transport data is never truncated."
+// webFetchRetryAttempts/webFetchRetryBase — THE PATIENT WIRE pacing
+// for the page fetch (v1.61.2): 2 attempts, 500ms base. Vars so pins
+// pace fast.
+var (
+	webFetchRetryAttempts = 2
+	webFetchRetryBase     = 500 * time.Millisecond
+)
+
 func WebFetch(ctx context.Context, rawURL string) (string, error) {
         if err := assertPublicURL(rawURL); err != nil {
                 return "", err
@@ -454,12 +462,19 @@ func WebFetch(ctx context.Context, rawURL string) (string, error) {
         if txt, ok, err := structuredFetch(ctx, rawURL, true); ok {
                 return txt, err
         }
-        req, err := http.NewRequestWithContext(ctx, "GET", rawURL, nil)
-        if err != nil {
-                return "", err
-        }
-        req.Header.Set("User-Agent", browserUA)
-        resp, err := ssrfClient.Do(req)
+        // v1.61.2 THE PATIENT WIRE: the page fetch rides netx.RetryDo (2
+        // attempts, transient classes only) — the live chatlogs convicted
+        // raw DNS/EOF errors reaching the model verbatim ("fetch error:
+        // resolve raw.githubusercontent.com: no address"); a walking
+        // outage deserves one patient retry, not an instant verdict.
+        resp, err := netx.RetryDo(ctx, ssrfClient, func() (*http.Request, error) {
+                req, err := http.NewRequestWithContext(ctx, "GET", rawURL, nil)
+                if err != nil {
+                        return nil, err
+                }
+                req.Header.Set("User-Agent", browserUA)
+                return req, nil
+        }, webFetchRetryAttempts, webFetchRetryBase)
         if err != nil {
                 return "", err
         }

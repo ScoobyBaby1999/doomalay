@@ -16,6 +16,8 @@ import (
         "net/http"
         "strings"
         "time"
+
+        "github.com/ScoobyBaby1999/doomalay/engine/internal/netx"
 )
 
 // ErrUnsupported: the forge kind has no such capability.
@@ -103,6 +105,15 @@ func redactPath(u string) string {
         return u
 }
 
+// forgeRetryAttempts/forgeRetryBase — THE PATIENT WIRE pacing (v1.61.2).
+// 3 attempts (1 original + 2 retries), 1s base → waits 1s then 3s —
+// exponential-enough for a walking outage (the DNS class takes minutes;
+// the sentinel covers the long game). Vars so the pins pace fast.
+var (
+	forgeRetryAttempts = 3
+	forgeRetryBase     = time.Second
+)
+
 // do runs one JSON request: method, full URL, optional bearer token,
 // optional body. Non-2xx → *StatusError. Guarded clients verify the URL
 // before the dial (belt: GuardURL at connect; braces: CheckRedirect).
@@ -118,23 +129,35 @@ func (c *Client) doAccept(ctx context.Context, method, fullURL, token string, bo
                         return nil, err
                 }
         }
-        var rdr io.Reader
-        if body != nil {
-                rdr = bytes.NewReader(body)
-        }
-        req, err := http.NewRequestWithContext(ctx, method, fullURL, rdr)
-        if err != nil {
-                return nil, err
-        }
-        req.Header.Set("User-Agent", forgeUA)
-        req.Header.Set("Accept", accept)
-        if contentType != "" {
-                req.Header.Set("Content-Type", contentType)
-        }
-        if token != "" {
-                req.Header.Set("Authorization", "Bearer "+token)
-        }
-        resp, err := c.hc.Do(req)
+        // v1.61.2 THE PATIENT WIRE: single-shot is DEAD. The live chatlogs
+        // convicted the raw transients reaching the model verbatim
+        // (context deadline exceeded / unexpected EOF / dial i/o timeout
+        // / DNS no-address) — every one a 1s/3s-backoff class (GitHub's
+        // own best-practice: a specific number of retries, exponential
+        // waits, never re-hammering validation-class 4xx). The wire now
+        // rides netx.RetryDo: transient classes + 5xx retry (3 attempts),
+        // auth/403/404/422 never do; an exhausted error carries the honest
+        // (retried 3x) suffix; the request builder is per-attempt (a body
+        // is consumed once — the builder pattern dodges the GetBody trap).
+        resp, err := netx.RetryDo(ctx, c.hc, func() (*http.Request, error) {
+                var rdr io.Reader
+                if body != nil {
+                        rdr = bytes.NewReader(body)
+                }
+                req, err := http.NewRequestWithContext(ctx, method, fullURL, rdr)
+                if err != nil {
+                        return nil, err
+                }
+                req.Header.Set("User-Agent", forgeUA)
+                req.Header.Set("Accept", accept)
+                if contentType != "" {
+                        req.Header.Set("Content-Type", contentType)
+                }
+                if token != "" {
+                        req.Header.Set("Authorization", "Bearer "+token)
+                }
+                return req, nil
+        }, forgeRetryAttempts, forgeRetryBase)
         if err != nil {
                 return nil, fmt.Errorf("%s %s: %w", method, redactPath(fullURL), err)
         }
