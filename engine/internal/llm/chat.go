@@ -875,6 +875,14 @@ func waitNotices(ch chan<- ChatChunk, src interface{ silentFor() time.Duration }
 // model is at capacity, or taking too long, let the user know... We can
 // suggest a switch of models as well").
 func friendlyHTTPError(status int, body string, provider string) string {
+        return friendlyHTTPErrorFor(status, body, provider, "")
+}
+
+// friendlyHTTPErrorFor — v1.63.2: the model rides the builder (the walled
+// message names the model the user picked, per the user's ask: "aswell as
+// the download size, model … included somewhere"). The legacy 3-arg name
+// stays exported-shape for the pinned tests.
+func friendlyHTTPErrorFor(status int, body string, provider string, model string) string {
         b := strings.TrimSpace(body)
         // v0.93.1 THE OPENROUTER HONESTY SET (live-probed 2026-10-02 with the
         // user's key): three provider states the generic branches mislabeled —
@@ -964,7 +972,7 @@ func friendlyHTTPError(status int, body string, provider string) string {
         // the copy names the phone's own path, not just the desktop's.
         if strings.Contains(b, "FreeTierError") || strings.Contains(b, "free tier can only be used") {
                 if runtime.GOOS == "android" {
-                        return "OpenCode's free models are walled to their own client — your key and the app are fine. On this phone the free models run through the POCKET BRIDGE: the OpenCode provider card → Install OpenCode (it drives Termux for you, one-time ~72.5MB). Meanwhile use the paid zen models (opencode.ai/settings/billing) or switch provider (NVIDIA / PrivateMode work great right now)"
+                        return ocWalledAndroidMessage(model)
                 }
                 return "OpenCode's free models are walled to their own client — your key and the app are fine. On the DESKTOP engine the free models run through the built-in OpenCode bridge; on this device use the paid zen models (a payment method at opencode.ai/settings/billing) or switch provider (NVIDIA / PrivateMode work great right now)"
         }
@@ -985,6 +993,64 @@ func friendlyHTTPError(status int, body string, provider string) string {
                 b = b[:220] + "…"
         }
         return fmt.Sprintf("%d: %s", status, b)
+}
+
+// ocWalledAndroidMessage — v1.63.2 THE DYNAMIC WALL (PLAN-V163 §2, the
+// user's ask #1): the ANDROID FreeTierError answer names the phone's OWN
+// missing rungs instead of one static paragraph. The ladder (each variant
+// carries the model, the one-time download size, and the installed-state
+// truths — the user's "display either the first or the second depending
+// on what is installed and what is not"):
+//
+//      termux NOT ready  → THE SETUP PATH: "setup Termux by expanding the
+//                         chat metadata → Capabilities → Termux. Install
+//                         Opencode through the cloud provider menu, press the
+//                         '+ install opencode' pill (one-time ~SIZE)."
+//      termux ready ✓   → THE INSTALL PATH: "Termux is set up ✓ — one step
+//                         left: the cloud provider menu's '+ install
+//                         opencode' pill (one-time ~SIZE download)."
+//      installing       → THE HONEST WAIT: "the install is running right now
+//                         — try again when the pill says ✓".
+//      bridge up        → THE LIVE BRIDGE: the free models are one retry away
+//                         (this wall came from the direct zen line).
+//
+// A nil probe (tests, an un-wired embed) keeps the v1.50.2 static copy —
+// the full path told at once, never a blank.
+func ocWalledAndroidMessage(model string) string {
+        head := "OpenCode's free models are walled to their own client — your key and the app are fine"
+        if m := modelShort(model); m != "" && m != model {
+                head += " (" + m + " is one of them)"
+        }
+        tail := "Meanwhile use the paid zen models (opencode.ai/settings/billing) or switch provider (NVIDIA / PrivateMode work great right now)"
+        var st *OcPocketState
+        if OcPocketProbe != nil {
+                s := OcPocketProbe()
+                st = &s
+        }
+        if st == nil {
+                return head + ". On this phone the free models run through the POCKET BRIDGE: setup Termux, then in the cloud provider menu press the '+ install opencode' pill (one-time download through Termux). " + tail
+        }
+        size := st.SizeHint
+        if size == "" {
+                size = "72.5MB"
+        }
+        switch {
+        case st.BridgeUp:
+                return head + ". The pocket bridge is live on this phone — send again in a moment and the turn rides it (this reply slipped through the direct line)"
+        case st.Installing:
+                return head + ". The OpenCode install is running right now (one-time ~" + size + " through Termux) — try again when the providers screen's pill reads '✓ opencode setup'"
+        case !st.TermuxReady:
+                // THE SETUP PATH — the user's first variant, near-verbatim.
+                path := "Opencode requires Termux setup and the Opencode install on this phone: setup Termux by expanding the chat metadata → Capabilities → Termux"
+                if st.TermuxInstalled {
+                        path = "Termux is installed — finish its setup by expanding the chat metadata → Capabilities → Termux"
+                }
+                path += ". Then install Opencode through the cloud provider menu, press the '+ install opencode' pill (one-time ~" + size + " download)"
+                return head + ". " + path + ". " + tail
+        default:
+                // Termux ready ✓ — THE INSTALL PATH, the second variant.
+                return head + ". Termux is set up ✓ — one step left: install Opencode through the cloud provider menu, press the '+ install opencode' pill (one-time ~" + size + " download). " + tail
+        }
 }
 
 // scanSSE performs ONE streaming chat completion, invoking onDelta for every
@@ -1269,7 +1335,7 @@ return nil, nil, errHTTPAlreadyEmitted // v1.52.1: the caller must see the FAILU
                                                 RecordProviderFailure(req.Provider,
                                                         ClassifyProviderError(resp2.StatusCode, string(bts2)),
                                                         fmt.Sprintf("HTTP %d on %s (post effort-strip)", resp2.StatusCode, modelShort(req.Model)))
-                                                ch <- ChatChunk{Type: "error", Error: "http", Message: friendlyHTTPError(resp2.StatusCode, string(bts2), req.Provider)}
+                                                ch <- ChatChunk{Type: "error", Error: "http", Message: friendlyHTTPErrorFor(resp2.StatusCode, string(bts2), req.Provider, req.Model)}
 return nil, nil, errHTTPAlreadyEmitted // v1.52.1: the caller must see the FAILURE (silence masked it as an empty-reply idle)
                                         }
                                         resp = resp2
@@ -1302,7 +1368,7 @@ return nil, nil, errHTTPAlreadyEmitted // v1.52.1: the caller must see the FAILU
                                                 RecordProviderFailure(req.Provider,
                                                         ClassifyProviderError(resp2.StatusCode, string(bts2)),
                                                         fmt.Sprintf("HTTP %d on %s (post max_tokens-strip)", resp2.StatusCode, modelShort(req.Model)))
-                                                ch <- ChatChunk{Type: "error", Error: "http", Message: friendlyHTTPError(resp2.StatusCode, string(bts2), req.Provider)}
+                                                ch <- ChatChunk{Type: "error", Error: "http", Message: friendlyHTTPErrorFor(resp2.StatusCode, string(bts2), req.Provider, req.Model)}
 return nil, nil, errHTTPAlreadyEmitted // v1.52.1: the caller must see the FAILURE (silence masked it as an empty-reply idle)
                                         }
                                         // fall through to the stream with the stripped body
@@ -1322,7 +1388,7 @@ return nil, nil, errHTTPAlreadyEmitted // v1.52.1: the caller must see the FAILU
                                         // timer; the turn auto-resumes when the window
                                         // rolls. Every other status carries nothing and
                                         // parks exactly as before.
-                                        ecTerm := ChatChunk{Type: "error", Error: "http", Message: friendlyHTTPError(resp.StatusCode, string(bts), req.Provider)}
+                                        ecTerm := ChatChunk{Type: "error", Error: "http", Message: friendlyHTTPErrorFor(resp.StatusCode, string(bts), req.Provider, req.Model)}
                                         if resp.StatusCode == 429 || resp.StatusCode == 503 {
                                                 class := "429"
                                                 if resp.StatusCode == 503 {
