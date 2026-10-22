@@ -308,9 +308,16 @@
     // panel opens (render() ALWAYS runs — the withTimeout guarantees the
     // models/keys side resolves), then arm. The 400-attempt cap is a belt
     // (60s) against a pathological never-open.
-    fetchOcBridge(function armPoll(tries) {
+    // THE LIVE CONVICTION (the v1630 rig caught it red-handed): the
+    // callback's FIRST ARGUMENT is the fetch RESULT (the bridge status
+    // object) — the first draft's `armPoll(tries)` read the OBJECT as the
+    // counter (`(status || 0) < 400` is always false) and never retried.
+    // The counter lives OUTSIDE the callback; the result argument is
+    // ignored by design.
+    var armTries = 0;
+    fetchOcBridge(function armPoll() {
       if (!opened) {
-        if ((tries || 0) < 400) setTimeout(function () { armPoll((tries || 0) + 1); }, 150);
+        if (armTries++ < 400) setTimeout(armPoll, 150);
         return;
       }
       render();
