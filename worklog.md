@@ -1427,6 +1427,14 @@ Honest limits: glm's dynamic reasoning SKIPS recall facts intermittently (the ca
 - Battery: go 15/15 (the djournal package the 15th) · v1428 48+30 · v1427 57+33 (deterministic ×3 after the harness law; the rig's sheet pins updated to the four-button truth + the flaky T11 two-way check hardened to a poll) · v1426 34+16 · v1425 45+28 · v1424 46+20 · v1421 24/24 · v1400 ALL GREEN · v1350 ALL GREEN · v1310 58/58 · v1390 source-pin PASS (re-anchored) · v1391 10/10 (142 vars) · census re-anchored · discipline 7+B1 (the pre-existing trio, byte-identical to origin/main) · node --check clean.
 - Honest limits: persona badge images are persona-scoped and do not ride yet (a follow-up's ref shape); the import report caps at 6 warnings (the rest ride the console); the export's zip is level-6 deflate (store-only bundles for huge assets can ride a later level knob); the truncation ladder's declared-smaller shape relies on the JSON/image-sniff rungs (defense in depth, both shapes reject).
 
+## v1.57 THE BOUNDED FIELD (PLAN-V157 — the manageable canvas + the ×2 render)
+
+- v1.57.1 THE TRUE BOUNDS (40994023) — default 16,384 + the worldSizeV157 one-time migration + the adaptive fit-all min zoom (min(W,H)/WORLD_SIZE clamped [1/64, 0.125] at all four clamp sites + the post-resize re-clamp + minScaleLive on the probe) + the far-field fade (spacing-keyed, byte-identical at today's scales; the map view past it) + the 8k rung.
+- v1.57.2 THE RIDE (b0e41312) — the #chatbots container camera + camera-free icon locals (the orbit tilt folds the camera back in); doomalay.setRide/rideProbe the A/B; the census: 0 plain-icon writes vs 44 legacy on the same sweep.
+- v1.57.3 THE ONE FRAME (7b55ebb5) — the input-recency clock (inputOwnsFrame): tick defers the step + the render to the coalesced update while the finger moves (<48ms), hands back on hold; stepCalls/framePaints the instrument.
+- v1.57.4 THE PROOF (eb7902e9) — v1570-bounded-field-rig 46/46 + the walk 16/16 + the full battery (v1350-v1428, go 18 ok, vet, cross-compiles, census re-anchored, source-pin PASS); the convictions: the eaten `var segMode` (legacy-fallback caught via lastError), the sleeper-pair broadphase law, the steps-per-paint rest cadence (60/30 by design — count rAF frames), the +22-line ledger shift.
+- v1.58.0 THE SHIP (this commit) — buildinfo 1.58.0; the README note; this record.
+
 ## v1.56 THE WHOLE TOOLS (the user's law: the tooling is the sole focus)
 
 - v1.56.0 (2d911dc) — the user's ask verbatim: "Focus on fixing all tool hiccups, we want every single tool to not be truncated, greps to return all hits and work like a sophisticated grep even if we must use an opensource library I don't mind at all. Anything as long as we have a very robust tooling system. This is the sole focus."
