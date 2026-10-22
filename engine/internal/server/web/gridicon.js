@@ -84,13 +84,42 @@
     // the style write; the orbit's slow drift changes the string rarely —
     // motion still writes because the string genuinely changes).
     render(offsetX, offsetY, scale) {
-      // v0.88.2: a grouped tab's ORBIT owns x/y (tabgroups.js writes it
-      // every frame); the tilted 3D plane's depth rides here — a subtle
-      // scale swing + a y-lift (the stars' parallax language, tied to the
-      // Parallax slider through tabgroups' depthK/liftK). The v0.88
-      // AMBIENT WRITE GUARD stays (identical transforms skip the style
-      // write — the orbit's slow drift changes the string rarely; motion
-      // still writes because the string genuinely changes).
+      // v1.57.2 THE RIDE (PLAN-V157 §2): when window.__doomalayIconRide
+      // is on, the CAMERA lives on the #chatbots container (app.js
+      // paintCameraRide writes translate3d(−ox·s, −oy·s)·scale(s) ONCE
+      // per camera frame) and this icon's transform is CAMERA-FREE — a
+      // plain icon writes its world position once and NEVER changes
+      // during pans/momentum/glides/pinches (the __lastTf guard becomes
+      // real during camera motion; before the ride, every camera frame
+      // rewrote every in-view icon's string — 60 icons × 60fps =
+      // 3,600 style writes/sec).
+      // The orbit tilt (_orbitScale/_orbitLift) is a SCREEN-relative
+      // effect — the legacy position is (x−ox)·scale·os, i.e. the
+      // position scales by os AROUND THE SCREEN CENTER, which no
+      // container transform can express. It rides by folding the camera
+      // back in LOCALLY:
+      //     px = x·os + ox·(1−os),  py = y·os + oy·(1−os) − lift/scale
+      // Container·local ≡ the legacy matrix, term for term:
+      //     screen_x = scale·px − scale·ox = scale·os·(x−ox)    ✓ legacy sx
+      //     screen_y = scale·py − scale·oy = scale·os·(y−oy) − lift ✓ legacy sy
+      //     visual scale = container·scale(scale) × local·scale(os)   ✓
+      if (window.__doomalayIconRide) {
+        const os = this._orbitScale || 1;
+        const lift = (this._orbitLift || 0) / (scale || 1);
+        const px = this.x * os + offsetX * (1 - os);
+        const py = this.y * os + offsetY * (1 - os) - lift;
+        const tf = 'translate3d(' + px + 'px,' + py + 'px,0) translate(-50%,-50%) scale(' + os + ')';
+        if (this.__lastTf === tf) return;
+        this.__lastTf = tf;
+        this.el.style.transform = tf;
+        try {
+          if (window.DoomalayPerf) window.DoomalayPerf.iconWrites =
+            (window.DoomalayPerf.iconWrites || 0) + 1;   // v1.57.2: the honest instrument
+        } catch (e) {}
+        return;
+      }
+      // legacy: the camera baked into every icon (the pre-v1.57.2 A/B
+      // path — the v0.88.2 orbit notes above still govern both paths)
       const s = (scale || 1) * (this._orbitScale || 1);
       const sx = (this.x - offsetX) * s;
       const sy = (this.y - offsetY) * s - (this._orbitLift || 0);
@@ -98,6 +127,10 @@
       if (this.__lastTf === tf) return;
       this.__lastTf = tf;
       this.el.style.transform = tf;
+      try {
+        if (window.DoomalayPerf) window.DoomalayPerf.iconWrites =
+          (window.DoomalayPerf.iconWrites || 0) + 1;   // v1.57.2: the honest instrument
+      } catch (e) {}
     }
 
     // ── Tap-flash animation ──────────────────────────────────────

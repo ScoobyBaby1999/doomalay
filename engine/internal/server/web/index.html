@@ -340,6 +340,15 @@
     width: 100%; height: 100%;
     pointer-events: none;
     z-index: 100;
+    /* v1.57.2 THE RIDE (PLAN-V157 §2): the camera rides THIS container —
+       app.js paintCameraRide writes translate3d(−ox·s, −oy·s, 0) scale(s)
+       once per camera frame; the icons keep camera-free local transforms.
+       transform-origin 0 0 is the camera math's anchor (the React Flow
+       .react-flow__viewport law); will-change keeps the layer composited
+       so camera motion never re-rasterizes icon content (one viewport-
+       sized layer beats N per-icon layers — the MDN/web.dev verdict). */
+    transform-origin: 0 0;
+    will-change: transform;
   }
   .chatbot {
     position: absolute;

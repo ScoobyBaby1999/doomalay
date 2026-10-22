@@ -995,6 +995,11 @@
       // contract's shape).
       return { x: offsetX, y: offsetY, scale: scale, worldSize: WORLD_SIZE, w: W, h: H, maxScale: MAX_SCALE, minScale: MIN_SCALE, minScaleLive: minScale() };
     },
+    // v1.57.2 THE RIDE: the A/B lever + the rig read-back (the lattice's
+    // __doomalayLatticeLegacy precedent — the rig flips both paths and
+    // proves the geometry + the write census on each).
+    setRide: setRide,
+    rideProbe: rideProbe,
     // v1.42.5 THE SWAP: the canonical switch + the registry probe (the
     // manager panel + v1.42.6's portals both ride the ONE switchTo).
     switchTo: switchTo,
@@ -1291,6 +1296,48 @@
   // pure wasted work (physics + a full lattice frame + icon transforms
   // + the worker post, per EVENT). The state math (offset/velocity, the
   // per-event dt EMA) stays per-event — only the RENDER is coalesced to
+  // ── v1.57.2 THE RIDE (PLAN-V157 §2) — the container camera ────
+  // React Flow's production pattern (the .react-flow__viewport law): the
+  // camera rides ONE transform on #chatbots — translate3d(−ox·s, −oy·s, 0)
+  // scale(s) with transform-origin 0 0 (the CSS twin in index.html) — and
+  // the icons keep CAMERA-FREE local transforms (GridIcon.render's ride
+  // branch). A camera frame costs ONE style write (skip-if-identical) on
+  // the composited container instead of one write per in-view icon; the
+  // motion itself runs on the compositor thread (a transform-only change
+  // never re-rasterizes — the Chromium cc contract). The kill switch
+  // (window.__doomalayRideOff / doomalay.setRide) restores the legacy
+  // per-icon camera bakes — the A/B the rig proves with (the lattice's
+  // __doomalayLatticeLegacy precedent).
+  window.__doomalayIconRide = !window.__doomalayRideOff;
+  var rideLastTf = '';
+  function paintCameraRide() {
+    if (!window.__doomalayIconRide) return;
+    var tf = 'translate3d(' + (-offsetX * scale) + 'px,' + (-offsetY * scale) + 'px,0) scale(' + scale + ')';
+    if (tf === rideLastTf) return;
+    rideLastTf = tf;
+    if (iconLayer) iconLayer.style.transform = tf;
+    try {
+      if (window.DoomalayPerf) window.DoomalayPerf.rideWrites =
+        (window.DoomalayPerf.rideWrites || 0) + 1;   // v1.57.2: the honest instrument
+    } catch (e) {}
+  }
+  // setRide(off) — the A/B toggle: flips the mode, resets every icon's
+  // cached transform string (the branch change must re-render all), and
+  // paints or clears the container. The rig's lever.
+  function setRide(off) {
+    window.__doomalayIconRide = !off;
+    if (off) window.__doomalayRideOff = true; else window.__doomalayRideOff = false;
+    rideLastTf = '';
+    if (off && iconLayer) iconLayer.style.transform = '';
+    for (const icon of world.entities) icon.__lastTf = null;
+    update();
+  }
+  function rideProbe() {
+    return { on: !!window.__doomalayIconRide, containerTf: iconLayer ? (iconLayer.style.transform || '') : '',
+      lastTf: rideLastTf, iconWrites: (window.DoomalayPerf && window.DoomalayPerf.iconWrites) || 0,
+      rideWrites: (window.DoomalayPerf && window.DoomalayPerf.rideWrites) || 0 };
+  }
+
   // ── v1.42.2 THE FIELD — THE VISIBILITY LAW (PLAN-V142 §3.0) ─────
   // Per-frame DOM cost becomes O(visible), not O(world). We own the
   // camera (offsetX/offsetY/scale) and the viewport (W/H), so an icon's
@@ -1316,6 +1363,7 @@
     return sx > -CULL_PAD && sx < W + CULL_PAD && sy > -CULL_PAD && sy < H + CULL_PAD;
   }
   function renderIconsCulled() {
+    paintCameraRide();   // v1.57.2 THE RIDE: ONE container write per camera frame (skip-if-identical)
     for (const icon of world.entities) {
       if (iconInView(icon)) {
         if (icon.__culled) {
@@ -1333,6 +1381,7 @@
   // The orbit-member twin (the members loop is a subset of entities —
   // the same law, applied to TabGroups' moving members).
   function renderMembersCulled(members) {
+    paintCameraRide();   // v1.57.2: the orbit pass can run on its own frame — the container stays synced
     for (var mi = 0; mi < members.length; mi++) {
       var m = members[mi];
       if (iconInView(m)) {
