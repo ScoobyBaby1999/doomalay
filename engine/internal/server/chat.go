@@ -1245,6 +1245,10 @@ func continueTailIsAssistant(events []*store.Event) bool {
 //     bridge's own continue stays its wave's surface — an opencode-session
 //     continue falls to the honest normal path here)
 func (s *Server) handleContinueTurn(sender *websocket.Conn, pipe *chatPipe, sessionID string, sess *store.Session, msg map[string]any) {
+        // v1.61.3 THE RETRY SENTINEL: the manual tap is always faster and
+        // always welcome — the listener disarms, the timer dies when its
+        // last listener leaves, and the same continueCore runs either way.
+        s.sentinelFor().Disarm(sessionID)
         defer func() {
                 if rec := recover(); rec != nil {
                         log.Printf("PANIC recovered in continue-turn %s: %v", sessionID, rec)
@@ -1280,6 +1284,19 @@ func (s *Server) handleContinueTurn(sender *websocket.Conn, pipe *chatPipe, sess
         }
         defer release()
 
+        // v1.61.3: the continue ENGINE is shared with the retry sentinel
+        // (continueCore) — the auto-resume rides the same laws.
+        s.continueCore(sender, pipe, sessionID, sess)
+}
+// continueCore - THE CONTINUE ENGINE (v1.61.3: extracted from
+// handleContinueTurn so the retry sentinel's auto-resume rides the
+// IDENTICAL laws - lock contract, error-row masking, the seam-nudge
+// tail-read, the v1.50.5 terminal discipline, every path's dispatch).
+// sender may be nil (the sentinel's call - no WS owner; Stop still
+// cancels through the turnCancels registry). Returns whether a
+// terminal state rode (the caller's idle fallback is skipped when
+// true).
+func (s *Server) continueCore(sender *websocket.Conn, pipe *chatPipe, sessionID string, sess *store.Session) (terminal bool) {
         markTurnEvent(sessionID)
         defer releaseTurnPulse(sessionID)
         turnGaugeInc(sessionID)
@@ -1322,7 +1339,6 @@ func (s *Server) handleContinueTurn(sender *websocket.Conn, pipe *chatPipe, sess
 
         turnCtx, turnCancel := context.WithCancel(context.Background())
         tcHandle := registerTurnCancel(sessionID, turnCancel, sender)
-        terminal := false
         defer func() {
                 releaseTurnCancel(sessionID, tcHandle)
                 turnCancel()
@@ -1348,7 +1364,9 @@ func (s *Server) handleContinueTurn(sender *websocket.Conn, pipe *chatPipe, sess
         } else {
                 s.streamFromDirectProxy(turnCtx, pipe, sessionID, sess, "", "", "", "", &terminal, &continueSpec{nudge: nudge})
         }
+        return
 }
+
 
 // continueBrainReq — the brain-path continuation request: the same
 // per-turn shape handleTurn builds, minus everything a continuation
@@ -1397,6 +1415,10 @@ func (s *Server) continueBrainReq(sessionID string, sess *store.Session, nudge s
 // WS drop just clears the pipe while the turn keeps persisting (a resumed
 // client picks it up).
 func (s *Server) handleTurn(sender *websocket.Conn, pipe *chatPipe, sessionID string, sess *store.Session, msg map[string]any) {
+        // v1.61.3 THE RETRY SENTINEL: a manual send is the user being
+        // faster than the timer — the listener disarms (the last listener
+        // out kills the timer) and the user's own turn owns the chat.
+        s.sentinelFor().Disarm(sessionID)
         // v0.15 (crash fix): this runs in its own goroutine — a panic here
         // would take the whole engine down (dead app, white screen). The
         // recoverMiddleware can't see goroutine panics, so guard locally.
@@ -2578,6 +2600,17 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, pipe *chatPipe, sess
                                         "output_cut":    chunk.Usage.OutputCut,
                                 }
                         }
+                        if chunk.RetryClass != "" {
+                                // v1.61.3 THE RETRY SENTINEL: the terminal
+                                // error chunk carries the machine-readable
+                                // retry signal — the persist + the sentinel
+                                // arm both read it below.
+                                ev["retry_class"] = chunk.RetryClass
+                                ev["retry_provider"] = chunk.RetryProvider
+                                if chunk.RetryAfterMS > 0 {
+                                        ev["retry_after_ms"] = chunk.RetryAfterMS
+                                }
+                        }
                         if chunk.Error != "" {
                                 ev["error"] = chunk.Error
                                 ev["message"] = chunk.Message
@@ -2999,6 +3032,17 @@ func (s *Server) forwardEvents(ctx context.Context, pipe *chatPipe, sessionID st
                         // attribution ("your key" vs "the community key")
                         // and the model-gone chips exactly as live.
                         errEv := map[string]any{}
+                        // v1.61.3: the sentinel's machine fields persist with the
+                        // error row (the boot scan + the PWA replay read them).
+                        if rc, _ := ev["retry_class"].(string); rc != "" {
+                                errEv["retry_class"] = rc
+                                if rp, _ := ev["retry_provider"].(string); rp != "" {
+                                        errEv["retry_provider"] = rp
+                                }
+                                if ra, ok := ev["retry_after_ms"].(float64); ok {
+                                        errEv["retry_after_ms"] = ra
+                                }
+                        }
                         for _, k := range []string{"message", "error", "provider", "model", "key_source", "env_var"} {
                                 if v, ok := ev[k]; ok && v != nil {
                                         errEv[k] = v
@@ -3031,6 +3075,22 @@ func (s *Server) forwardEvents(ctx context.Context, pipe *chatPipe, sessionID st
                         content = string(b)
                 }
                 toolUseID, _ := ev["tool_use_id"].(string)
+
+                // v1.61.3 THE RETRY SENTINEL: a retryable terminal error arms
+                // the shared dynamic timer AFTER its row persists (the pill
+                // lands below the error bubble in the log). The sentinel
+                // owns everything from here: the probes, the listeners, the
+                // auto-continue when the signal clears.
+                if evType == "error" {
+                        if rc, _ := ev["retry_class"].(string); rc != "" {
+                                prov, _ := ev["retry_provider"].(string)
+                                raMS := int64(0)
+                                if v, ok := ev["retry_after_ms"].(float64); ok {
+                                        raMS = int64(v)
+                                }
+                                s.sentinelFor().Arm(sessionID, prov, rc, raMS, "")
+                        }
+                }
 
                 // V0 FIX: persist the event AS IT EMITS (not at turn-end).
                 // v1.29.5 THE GITHUB HAND: the pasted-PAT hazard dies — the

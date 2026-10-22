@@ -315,6 +315,25 @@ func (db *DB) SetSetting(key, value string) error {
         return err
 }
 
+// ListSettingsLike returns every row whose key matches the prefix
+// (v1.61.3 THE RETRY SENTINEL: the boot scan walks retry.sentinel.*).
+func (db *DB) ListSettingsLike(prefix string) (map[string]string, error) {
+	rows, err := db.Query("SELECT key, value FROM app_settings WHERE key LIKE ?", prefix+"%")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			return nil, err
+		}
+		out[k[len(prefix):]] = v
+	}
+	return out, rows.Err()
+}
+
 // DeleteSetting removes one app_settings row (idempotent).
 func (db *DB) DeleteSetting(key string) error {
         _, err := db.Exec("DELETE FROM app_settings WHERE key = ?", key)

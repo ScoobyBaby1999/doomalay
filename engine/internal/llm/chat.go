@@ -173,6 +173,14 @@ type ChatChunk struct {
         Args     string         `json:"args,omitempty"`     // v1.19.1: the RAW tool argument JSON, unclamped (the viewer's "query under the tool name")
         Sources  []SearchResult `json:"sources,omitempty"`  // web sources (sources event)
         Artifact map[string]any `json:"artifact,omitempty"` // v0.22: file tool result (name/id/size) — the UI renders a download card
+
+        // v1.61.3 THE RETRY SENTINEL: the terminal error chunk carries the
+        // machine-readable retry signal (set by emitTurnError from the
+        // RetryableError the park sites wrapped; empty for every
+        // non-retryable failure — auth/quota/modelgone never auto-resume).
+        RetryClass    string `json:"retry_class,omitempty"`
+        RetryProvider string `json:"retry_provider,omitempty"`
+        RetryAfterMS  int64  `json:"retry_after_ms,omitempty"`
 }
 
 // Usage is the token usage from the final chunk. v1.14.1 THE LEDGER:
@@ -396,6 +404,13 @@ func runPlainTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- error, r
                 seamReq.Messages = msgs
                 final, err = netSuspendedLoopPlain(ctx, ch, seamReq)
         }
+        // v1.61.3 THE RETRY SENTINEL: a mid-stream cut that exhausted the
+        // one-seam budget parks the turn (the trippy class — the live log
+        // shows two parked turns on "software caused connection abort").
+        // The sentinel arms; the auto-continue resumes with the seam nudge.
+        if err != nil && isTransientNetErr(err) && !errors.Is(err, context.Canceled) {
+                err = wrapRetryable(err, "net", req.Provider, 0)
+        }
         if err != nil {
                 sealTurn(ctx, ch, err, nil)
                 emitTurnError(ch, err)
@@ -448,7 +463,17 @@ func emitTurnError(ch chan<- ChatChunk, err error) {
                 ch <- ChatChunk{Type: "status", State: "error"}
                 return
         }
-        ch <- ChatChunk{Type: "error", Error: "stream", Message: friendlyStreamError(err)}
+        ec := ChatChunk{Type: "error", Error: "stream", Message: friendlyStreamError(err)}
+        // v1.61.3 THE RETRY SENTINEL: a RetryableError's class rides the
+        // terminal chunk — the server-side sentinel arms the dynamic timer
+        // from it. Non-retryable failures carry nothing and park exactly
+        // as before (the user's tap stays the only way).
+        if class, prov, raMS := retryChunkFields(err); class != "" {
+                ec.RetryClass = class
+                ec.RetryProvider = prov
+                ec.RetryAfterMS = raMS
+        }
+        ch <- ec
         ch <- ChatChunk{Type: "status", State: "error"}
 }
 
@@ -1289,7 +1314,28 @@ return nil, nil, errHTTPAlreadyEmitted // v1.52.1: the caller must see the FAILU
                                         RecordProviderFailure(req.Provider,
                                                 ClassifyProviderError(resp.StatusCode, string(bts)),
                                                 fmt.Sprintf("HTTP %d on %s", resp.StatusCode, modelShort(req.Model)))
-                                        ch <- ChatChunk{Type: "error", Error: "http", Message: friendlyHTTPError(resp.StatusCode, string(bts), req.Provider)}
+                                        // v1.61.3 THE RETRY SENTINEL: a 429/503 that survived the
+                                        // retry ladder parks the turn — the chunk carries the
+                                        // machine-readable class (+ the provider's own
+                                        // Retry-After, OpenRouter-documented, clamping the
+                                        // first probe) and the sentinel arms the dynamic
+                                        // timer; the turn auto-resumes when the window
+                                        // rolls. Every other status carries nothing and
+                                        // parks exactly as before.
+                                        ecTerm := ChatChunk{Type: "error", Error: "http", Message: friendlyHTTPError(resp.StatusCode, string(bts), req.Provider)}
+                                        if resp.StatusCode == 429 || resp.StatusCode == 503 {
+                                                class := "429"
+                                                if resp.StatusCode == 503 {
+                                                        class = "5xx"
+                                                }
+                                                ecTerm.RetryClass = class
+                                                ecTerm.RetryProvider = req.Provider
+                                                ecTerm.RetryAfterMS = retryAfterHeaderMS(resp.Header.Get("Retry-After"))
+                                        }
+                                        ch <- ecTerm
+if ecTerm.RetryClass != "" { // v1.61.3: the retryable class rides the sentinel wrap
+                                                return nil, nil, wrapRetryable(errHTTPAlreadyEmitted, ecTerm.RetryClass, req.Provider, ecTerm.RetryAfterMS)
+                                        }
 return nil, nil, errHTTPAlreadyEmitted // v1.52.1: the caller must see the FAILURE (silence masked it as an empty-reply idle)
                                 }
                         }
@@ -2202,6 +2248,17 @@ func WakeNet() {
         netWakeMu.Unlock()
 }
 
+// WakeNetCh returns the CURRENT wake channel (v1.61.3: the server-side
+// retry sentinel listens on it too — a regained-connection broadcast
+// short-circuits every net-class timer's wait and fires the probe
+// immediately). A listener re-fetches the channel after each wake
+// (WakeNet closes the old channel and installs a fresh one).
+func WakeNetCh() <-chan struct{} {
+        netWakeMu.Lock()
+        defer netWakeMu.Unlock()
+        return netWakeCh
+}
+
 // envDurs/envDur — rig-only env overrides for the ladder's clocks.
 func envDurs(key string, dflt []time.Duration) []time.Duration {
         raw := os.Getenv(key)
@@ -2374,7 +2431,12 @@ func netProviderHoldLoop(ctx context.Context, ch chan<- ChatChunk, provider, ent
                         // ends here after the bounded hold and the way
                         // forward is CONTINUE (the v1.50.5 law; the DNS rung
                         // made this string reachable again).
-                        return fmt.Errorf("%s is unreachable right now — this looks like a problem on their side (your connection is fine). Tap Continue when you want to try again", label)
+                        // v1.61.3 THE RETRY SENTINEL: the hold expired on a
+                        // transient class — the sentinel arms a dynamic
+                        // timer and the turn AUTO-RESUMES when the provider
+                        // answers again (the user's tap still works, it is
+                        // just never REQUIRED).
+                        return wrapRetryable(fmt.Errorf("%s is unreachable right now — this looks like a problem on their side (your connection is fine). Tap Continue when you want to try again, or wait — the auto-retry resumes the turn the moment %s answers", label, label), "net", provider, 0)
                 }
                 if next > remaining {
                         next = remaining

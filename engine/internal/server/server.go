@@ -107,6 +107,13 @@ type Server struct {
 	wsLastReadMu sync.Mutex
 	wsLastRead   map[string]wsLastReadEntry
 
+	// v1.61.3 THE RETRY SENTINEL: the cross-chat dynamic timer registry —
+	// one timer per retryable signal (class|provider), every interrupted
+	// chat a listener; auto-continuation on the signal's recovery.
+	// retrysentinel.go owns these.
+	sentinelOnce sync.Once
+	sentinel     *retrySentinel
+
 	// v1.23.1 THE LINK: the F-Droid stable-APK resolver cache (6h TTL,
 	// one fetch in flight; offline answers the frozen fallback URL).
 	fdroid fdroidCache
@@ -270,6 +277,11 @@ func New(cfg *config.Config, db *store.DB, br *brain.Brain) *Server {
 	// v1.42.1 THE LONG HAUL: idle-time maintenance (checkpoint/vacuum
 	// cadence) — OFF the boot path by construction (first pass 30s in).
 	go s.maintenanceLoop()
+	// v1.61.3 THE RETRY SENTINEL: the boot scan re-arms parked chats whose
+	// tail is a retryable terminal (the durability rows survive the engine
+	// restart; the attempt count rides — "continued after X retries" counts
+	// honestly across restarts).
+	go s.sentinelBootScan()
 	return s
 }
 

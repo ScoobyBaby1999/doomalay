@@ -412,6 +412,9 @@ func (s *Server) handleSessionsDelete(w http.ResponseWriter, r *http.Request) {
         // the chat (the serve-side session is best-effort cleaned — only when a
         // serve is already up; the delete never blocks on the bridge).
         s.dropOcServeBinding(id)
+        // v1.61.3 THE RETRY SENTINEL: the listener + its durability row die
+        // with the chat (the last listener out kills the timer).
+        s.sentinelFor().Disarm(id)
         writeJSON(w, 200, map[string]bool{"ok": true})
 }
 

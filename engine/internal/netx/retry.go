@@ -39,7 +39,7 @@ import (
 //	unexpected EOF / refused / temporary / HTTP 5xx / 502 / 503 /
 //	network / went silent / no data / tls: bad record MAC / handshake
 //	failure / no such host / no address / lookup / dns / SERVFAIL
-var transientRe = regexp.MustCompile(`(?i)timeout|context deadline|connection reset|broken pipe|unexpected EOF|^EOF$|: EOF( |$)|refused|temporary|HTTP 5[0-9][0-9]|503|502|network|went silent|no data|bad record mac|tls:|record mac|handshake failure|no such host|no address|lookup|dns|server misbehaving|SERVFAIL`)
+var transientRe = regexp.MustCompile(`(?i)timeout|context deadline|connection reset|broken pipe|unexpected EOF|^EOF$|: EOF( |$)|refused|temporary|HTTP 5[0-9][0-9]|503|502|network|went silent|no data|bad record mac|tls:|record mac|handshake failure|no such host|no address|lookup|dns|server misbehaving|SERVFAIL|connection abort`)
 
 // IsTransient reports whether err is a transient network class (the
 // retry-worth set: it comes back on its own — carrier NAT rebinds,

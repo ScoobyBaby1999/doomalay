@@ -772,8 +772,24 @@ func ocServeFailEvents(sessionID, errType, errMsg string, status int) []map[stri
                 kind = "oc_bridge_auth"
                 msg = "OpenCode rejected the bridge key — check the OpenCode key in the providers screen (" + msg + ")"
         }
+        // v1.61.3 THE RETRY SENTINEL: the free-limit / rate-limit class arms
+        // the shared dynamic timer (the window rolls on opencode's own
+        // ~11h clock; the probe checks the bridge's health; the turn
+        // AUTO-RESUMES with no tap — the user's order. Auth failures never
+        // arm.)
+        retryClass := ""
+        if status == 429 || strings.Contains(strings.ToLower(msg), "free usage limit") || strings.Contains(strings.ToLower(msg), "rate limit") {
+                if kind != "oc_bridge_auth" {
+                        retryClass = "429"
+                }
+        }
+        errEv := map[string]any{"type": "error", "session_id": sessionID, "error": kind, "message": msg}
+        if retryClass != "" {
+                errEv["retry_class"] = retryClass
+                errEv["retry_provider"] = "opencode"
+        }
         return []map[string]any{
-                {"type": "error", "session_id": sessionID, "error": kind, "message": msg},
+                errEv,
                 {"type": "status", "session_id": sessionID, "state": "error", "usage": nil},
         }
 }
