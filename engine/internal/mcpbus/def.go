@@ -208,7 +208,11 @@ var defs = []Def{
 	{Name: "workspace", Gate: GateWorkspace,
 		Desc: "Act on this chat's CONNECTED cloud repos (the CONNECTED CLOUD WORKSPACES block lists them): browse (tree/ls/read/grep/readme), inspect history/issues/PRs/discussions/releases/Tags/Actions (view), WRITE (put = an API commit, full access; pr opens a pull request; tag_create cuts a tag; fork), create a repo, or discover the account's repos. Use it whenever the user asks about their connected repo — its code, history, issues, PRs, or wants a change pushed. THE GREP IS A REAL GREP: the pattern is a REGEX by default ('foo|bar', 'func\\(\\w+'), EVERY hit in every file is reported (not one per file), and it takes include/exclude globs, context lines (context/before/after), case_sensitive, word, invert, count and files_only. Nothing is truncated silently — when a ceiling bites, the result says so.",
 		Props: []PropDef{
-			prop("action", "'list' (the connected repos), 'info', 'tree', 'ls', 'read', 'readme', 'grep', 'view', 'put', 'pr', 'tag_create', 'fork', 'create' or 'discover'.", PropString, true, "list", "info", "tree", "ls", "read", "readme", "grep", "view", "put", "pr", "tag_create", "fork", "create", "discover"),
+			// v1.61.1 THE SCHEMA TRUTH (PLAN-V161 Class E): the enum teaches ALL
+			// THIRTY verbs (the old 14-verb list starved the models that read
+			// the manifest literally — patch/commit/sync/branch/issue*/pr_*/
+			// discussion/workflow/file_delete/release never existed to them).
+			prop("action", "The verb: 'help', 'list' (the connected repos), 'info', 'tree', 'ls', 'read', 'readme', 'grep', 'view' (issues/pulls/commits/branches/releases/tags/workflows/runs/discussions), 'put' (an API commit of a full file), 'patch' (SURGICAL search/replace edits on one file), 'commit' (MULTIPLE files in ONE atomic commit), 'sync' (check whether the branch is behind), 'pr', 'pr_diff', 'pr_comment', 'pr_review', 'pr_merge', 'branch', 'issue_create', 'issue_comment', 'issue_close', 'discussion_post', 'workflow_dispatch', 'file_delete', 'tag_create', 'release_create', 'fork', 'create' or 'discover'.", PropString, true, "help", "list", "info", "tree", "ls", "read", "readme", "grep", "view", "put", "patch", "commit", "sync", "pr", "pr_diff", "pr_comment", "pr_review", "pr_merge", "branch", "issue_create", "issue_comment", "issue_close", "discussion_post", "workflow_dispatch", "file_delete", "tag_create", "release_create", "fork", "create", "discover"),
 			str("ws", "The repo: id, owner/repo or the bare repo name (from the CONNECTED block or list).", false),
 			str("path", "File/subdirectory path (tree/ls/read/put).", false),
 			str("ref", "Branch/tag/sha override (defaults to the repo branch).", false),
@@ -239,6 +243,25 @@ var defs = []Def{
 			str("title", "PR title (pr only).", false),
 			str("body", "PR description (pr only).", false),
 			str("name", "New repo name (create only).", false),
+			// v1.61.1 THE SCHEMA TRUTH: the props the verbs actually read (the
+			// old manifest omitted ~20 of them — the models guessed shapes the
+			// verbs then rejected; the Def now teaches the same grammar the
+			// verbs parse).
+			str("edits", "patch: the surgical edit list — [{\"old\":\"exact text\",\"new\":\"replacement\",\"all\":false?,\"occurrence\":1?}] (also commit's per-file edits).", false),
+			prop("files", "commit: the changeset — [{\"path\":\"a.go\",\"edits\":[…]} | {\"path\":\"new.txt\",\"content\":\"…\"} | {\"path\":\"old.go\",\"delete\":true} | {\"path\":\"moved.go\",\"rename_from\":\"old.go\"}].", PropArray, false),
+			prop("dry_run", "patch: preview the diff without committing (true) or commit (false/omitted).", PropBoolean, false),
+			prop("labels", "issue_create: label list (strings or a comma-separated list).", PropArray, false),
+			prop("number", "The issue/PR number (issue_comment, issue_close, pr_diff, pr_comment, pr_review, pr_merge).", PropNumber, false),
+			str("event", "pr_review verdict: 'approve' | 'request_changes' | 'comment'.", false),
+			str("method", "pr_merge strategy: 'merge' | 'squash' | 'rebase'.", false),
+			str("category", "discussion_post: the category (Q&A | ...).", false),
+			str("workflow", "workflow_dispatch: the workflow file (ci.yml).", false),
+			str("inputs", "workflow_dispatch: the dispatch inputs map as a JSON object string ({\"key\":\"value\"}).", false),
+			str("target", "release_create: the commitish target (blank = the branch head).", false),
+			str("description", "create: the repo description.", false),
+			str("license", "create: 'mit' | 'apache-2.0' | '' ...", false),
+			str("gitignore", "create: the gitignore template name or ''.", false),
+			str("from", "branch: the base ref (blank = the repo's default).", false),
 			prop("kind", "Forge (create/discover only).", PropString, false, "github", "gitea", "gitlab"),
 			prop("private", "Create private (create only).", PropBoolean, false),
 		}},
@@ -253,8 +276,8 @@ var defs = []Def{
 	{Name: "termux", Gate: GateTermux,
 		Desc: "A real Termux Linux shell on the user's device — the whole Linux userland: exec runs ANY command in $PATH (coreutils, findutils, grep/sed/awk, bash, python, git, ssh, curl…), pkg installs any package and its commands go live instantly, cmds inventories every available command, and git_setup arms the vault's GitHub token in Termux (one call: ~/.git-credentials + credential.helper=store — then git clone/push just work, no credentials in any command). Actions: exec (run ANY shell command), cmds (inventory all commands), git_setup, ls, read, write, append, rm, mkdir, grep, find, pkg (install/update/remove packages), session_start/session_list/session_log/session_kill (create and kill background processes, e.g. python servers, with tailable logs) and help. The FILE verbs (ls/read/write/append/rm/mkdir/grep/find) are jailed to this chat's bound device (termux) workspace folders — paths outside them are refused; exec runs any command from the first bound folder as workdir (cd $HOME works — that's where git repos live). exec budget: 10 minutes by default, 30 minutes max (pass timeout_ms); anything longer runs as a background session (session_start, no budget). Compiled binaries only execute from $HOME — the bound folders are FUSE noexec (cp the binary to $HOME and chmod 755 first). Output is FULL; the only cap is Termux's own 100KB result bundle, honestly reported when hit. Use it whenever the user asks about their device's files or wants anything run, installed, compiled or served on the phone.",
 		Props: []PropDef{
-			prop("action", "'exec' (run ANY shell command), 'cmds' (inventory every available command), 'git_setup' (arm the vault's GitHub token — git push works after one call), 'ls', 'read', 'write', 'append', 'rm', 'mkdir', 'grep', 'find', 'pkg' (install|update|remove), 'session_start', 'session_list', 'session_log', 'session_kill' or 'help'.", PropString, true, "exec", "cmds", "git_setup", "ls", "read", "write", "append", "rm", "mkdir", "grep", "find", "pkg", "session_start", "session_list", "session_log", "session_kill", "help"),
-			str("args", `JSON object of the action's arguments, e.g. {"path":"notes.txt","command":"python -V","content":"…","pattern":"TODO","name":"myserver","op":"install","packages":["python"]}.`, true),
+			prop("action", "'exec' (run ANY shell command), 'cmds' (inventory every available command), 'git_setup' (arm the vault's GitHub token — git push works after one call), 'ls', 'read', 'write', 'append', 'patch' (SURGICAL search/replace edits on one local file: read a range first, then patch — no whole-file rewrite), 'rm', 'mkdir', 'grep', 'find', 'pkg' (install|update|remove), 'session_start', 'session_list', 'session_log', 'session_kill' or 'help'.", PropString, true, "exec", "cmds", "git_setup", "ls", "read", "write", "append", "patch", "rm", "mkdir", "grep", "find", "pkg", "session_start", "session_list", "session_log", "session_kill", "help"),
+			str("args", `JSON object of the action's arguments, e.g. {"path":"notes.txt","command":"python -V","content":"…","pattern":"TODO","name":"myserver","op":"install","packages":["python"]} — pass it as a JSON object OR as that object's text; both are accepted ({"action":"exec","args":{"command":"python -V"}} or {"action":"exec","args":"{\"command\":\"python -V\"}"}).`, true),
 		}},
 	// ── the personal journal (always armed — the app-global diary) ──
 	// v1.47.1 THE JOURNAL HAND (PLAN-V147 §1): the authentic port of

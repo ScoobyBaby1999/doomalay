@@ -289,7 +289,7 @@ func TestSpecsTermuxGating(t *testing.T) {
 			t.Fatalf("termux action prop missing: %v", props)
 		}
 		enum, _ := action["enum"].([]string)
-		want := []string{"exec", "cmds", "git_setup", "ls", "read", "write", "append", "rm", "mkdir", "grep", "find", "pkg", "session_start", "session_list", "session_log", "session_kill", "help"} // v1.29.5: git_setup joins the enum
+		want := []string{"exec", "cmds", "git_setup", "ls", "read", "write", "append", "patch", "rm", "mkdir", "grep", "find", "pkg", "session_start", "session_list", "session_log", "session_kill", "help"} // v1.29.5 git_setup; v1.61.1 THE SCHEMA TRUTH: patch joins the enum (the verb existed since v1.20.3 but the manifest never taught it — the models that read the Def literally never knew)
 		if len(enum) != len(want) {
 			t.Fatalf("termux action enum = %v, want %v", enum, want)
 		}
