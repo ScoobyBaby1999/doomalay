@@ -5020,6 +5020,60 @@
         state.messages.push(nmsg);
         appendMessage(msgContainer, scrollEl, nmsg, bodyEl, state._icon, state);
       }
+    } else if (type === 'retry') {
+      // v1.61.4 THE RETRY PILL: the sentinel's lifecycle rows (armed →
+      // probe → recovered) merge into ONE live pill per parked turn —
+      // the user's ask: "a pill or something is created or used to
+      // display retried x time. And the seconds or minutes left until
+      // next retry". Live = the warn tone + the countdown ticker;
+      // recovered = the ok tone + "continued after N retries — Z:Y
+      // elapsed". The rows persist first-class (the replay/export ride).
+      var rsrc = ev;
+      if (typeof ev.text === 'string' && ev.text.charAt(0) === '{' && !ev.phase) {
+        try {
+          var rj = JSON.parse(ev.text);
+          if (rj && rj.phase) {
+            rsrc = {};
+            for (var rk in ev) rsrc[rk] = ev[rk];
+            for (var rjk in rj) { if (rj[rjk] !== undefined && rj[rjk] !== null) rsrc[rjk] = rj[rjk]; }
+          }
+        } catch (e4) {}
+      }
+      if (!rsrc.phase) return;
+      // THE MERGE LAW: find this turn's open pill (walking back past
+      // its own rows); a recovered closes it, a fresh park opens a new
+      // one after the next user turn.
+      var rmsg = null;
+      for (var rmi = state.messages.length - 1; rmi >= 0; rmi--) {
+        var rm = state.messages[rmi];
+        if (rm && rm.role === 'retry') {
+          if (rm.phase === 'recovered') break; // a closed pill — start a new one
+          rmsg = rm;
+          break;
+        }
+        if (rm && (rm.role === 'user' || rm.role === 'error')) break;
+      }
+      if (rsrc.phase !== 'recovered' && rmsg && rsrc.phase === 'armed' && rmsg.phase !== 'armed') {
+        // an armed row after probes = a busy re-listen — keep the pill,
+        // it keeps counting (the honest "waiting for your turn" rides)
+      }
+      if (!rmsg) {
+        rmsg = { role: 'retry', ts: evTsMs(ev), phase: 'armed', attempts: 0 };
+        if (ev.i) rmsg.ei = ev.i;
+        state.messages.push(rmsg);
+        appendMessage(msgContainer, scrollEl, rmsg, bodyEl, state._icon, state);
+      } else if (ev.i && !rmsg.ei) {
+        rmsg.ei = ev.i;
+      }
+      rmsg.phase = rsrc.phase;
+      rmsg.attempts = rsrc.attempts || 0;
+      rmsg.class = rsrc.class || rmsg.class || '';
+      rmsg.provider = rsrc.provider || rmsg.provider || '';
+      rmsg.nextAt = rsrc.next_at || 0;
+      rmsg.startedAt = rsrc.started_at || rmsg.startedAt || 0;
+      rmsg.note = rsrc.note || '';
+      updateMessageEl(bodyEl, rmsg, false, state);
+      ensureRetryTicker(bodyEl);
     } else if (type === 'error') {
       // v0.40.1 REPLAY FIX: live error events carry parsed fields
       // (message/provider/model/suggest), but REPLAYED ones (the store's
@@ -5485,6 +5539,75 @@
   // innerHTML on every streaming update (an in-bubble chip would be
   // wiped per delta). The row carries data-ts; the bubble carries
   // data-ts too (the long-press sheet reads it for its timestamp line).
+  // ── v1.61.4 THE RETRY PILL helpers ────────────────────────────────────
+  // retryClassLabel — the human name for the signal class.
+  function retryClassLabel(cls, provider) {
+    var base = cls === '429' ? 'rate limit' : (cls === '5xx' ? 'server overload' : (cls === 'net' ? 'network' : String(cls || 'signal')));
+    var prov = provider === 'opencode' ? 'OpenCode' : (provider ? provider : '');
+    return prov ? (base + ' · ' + prov) : base;
+  }
+  // retryCountdown — the M:SS remaining from the row's next_at.
+  function retryCountdown(nextAt) {
+    var ms = Number(nextAt || 0) - Date.now();
+    if (ms <= 0 || !nextAt) return '0:00';
+    var s = Math.floor(ms / 1000);
+    var m = Math.floor(s / 60);
+    s = s % 60;
+    return m + ':' + (s < 10 ? '0' : '') + s;
+  }
+  // retryElapsed — the honest "Z:Y hours/minutes elapsed" (the started
+  // anchor + the attempts — the user's own grammar).
+  function retryElapsed(startedAt, note) {
+    if (note) return note;
+    var ms = Date.now() - Number(startedAt || 0);
+    if (ms < 0 || !startedAt) return '';
+    var mins = Math.floor(ms / 60000);
+    if (mins >= 60) {
+      var h = Math.floor(mins / 60);
+      return h + ':' + ((mins % 60) < 10 ? '0' : '') + (mins % 60) + ' hours';
+    }
+    return Math.max(1, mins) + ' minutes';
+  }
+  // retryPillHTML — the pill's inner line (the countdown span is its
+  // own node so the 1s ticker only touches it).
+  function retryPillHTML(msg) {
+    if (msg.phase === 'recovered') {
+      return '<span class="retry-ico">&#10003;</span> continued after ' + (msg.attempts || 0) + ' ' + ((msg.attempts || 0) === 1 ? 'retry' : 'retries') + ' — ' + esc(retryElapsed(msg.startedAt, msg.note));
+    }
+    if (msg.phase === 'busy') {
+      return '<span class="retry-ico">&#8635;</span> auto-retry armed — waiting for your turn to finish (' + esc(retryClassLabel(msg.class, msg.provider)) + ')';
+    }
+    if (msg.phase === 'probe') {
+      return '<span class="retry-ico">&#8635;</span> auto-retry: ' + esc(retryClassLabel(msg.class, msg.provider)) + ' — probe ' + (msg.attempts || 0) + ' failed — next probe in <span class="retry-count" data-next-at="' + esc(String(msg.nextAt || 0)) + '">' + retryCountdown(msg.nextAt) + '</span>';
+    }
+    // armed
+    return '<span class="retry-ico">&#8635;</span> auto-retry armed — ' + esc(retryClassLabel(msg.class, msg.provider)) + ' — first probe in <span class="retry-count" data-next-at="' + esc(String(msg.nextAt || 0)) + '">' + retryCountdown(msg.nextAt) + '</span>';
+  }
+  // ensureRetryTicker — ONE 1s interval per panel while any live retry
+  // pill exists; it repaints only the countdown spans (the user's
+  // "seconds or minutes left until next retry", ticking).
+  function ensureRetryTicker(bodyEl) {
+    if (!bodyEl) return;
+    if (bodyEl.__retryTicker) return;
+    bodyEl.__retryTicker = setInterval(function () {
+      if (!bodyEl.isConnected) {
+        clearInterval(bodyEl.__retryTicker);
+        bodyEl.__retryTicker = null;
+        return;
+      }
+      var live = bodyEl.querySelectorAll('[data-msg-role="retry"][data-phase="live"] .retry-count');
+      if (!live || !live.length) {
+        clearInterval(bodyEl.__retryTicker);
+        bodyEl.__retryTicker = null;
+        return;
+      }
+      for (var i = 0; i < live.length; i++) {
+        var el = live[i];
+        el.textContent = retryCountdown(el.getAttribute('data-next-at'));
+      }
+    }, 1000);
+  }
+
   function messageHTML(msg, mi) {
     mi = (mi === undefined || mi === null) ? -1 : mi;
     var miAttr = ' data-mi="' + mi + '"';
@@ -5530,6 +5653,14 @@
       var nCode = msg.code ? ' data-code="' + esc(String(msg.code)) + '"' : '';
       return '<div class="msg-bubble msg-notice" data-msg-role="notice"' + nCode + miAttr + '>' +
         '<div class="fmt fmt-plain">' + esc(msg.text) + '</div></div>';
+    } else if (msg.role === 'retry') {
+      // v1.61.4 THE RETRY PILL: the sentinel's live/complete face —
+      // warn tone while probing with the countdown, ok tone when
+      // recovered with the honest "continued after N retries — Z:Y
+      // elapsed". Theme tokens only (--warn/--ok), never literals.
+      var rLive = msg.phase !== 'recovered';
+      return '<div class="msg-bubble msg-retry' + (rLive ? ' msg-retry-live' : ' msg-retry-done') + '" data-msg-role="retry" data-phase="' + (rLive ? 'live' : 'done') + '"' + miAttr + '>' +
+        '<div class="fmt fmt-plain">' + retryPillHTML(msg) + '</div></div>';
     } else if (msg.role === 'thinking') {
       // v0.38: per-chat thinkOpen pref drives the default (msg.open wins
       // only when explicitly set — the delegated toggle handler).

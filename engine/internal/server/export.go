@@ -98,11 +98,68 @@ func foldEvents(events []*store.Event) []foldedRow {
                         rows = append(rows, foldedRow{Seq: ev.Seq, Type: "sources", Srcs: srcs, At: ev.CreatedAt})
                 case "error":
                         rows = append(rows, foldedRow{Seq: ev.Seq, Type: "error", Text: ev.Content, At: ev.CreatedAt})
-                case "status":
+        case "retry":
+                        // v1.61.4 THE RETRY PILL: the sentinel's lifecycle
+                        // rows ride the export WHOLE — every probe a line
+                        // (the plan's law: the export shows the probes
+                        // forever; the user reads exports as ground truth).
+                        if line, _ := renderRetryLine(ev); line != "" {
+                                rows = append(rows, foldedRow{Seq: ev.Seq, Type: "retry", Text: line, At: ev.CreatedAt})
+                        }
+                        case "status":
                         rows = append(rows, foldedRow{Seq: ev.Seq, Type: "status", Text: ev.Content, At: ev.CreatedAt, Hidden: true})
                 }
         }
         return rows
+}
+
+// renderRetryLine renders one sentinel lifecycle row's export text.
+// isRecovered=true closes the park's row. Empty text = a garbage row
+// (skipped).
+func renderRetryLine(ev *store.Event) (string, bool) {
+        var rj struct {
+                Phase    string `json:"phase"`
+                Class    string `json:"class"`
+                Provider string `json:"provider"`
+                Attempts int    `json:"attempts"`
+                Note     string `json:"note"`
+        }
+        if json.Unmarshal([]byte(ev.Content), &rj) != nil || rj.Phase == "" {
+                return "", false
+        }
+        label := rj.Class
+        switch label {
+        case "429":
+                label = "rate limit"
+        case "5xx":
+                label = "server overload"
+        case "net":
+                label = "network"
+        }
+        if rj.Provider != "" {
+                label += " (" + rj.Provider + ")"
+        }
+        switch rj.Phase {
+        case "recovered":
+                elapsed := rj.Note
+                if elapsed == "" {
+                        elapsed = "elapsed"
+                }
+                return fmt.Sprintf("auto-retry recovered — %s — continued after %d %s — %s", label, rj.Attempts, plural(rj.Attempts, "retry", "retries"), elapsed), true
+        case "probe":
+                return fmt.Sprintf("auto-retry: %s — probe %d failed — next probe scheduled", label, rj.Attempts), false
+        case "busy":
+                return fmt.Sprintf("auto-retry armed — %s — waiting for the running turn", label), false
+        default:
+                return fmt.Sprintf("auto-retry armed — %s — first probe scheduled", label), false
+        }
+}
+
+func plural(n int, one, many string) string {
+        if n == 1 {
+                return one
+        }
+        return many
 }
 
 func isoTime(unix float64) string {
@@ -245,6 +302,10 @@ func (s *Server) handleSessionExport(w http.ResponseWriter, r *http.Request) {
                                 b.WriteString("\n")
                         case "error":
                                 fmt.Fprintf(&b, "⚠️ **error:** %s\n\n", row.Text)
+                        case "retry":
+                                // v1.61.4 THE RETRY PILL: the sentinel's lifecycle
+                                // rides the export (the probes are the turn's truth).
+                                fmt.Fprintf(&b, "> ↻ %s\n\n", row.Text)
                         }
                 }
                 w.Write([]byte(b.String()))
@@ -301,6 +362,8 @@ func (s *Server) handleSessionExport(w http.ResponseWriter, r *http.Request) {
                                 b.WriteString("\n")
                         case "error":
                                 fmt.Fprintf(&b, "[error] %s\n\n", row.Text)
+                        case "retry":
+                                fmt.Fprintf(&b, "[retry] %s\n\n", row.Text)
                         }
                 }
                 w.Write([]byte(b.String()))
@@ -351,6 +414,8 @@ func (s *Server) handleSessionExport(w http.ResponseWriter, r *http.Request) {
                                 b.WriteString("</ol></div>\n")
                         case "error":
                                 fmt.Fprintf(&b, "<div class=\"e\">⚠️ <b>error:</b> <pre>%s</pre></div>\n", htmlEsc(row.Text))
+                        case "retry":
+                                fmt.Fprintf(&b, "<div class=\"e\">↻ <b>auto-retry:</b> <pre>%s</pre></div>\n", htmlEsc(row.Text))
                         }
                 }
                 w.Write([]byte(b.String()))

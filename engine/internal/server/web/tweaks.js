@@ -881,6 +881,44 @@
             '<p class="hint" style="margin:6px 0 0">the cap rides this chat\'s tweaks blob — it applies on the very next exec, no restart, both the engine loop and the PM path.</p>' +
             '<p class="hint" style="margin:8px 0 0;color:var(--text-3)">applies once the device runs engine v1.26.2+ — older binaries keep their built-in pacing.</p>'
           ) +
+          // v1.61.4 THE RETRY PILL (the user's ask: "The timer can be
+          // customisable, default to like 5-10 mins per signal") — the
+          // GLOBAL Auto-retry section, all chats: the enabled toggle +
+          // the per-signal probe intervals (network / rate-limit /
+          // server, 1-15 min, default 5). Writes the engine's
+          // retry.sentinel config row through its own route.
+          sec('Auto-retry',
+            '<p class="hint">When a turn gets dropped by the network, a rate limit or a server overload, the engine arms a shared auto-retry timer — it probes the signal, and the conversation CONTINUES ITSELF the moment it clears (your tap is always faster, never required). One timer per signal: every chat parked on the same cause listens together.</p>' +
+            '<div class="setting-row" style="align-items:center;justify-content:space-between;gap:10px">' +
+              '<span style="min-width:0"><label>Auto-retry</label>' +
+                '<p class="hint" style="margin:2px 0 0">applies to ALL chats. off — a parked turn waits for your tap exactly as before.</p></span>' +
+              '<span class="pv-sub-value" id="tw-ar-state" style="flex:0 0 auto">…</span>' +
+              '<label class="app-switch" style="position:relative;display:inline-block;width:42px;height:24px;flex-shrink:0">' +
+                '<input type="checkbox" id="tw-ar-toggle" style="opacity:0;width:0;height:0;position:absolute">' +
+                '<span class="app-switch-track" id="tw-ar-track" style="position:absolute;inset:0;background:var(--surface-3);border-radius:12px;transition:background 0.15s"></span>' +
+                '<span class="app-switch-thumb" id="tw-ar-thumb" style="position:absolute;top:2px;left:2px;width:20px;height:20px;background:var(--on-accent);border-radius:50%;transition:left 0.15s"></span>' +
+              '</label>' +
+            '</div>' +
+            '<div id="tw-ar-rows" style="margin-top:6px">' +
+              '<div style="display:flex;gap:10px;align-items:center">' +
+                '<span class="hint" style="flex:1 1 auto">network — the probe interval while the provider or your connection is down</span>' +
+                '<input type="range" class="pv-range" data-ar-key="net" min="1" max="15" step="1" value="5" aria-label="network retry interval minutes">' +
+                '<span class="pv-sub-value" data-ar-val="net" style="flex:0 0 auto;white-space:nowrap">5 min</span>' +
+              '</div>' +
+              '<div style="display:flex;gap:10px;align-items:center;margin-top:6px">' +
+                '<span class="hint" style="flex:1 1 auto">rate limit — how long to wait between probes when a 429 parks the turn</span>' +
+                '<input type="range" class="pv-range" data-ar-key="quota" min="1" max="15" step="1" value="5" aria-label="rate limit retry interval minutes">' +
+                '<span class="pv-sub-value" data-ar-val="quota" style="flex:0 0 auto;white-space:nowrap">5 min</span>' +
+              '</div>' +
+              '<div style="display:flex;gap:10px;align-items:center;margin-top:6px">' +
+                '<span class="hint" style="flex:1 1 auto">server — the interval while a 5xx overload parks the turn</span>' +
+                '<input type="range" class="pv-range" data-ar-key="server" min="1" max="15" step="1" value="5" aria-label="server retry interval minutes">' +
+                '<span class="pv-sub-value" data-ar-val="server" style="flex:0 0 auto;white-space:nowrap">5 min</span>' +
+              '</div>' +
+            '</div>' +
+            '<p class="hint" id="tw-ar-status" style="margin:8px 0 0">loading…</p>' +
+            '<p class="hint" style="margin:8px 0 0;color:var(--text-3)">the retry pills in your chats show every probe live — the attempts, the countdown to the next probe, and "continued after N retries" when it lands.</p>'
+          ) +
           sec('Background',
             '<p class="hint">The surface behind this chat — a gradient (one color is the solid case; any style, pattern, angle or texture), or an image from your library, cropped to fit this screen.</p>' +
             '<div class="tw-bgseg">' +
@@ -963,6 +1001,76 @@
         // key (the lean-blob law: absent = unbound); ON writes execCap —
         // the engine gate reads the same blob live. Persist rides the
         // standard debounced tweaks PUT.
+        // v1.61.4 THE RETRY PILL — the Auto-retry section's wiring: the
+        // GLOBAL config (all chats) through its own route. The toggle +
+        // the three interval sliders; every change PUTs the whole row
+        // (the engine clamps 1-15 min) and paints the state chip.
+        (function wireAutoRetry() {
+          var arTgl = el.querySelector('#tw-ar-toggle');
+          var arTrack = el.querySelector('#tw-ar-track');
+          var arThumb = el.querySelector('#tw-ar-thumb');
+          var arState = el.querySelector('#tw-ar-state');
+          var arStatus = el.querySelector('#tw-ar-status');
+          var arRows = el.querySelector('#tw-ar-rows');
+          var arSliders = el.querySelectorAll('[data-ar-key]');
+          if (!arTgl) return;
+          var arCfg = null;
+          function arPaint() {
+            if (!arCfg) return;
+            var on = !!arCfg.enabled;
+            if (arTrack) arTrack.style.background = on ? 'var(--accent)' : 'var(--surface-3)';
+            if (arThumb) arThumb.style.left = on ? '20px' : '2px';
+            if (arState) arState.textContent = on ? 'on' : 'off';
+            if (arRows) arRows.style.opacity = on ? '1' : '0.45';
+            for (var i = 0; i < arSliders.length; i++) {
+              var s = arSliders[i];
+              var key = s.getAttribute('data-ar-key');
+              var mins = Math.round((arCfg[key] || 300) / 60);
+              s.value = mins;
+              s.disabled = !on;
+              var chip = el.querySelector('[data-ar-val="' + key + '"]');
+              if (chip) chip.textContent = mins + ' min';
+            }
+          }
+          function arSave(patch) {
+            if (!arCfg) return;
+            for (var k in patch) arCfg[k] = patch[k];
+            fetch('/api/retry-sentinel', {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(arCfg)
+            }).then(function (r) { return r.ok ? r.json() : null; }).then(function (row) {
+              if (row) { arCfg = row; arPaint(); }
+              if (arStatus) arStatus.textContent = 'saved — every chat armed';
+            }).catch(function () {
+              if (arStatus) arStatus.textContent = 'could not save — try again';
+            });
+          }
+          fetch('/api/retry-sentinel').then(function (r) { return r.ok ? r.json() : null; }).then(function (row) {
+            arCfg = row || { enabled: true, net: 300, quota: 300, server: 300 };
+            if (arStatus) arStatus.textContent = 'loaded';
+            arPaint();
+          }).catch(function () {
+            if (arStatus) arStatus.textContent = 'not available on this engine version';
+          });
+          arTgl.addEventListener('change', function () {
+            arSave({ enabled: arTgl.checked });
+          });
+          for (var i = 0; i < arSliders.length; i++) {
+            (function (s) {
+              s.addEventListener('input', function () {
+                var key = s.getAttribute('data-ar-key');
+                var chip = el.querySelector('[data-ar-val="' + key + '"]');
+                if (chip) chip.textContent = s.value + ' min';
+              });
+              s.addEventListener('change', function () {
+                var key = s.getAttribute('data-ar-key');
+                arSave(((function () { var p = {}; p[key] = parseInt(s.value, 10) * 60; return p; })()));
+              });
+            })(arSliders[i]);
+          }
+        })();
+
         var capTgl = el.querySelector('#tw-exec-cap-toggle');
         var capTrack = el.querySelector('#tw-exec-cap-track');
         var capThumb = el.querySelector('#tw-exec-cap-thumb');

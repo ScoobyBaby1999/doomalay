@@ -29,6 +29,7 @@ package server
 
 import (
 	"context"
+	"io"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -611,4 +612,64 @@ func (s *Server) sentinelBootScan() {
 	if n > 0 {
 		log.Printf("sentinel: boot scan re-armed %d parked chat(s)", n)
 	}
+}
+
+// handleRetrySentinelGet is GET /api/retry-sentinel — the ✦ Auto-retry
+// section's read (the GLOBAL config row, "all chats").
+func (s *Server) handleRetrySentinelGet(w http.ResponseWriter, r *http.Request) {
+	cfg := sentinelConfigOf(s)
+	writeJSON(w, 200, map[string]any{
+		"enabled": cfg.Enabled,
+		"net":     cfg.NetSec,
+		"quota":   cfg.QuotaSec,
+		"server":  cfg.ServerSec,
+	})
+}
+
+// handleRetrySentinelPut is PUT /api/retry-sentinel — the section's
+// write (minutes 1-15 clamped, the user's "customisable" ask).
+func (s *Server) handleRetrySentinelPut(w http.ResponseWriter, r *http.Request) {
+	if s.db == nil {
+		writeError(w, 500, "no store")
+		return
+	}
+	var row sentinelConfig
+	if err := json.NewDecoder(io.LimitReader(r.Body, 8<<10)).Decode(&row); err != nil {
+		writeError(w, 400, "bad body: "+err.Error())
+		return
+	}
+	clamp := func(v, dflt int) int {
+		if v <= 0 {
+			return dflt
+		}
+		if v < 60 {
+			v = 60
+		}
+		if v > 15*60 {
+			v = 15 * 60
+		}
+		return v
+	}
+	merged := sentinelConfig{
+		Enabled:   row.Enabled, // absent/false = off (the toggle writes true when on)
+		NetSec:    clamp(row.NetSec, 300),
+		QuotaSec:  clamp(row.QuotaSec, 300),
+		ServerSec: clamp(row.ServerSec, 300),
+	}
+	// the GET shape speaks seconds; keep the stored row the same shape
+	b, err := json.Marshal(merged)
+	if err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	if err := s.db.SetSetting("retry.sentinel", string(b)); err != nil {
+		writeError(w, 500, "save: "+err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{
+		"enabled": merged.Enabled,
+		"net":     merged.NetSec,
+		"quota":   merged.QuotaSec,
+		"server":  merged.ServerSec,
+	})
 }

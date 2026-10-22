@@ -2260,6 +2260,40 @@
     content: 'ⓘ '; opacity: 0.8; font-weight: 600;
     -webkit-user-select: none; user-select: none;
   }
+  /* v1.61.4 THE RETRY PILL — the sentinel's lifecycle face. The user's
+     law: theme colors only, never a literal — the LIVE pill composes the
+     --warn token (the probe is patient, not alarming) and the RECOVERED
+     pill the --ok token (the conversation resumed itself). The ↻ glyph
+     spins on the live tone; the countdown span is the 1s ticker's node. */
+  .msg-retry {
+    align-self: center; font-size: calc(var(--chat-fs) - 3px);
+    padding: calc(8px * var(--chat-scale)) calc(12px * var(--chat-scale));
+    border-radius: 8px; max-width: 90%;
+  }
+  .msg-retry-live {
+    color: var(--warn);
+    background: rgba(var(--warn-rgb, 251, 191, 36), 0.1);
+    border: 1px solid rgba(var(--warn-rgb, 251, 191, 36), 0.28);
+  }
+  .msg-retry-live .retry-ico {
+    display: inline-block;
+    -webkit-animation: retrySpin 2.4s linear infinite;
+    animation: retrySpin 2.4s linear infinite;
+    -webkit-user-select: none; user-select: none;
+  }
+  .msg-retry-done {
+    color: var(--ok);
+    background: rgba(var(--ok-rgb, 52, 211, 153), 0.1);
+    border: 1px solid rgba(var(--ok-rgb, 52, 211, 153), 0.3);
+    font-weight: 600;
+  }
+  .msg-retry .retry-count {
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+  }
+  @-webkit-keyframes retrySpin { from { -webkit-transform: rotate(0deg); } to { -webkit-transform: rotate(360deg); } }
+  @keyframes retrySpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
   /* v1.56.0 THE HICCUP FLAG: a tool hiccup (a truncated result, a
      refused call, a failed tool) wears the WARNING tone and a ⚠ glyph —
      the user's law: "every single hiccup you encounter while running
