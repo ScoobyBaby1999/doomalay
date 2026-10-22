@@ -1105,7 +1105,7 @@ func (m *Manager) ListSessionMessages(serveSess string, maxPages int) ([]ServeMe
         if maxPages <= 0 {
                 maxPages = 4
         }
-        const perPage = 500
+        const perPage = 100 // live-probed: the serve 400s past ~200 — 100 is the safe page
         var chrono []ServeMessage
         cursor := ""
         for page := 0; page < maxPages; page++ {

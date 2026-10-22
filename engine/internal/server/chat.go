@@ -1440,6 +1440,21 @@ func (s *Server) handleTurn(sender *websocket.Conn, pipe *chatPipe, sessionID st
                 sess = fresh
         }
 
+        // v1.63.3 THE SEND-PATH RECONCILE (the fresh-boot half of THE SERVE
+        // TRUTH RECONCILE): a send into a chat whose log ends in the healed
+        // splice + a living serve binding first lands the serve's completed
+        // tail — the manager build rides THIS goroutine (the turn needs it
+        // anyway; the user's send tap already returned). The cheap gate
+        // (one tail read) keeps every normal send at zero cost. The splice
+        // lands BEFORE the user row below — the recovered turn keeps its
+        // own window, the new turn rides a clean log (the user's
+        // "messages unordered" conviction dies at the root).
+        if s.ocServeReconcileTriggered(sessionID) {
+                if m := s.ocServeManager(context.Background()); m != nil {
+                        s.ocServeReconcileIfHealed(sessionID, m)
+                }
+        }
+
         // Persist the user's message immediately (V0 FIX: backend writes
         // events). s.emit persists AND forwards — no separate AppendEvent
         // (v0.13 fix: the direct AppendEvent + emit double-persisted every

@@ -538,21 +538,62 @@ func (s *Server) ocServeStreamTurn(ctx context.Context, m *ocserve.Manager, sess
                         "message": "OpenCode: " + strings.TrimPrefix(modelID, "opencode/") + " is thinking…"}
                 recycled, err := s.ocServePump(ctx, m, serveSess, sessionID, sess.Model, out, turnStartedAt)
                 if recycled {
-                        // THE RECYCLE LAW: drop the poisoned serve session; the next
-                        // attempt composes the full opening text on a fresh one.
-                        s.ocServeForgetSession(sessionID)
+                        // v1.63.4 THE WALL WALK: the free-limit wall is PER-MODEL
+                        // (the live conviction, v1630's rig: each free model carries
+                        // its own small window — a 429 on one says NOTHING about the
+                        // roster; the user's law verbatim: "We are not rate limited,
+                        // if you hit rate limits it's a false positive"). The walk
+                        // REPLACES the old session-recycle for this class: SAME serve
+                        // session (the model's context survives — no opening-text
+                        // recap), the NEXT free (cost-0) opencode-zen model from the
+                        // LIVE catalog, one honest notice, ONE retry. A second wall
+                        // (the roster exhausted) answers the honest terminal — the
+                        // windows reset on OpenCode's own clock. The walk is
+                        // PER-TURN: the chat's own model choice never silently
+                        // changes (the chip stays true; the notice tells the story).
                         if attempt == 0 {
-                                continue
+                                if next := ocNextFreeModel(m, modelID); next != "" {
+                                        out <- map[string]any{"type": "notice", "session_id": sessionID,
+                                                "message": "OpenCode: " + strings.TrimPrefix(modelID, "opencode/") + "'s free window is full — this turn rides " + next + " (the free windows reset on OpenCode's clock)"}
+                                        modelID = next
+                                        log.Printf("ocserve: the wall walk — %s is walled, %s takes the turn (chat %s)", strings.TrimPrefix(sess.Model, "opencode/"), next, sessionID)
+                                        continue
+                                }
                         }
-                        // the second wall: the honest terminal (never a silent hang)
+                        // the second wall (or no roster to walk): the honest terminal
+                        // (never a silent hang)
                         out <- map[string]any{"type": "error", "session_id": sessionID,
-                                "error": "oc_free_walled", "message": "OpenCode's free tier refused this turn twice (their gate is evolving) — try again in a moment, or switch provider (NVIDIA / PrivateMode have working free models)"}
+                                "error": "oc_free_walled", "message": "OpenCode's free-tier windows are all full right now (the limit is per-model and resets on OpenCode's own clock) — try again in a little while, or switch provider (NVIDIA / PrivateMode have working free models)"}
                         out <- map[string]any{"type": "status", "session_id": sessionID, "state": "error", "usage": nil}
                         return nil
                 }
                 return err
         }
         return nil
+}
+
+// ocNextFreeModel answers the next cost-0 opencode-zen model from the
+// serve's LIVE catalogue (v1.63.4 THE WALL WALK) — the first free model
+// that is not the walled one, in the catalogue's own order. "" = the
+// roster holds no alternative (the honest terminal answers).
+func ocNextFreeModel(m *ocserve.Manager, walled string) string {
+        walled = strings.TrimPrefix(walled, "opencode/")
+        if i := strings.IndexByte(walled, '#'); i >= 0 {
+                walled = walled[:i] // the variant suffix never rides the comparison
+        }
+        for _, sm := range m.LiveCatalog() {
+                if sm.ProviderID != "opencode" || sm.ID == walled {
+                        continue
+                }
+                if len(sm.Cost) == 0 || sm.Cost[0].Input != 0 || sm.Cost[0].Output != 0 {
+                        continue
+                }
+                if !sm.Capabilities.Tools {
+                        continue
+                }
+                return sm.ID
+        }
+        return ""
 }
 
 // ocServeSilenceProbe is how long the pump stays quiet before polling the

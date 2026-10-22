@@ -137,7 +137,7 @@ func TestV1633_ServeTruthReconcile(t *testing.T) {
         s.ocServe = m
         s.ocServeMu.Unlock()
 
-        if !s.ocServeReconcileIfHealed(chatID) {
+        if !s.ocServeReconcileIfHealed(chatID, m) {
                 t.Fatalf("the reconcile must run: the healed terminal is the last event, the binding lives, the serve completed the turn")
         }
 
@@ -207,7 +207,7 @@ func TestV1633_ServeTruthReconcile(t *testing.T) {
         }
 
         // IDEMPOTENCE: a spliced log ends in a REAL terminal — the trigger dies
-        if s.ocServeReconcileIfHealed(chatID) {
+        if s.ocServeReconcileIfHealed(chatID, m) {
                 t.Fatalf("a reconciled log must never re-splice")
         }
 }
@@ -246,7 +246,7 @@ func TestV1633_ReconcileDegrades(t *testing.T) {
         fake.sessions["ses_old_turn"] = true
         fake.mu.Unlock()
         v1633ServeTurn(fake, "ses_old_turn", "an OLDER turn's prompt", time.Now().Add(-time.Hour).UnixMilli())
-        if s.ocServeReconcileIfHealed(chatID) {
+        if s.ocServeReconcileIfHealed(chatID, m) {
                 t.Fatalf("a serve that never got THIS turn must not splice")
         }
         evs, _ := db.ListEvents(chatID, 0)
@@ -268,14 +268,14 @@ func TestV1633_ReconcileDegrades(t *testing.T) {
         fake.v1592Msg("ses_live", map[string]any{"type": "assistant", "time": map[string]any{"created": at - 50},
                 "content": []map[string]any{{"type": "text", "text": "partial…"}}})
         fake.mu.Unlock()
-        if s.ocServeReconcileIfHealed(chatID2) {
+        if s.ocServeReconcileIfHealed(chatID2, m) {
                 t.Fatalf("a still-running turn must not splice (the next open retries)")
         }
 
         // (3) no binding at all → no splice
         chatID3 := "chat_unbound"
         v1633HealedChat(t, db, chatID3)
-        if s.ocServeReconcileIfHealed(chatID3) {
+        if s.ocServeReconcileIfHealed(chatID3, m) {
                 t.Fatalf("a binding-less chat must not splice")
         }
 }

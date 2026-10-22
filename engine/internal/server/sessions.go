@@ -505,9 +505,13 @@ func (s *Server) handleSessionsEvents(w http.ResponseWriter, r *http.Request) {
                 }
         }
         if since == 0 {
-                // the bootstrap shape — the reconcile's hook (an open never re-runs
-                // it: a spliced log ends in a REAL terminal, the trigger dies)
-                s.ocServeReconcileIfHealed(id)
+                // the bootstrap shape — the reconcile's OPEN hook (the peek law: an
+                // open never BOOTS a bridge; a fresh-boot engine has no manager until
+                // the first turn — the send-path hook owns that half). A reconciled
+                // log ends in a REAL terminal, so an open never re-runs it.
+                if s.ocServeReconcileTriggered(id) {
+                        s.ocServeReconcileIfHealed(id, s.ocServeManagerNow())
+                }
         }
         var (
                 events []*store.Event

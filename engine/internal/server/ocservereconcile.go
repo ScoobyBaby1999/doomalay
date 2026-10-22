@@ -63,14 +63,28 @@ func ocServeHealedTerminal(ev *store.Event) bool {
         return p.State == "error" && p.Healed && strings.Contains(p.Message, "interrupted by engine restart")
 }
 
-// ocServeReconcileIfHealed runs THE SERVE TRUTH RECONCILE for a chat the
-// user just opened. Bounded + best-effort: any miss (no binding, dead
-// serve, still-running turn, transcript walk failure) answers false and
-// the caller serves today's log untouched. The whole check+fetch+splice
-// is one serialized unit; a log that was already reconciled (its last
-// event is a REAL terminal) never re-arms.
-func (s *Server) ocServeReconcileIfHealed(sessionID string) bool {
+// ocServeReconcileTriggered answers whether the session's log ends in the
+// healed splice — the CHEAP gate every hook pays (one tail read; a normal
+// chat answers false instantly and the reconcile machinery never wakes).
+func (s *Server) ocServeReconcileTriggered(sessionID string) bool {
         if s.db == nil || sessionID == "" {
+                return false
+        }
+        tail, err := s.db.ListEventsTail(sessionID, 1)
+        return err == nil && len(tail) > 0 && ocServeHealedTerminal(tail[0])
+}
+
+// ocServeReconcileIfHealed runs THE SERVE TRUTH RECONCILE. The CALLER owns
+// the manager acquisition — the open hook passes the PEEK (an open never
+// boots a bridge), the send path passes the turn's own builder (the turn
+// needs the manager anyway; the build rides the turn goroutine's latency,
+// never the user's send tap). Bounded + best-effort: any miss (no binding,
+// dead serve, still-running turn, transcript walk failure) answers false
+// and today's log stands. The whole check+fetch+splice is one serialized
+// unit; a log that was already reconciled (its last event is a REAL
+// terminal) never re-arms.
+func (s *Server) ocServeReconcileIfHealed(sessionID string, m *ocserve.Manager) bool {
+        if s.db == nil || sessionID == "" || m == nil || !m.Healthy() {
                 return false
         }
         ocServeReconcileMu.Lock()
@@ -83,14 +97,9 @@ func (s *Server) ocServeReconcileIfHealed(sessionID string) bool {
                 return false
         }
 
-        // (2) THE BINDING + A LIVING SERVE (the peek law: an open never BOOTS
-        // a bridge — a cold serve answers "not now", the next open retries).
+        // (2) THE BINDING + THE SERVE'S SESSION
         binding := s.ocServeBindingGet(sessionID)
         if binding == "" {
-                return false
-        }
-        m := s.ocServeManagerNow()
-        if m == nil || !m.Healthy() {
                 return false
         }
         if !m.SessionExists(binding) {
