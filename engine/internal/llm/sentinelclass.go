@@ -27,6 +27,7 @@ package llm
 // clears — the user's tap is always still faster, never required.
 
 import (
+	"os"
 	"errors"
 	"fmt"
 	"net/http"
@@ -112,7 +113,16 @@ func ProviderProbeTarget(provider string, keys map[string]string) (baseURL, apiK
 	if !known {
 		return "", "", false
 	}
-	return resolveBaseURL(cfg, keys[cfg.ExtraEnvVar]), keys[cfg.EnvVar], true
+	base := resolveBaseURL(cfg, keys[cfg.ExtraEnvVar])
+	// the SAME override law ResolveModel honors — a probe must hit the
+	// provider the engine actually talks to (the rig's fake base; a
+	// self-hosted mirror). The v1610 rig convicted the gap: the probe
+	// dialed the REAL api while the turns rode the fake — an instant
+	// false recovery.
+	if v := os.Getenv("DOOMALAY_BASE_URL_" + strings.ToUpper(provider)); v != "" {
+		base = strings.TrimSuffix(v, "/")
+	}
+	return base, keys[cfg.EnvVar], true
 }
 
 // errRetryableHint is the shadow error carrying the sentinel fields
