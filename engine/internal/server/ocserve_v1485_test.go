@@ -23,6 +23,7 @@ import (
         "strings"
         "sync"
         "testing"
+        "time"
 
         "github.com/ScoobyBaby1999/doomalay/engine/internal/llm"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/ocserve"
@@ -44,6 +45,30 @@ type fakeServe struct {
         sse           []string // the clean-turn frames
         sawAuth       []string // every Authorization header seen
         modelCatalog  string   // v1.55.4: the /api/model payload when armed
+        // v1.59.2 THE SERVE MEMORY: the fake's own durable session store —
+        // POST /api/session registers, GET /api/session/{id} answers the
+        // LIVE-PROBED shape (200 {data:{id}} / 404 SessionNotFoundError),
+        // DELETE /api/session/{id} answers 204 (the live-probed 2.1.2 truth —
+        // the legacy /session route 405s).
+        sessions map[string]bool
+        deletes  []string
+        // v1.59.2 THE NO-HANG GUARD: the volatile-miss simulation + the durable
+        // message record. volatileMiss=true → the prompt marks the session
+        // instantly idle-FAILED (or idle-succeeded with an assistant text) in the
+        // message record while the /api/event stream NEVER carries the terminal
+        // (the 2.x volatile contract: events fired before the stream connects
+        // are missed) — the old pump spun forever on this shape.
+        volatileMiss bool
+        volatileOK   bool
+        messages     map[string][]map[string]any
+}
+
+// v1592Msg appends a message record (oldest→newest) to a session.
+func (f *fakeServe) v1592Msg(sess string, m map[string]any) {
+        if f.messages == nil {
+                f.messages = map[string][]map[string]any{}
+        }
+        f.messages[sess] = append(f.messages[sess], m)
 }
 
 func (f *fakeServe) handler(w http.ResponseWriter, r *http.Request) {
@@ -64,6 +89,19 @@ func (f *fakeServe) handler(w http.ResponseWriter, r *http.Request) {
                 b, _ := io.ReadAll(r.Body)
                 json.Unmarshal(b, &body)
                 f.promptTexts = append(f.promptTexts, body["text"].(string))
+                // v1.59.2: the volatile-miss shape — the turn ends INSTANTLY (the
+                // durable record carries it) but the stream never does
+                if f.volatileMiss || f.volatileOK {
+                        var rec map[string]any
+                        if f.volatileOK {
+                                f.v1592Msg(f.lastSess, map[string]any{"type": "assistant", "text": "the off-wire answer", "time": map[string]any{"created": time.Now().UnixMilli()}})
+                                rec = map[string]any{"type": "idle", "outcome": "succeeded", "time": map[string]any{"created": time.Now().UnixMilli()}}
+                        } else {
+                                rec = map[string]any{"type": "idle", "outcome": "failed", "time": map[string]any{"created": time.Now().UnixMilli()},
+                                        "error": map[string]any{"type": "provider.no-route", "message": "No route for model"}}
+                        }
+                        f.v1592Msg(f.lastSess, rec)
+                }
                 io.WriteString(w, `{"data":{"id":"msg_u1","type":"user"}}`)
         case r.URL.Path == "/api/model":
                 // v1.55.4 THE VARIANT LAW: the fake serves the serve's own catalogue
@@ -77,9 +115,59 @@ func (f *fakeServe) handler(w http.ResponseWriter, r *http.Request) {
         case r.URL.Path == "/api/session" && r.Method == "POST":
                 f.sessionN++
                 f.lastSess = "ses_fake_" + strconv.Itoa(f.sessionN)
+                if f.sessions == nil {
+                        f.sessions = map[string]bool{}
+                }
+                f.sessions[f.lastSess] = true
                 io.WriteString(w, `{"data":{"id":"`+f.lastSess+`"}}`)
+        case strings.HasPrefix(r.URL.Path, "/api/session/") && r.Method == "GET":
+                // v1.59.2: the adoption check — the live-probed 2.1.2 shape
+                id := strings.TrimPrefix(r.URL.Path, "/api/session/")
+                if strings.Contains(id, "/message") {
+                        // the durable message record (newest-first, ?limit honored)
+                        sid := strings.TrimSuffix(id, "/message")
+                        recs := f.messages[sid]
+                        out := make([]map[string]any, 0, len(recs))
+                        for i := len(recs) - 1; i >= 0; i-- {
+                                out = append(out, recs[i])
+                        }
+                        if l := r.URL.Query().Get("limit"); l != "" {
+                                if n2, err2 := strconv.Atoi(l); err2 == nil && n2 < len(out) {
+                                        out = out[:n2]
+                                }
+                        }
+                        b, _ := json.Marshal(map[string]any{"data": out})
+                        w.Write(b)
+                        return
+                }
+                if f.sessions != nil && f.sessions[id] {
+                        io.WriteString(w, `{"data":{"id":"`+id+`"}}`)
+                } else {
+                        w.WriteHeader(404)
+                        io.WriteString(w, `{"_tag":"SessionNotFoundError","sessionID":"`+id+`","message":"Session not found: `+id+`"}`)
+                }
+        case strings.HasPrefix(r.URL.Path, "/api/session/") && r.Method == "DELETE":
+                // v1.59.2: the best-effort serve-side cleanup — 204, the session gone
+                id := strings.TrimPrefix(r.URL.Path, "/api/session/")
+                delete(f.sessions, id)
+                f.deletes = append(f.deletes, id)
+                w.WriteHeader(204)
         case r.URL.Path == "/api/event":
                 w.Header().Set("Content-Type", "text/event-stream")
+                if f.volatileMiss || f.volatileOK {
+                        // the terminal never lands on the wire (the 2.x volatile
+                        // contract — the turn ended before this stream connected);
+                        // the stream itself stays OPEN like the real serve — the
+                        // headers FLUSH so the client's connect truly lands, then
+                        // the handler rides out its connection (heartbeats only)
+                        if fl, okFlush := w.(http.Flusher); okFlush {
+                                fl.Flush()
+                        }
+                        f.mu.Unlock()
+                        <-r.Context().Done()
+                        f.mu.Lock()
+                        return
+                }
                 if f.poisonedTries > 0 {
                         f.poisonedTries--
                         io.WriteString(w, `data: {"id":"w1","type":"session.execution.failed","data":{"sessionID":"`+f.lastSess+`","error":{"type":"provider.error","message":"OpenCode's free tier can only be used from within OpenCode. Download it at https://opencode.ai","status":403}}}`+"\n\n")
@@ -141,7 +229,7 @@ func TestOcServeEventMapping(t *testing.T) {
         fake.mu.Unlock()
         // StreamEvents needs the CURRENT /api/event frames; the fake serves them
         // fresh per connection, so run the pump directly
-        recycled, err := s.ocServePump(context.Background(), m, "ses_fake_pre", "chat1", events)
+        recycled, err := s.ocServePump(context.Background(), m, "ses_fake_pre", "chat1", events, time.Now().UnixMilli())
         close(events)
         <-done
         if err != nil {

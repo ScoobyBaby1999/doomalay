@@ -21,6 +21,7 @@ import (
         "log"
         "os"
         "strings"
+        "time"
 
         "github.com/ScoobyBaby1999/doomalay/engine/internal/ocserve"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/store"
@@ -128,9 +129,12 @@ func (s *Server) ocServeManager(ctx context.Context) *ocserve.Manager {
 func ocServeBindKey(appSessionID string) string { return "chat.ocserve." + appSessionID }
 
 // ocServeBindingGet reads the persisted serve-session binding ("" = none).
+// An error is LOGGED (never swallowed silently — the v1590 live rig
+// convicted a silent "" that hid the real failure from the diagnosis).
 func (s *Server) ocServeBindingGet(appSessionID string) string {
         v, err := s.db.GetSetting(ocServeBindKey(appSessionID))
         if err != nil {
+                log.Printf("ocserve: binding read for %s failed: %v", appSessionID, err)
                 return ""
         }
         return strings.TrimSpace(v)
@@ -161,7 +165,12 @@ func (s *Server) ocServeSessionID(m *ocserve.Manager, sess *store.Session) (stri
         if id, ok := s.ocServeSessions[sess.ID]; ok {
                 return id, false, nil
         }
-        if bound := s.ocServeBindingGet(sess.ID); bound != "" && m.SessionExists(bound) {
+        bound := s.ocServeBindingGet(sess.ID)
+        exists := bound != "" && m.SessionExists(bound)
+        if bound != "" && !exists {
+                log.Printf("ocserve: the persisted binding %q for chat %s did not resolve on the serve — a fresh serve session is incoming", bound, sess.ID)
+        }
+        if exists {
                 if s.ocServeSessions == nil {
                         s.ocServeSessions = map[string]string{}
                 }
@@ -337,6 +346,10 @@ func (s *Server) ocServeStreamTurn(ctx context.Context, m *ocserve.Manager, sess
                 }
         }
         for attempt := 0; attempt < 2; attempt++ {
+                // v1.59.2: the turn's start stamps BEFORE the prompt — the no-hang
+                // guard's durable-record probe keys on it (an instant failure lands
+                // its idle marker moments after this, often before the pump starts)
+                turnStartedAt := time.Now().UnixMilli()
                 serveSess, fresh, err := s.ocServeSessionID(m, sess)
                 if err != nil {
                         return fmt.Errorf("serve bridge session: %w", err)
@@ -356,7 +369,7 @@ func (s *Server) ocServeStreamTurn(ctx context.Context, m *ocserve.Manager, sess
                 }
                 out <- map[string]any{"type": "progress", "session_id": sessionID,
                         "message": "OpenCode free bridge: turn in flight (the genuine OpenCode 2 client)"}
-                recycled, err := s.ocServePump(ctx, m, serveSess, sessionID, out)
+                recycled, err := s.ocServePump(ctx, m, serveSess, sessionID, out, turnStartedAt)
                 if recycled {
                         // THE RECYCLE LAW: drop the poisoned serve session; the next
                         // attempt composes the full opening text on a fresh one.
@@ -375,14 +388,31 @@ func (s *Server) ocServeStreamTurn(ctx context.Context, m *ocserve.Manager, sess
         return nil
 }
 
+// ocServeSilenceProbe is how long the pump stays quiet before polling the
+// session's own durable record (the volatile-stream no-hang guard — a test
+// may shorten it).
+var ocServeSilenceProbe = 12 * time.Second
+
 // ocServePump consumes the 2.x serve's SSE feed for one turn, mapping the
 // v2 event vocabulary onto the engine's. It returns recycled=true when
 // the turn hit OpenCode's free-tier wall (the recycle law's trigger).
-func (s *Server) ocServePump(ctx context.Context, m *ocserve.Manager, serveSess, sessionID string, out chan<- map[string]any) (bool, error) {
+// v1.59.2 THE NO-HANG GUARD: the global /api/event stream is VOLATILE (the
+// 2.x contract — events fired while not connected are MISSED), and a turn
+// that fails between the prompt POST and the stream's connect (no-route,
+// the free-limit wall, auth) never lands on the wire — the old pump spun
+// FOREVER (the eternal-spinner conviction: the user's "send/reply/continue
+// behave as if I was mid flight", live-convicted by the v1590 rig against
+// the real 2.1.2 + the real key). After ~ocServeSilenceProbe of silence
+// the pump polls the session's OWN durable record (SessionIdleSince — the
+// trailing idle message); a turn that already ended off-wire synthesizes
+// the honest terminal (error + status, or the assistant text + idle) and
+// RETURNS.
+func (s *Server) ocServePump(ctx context.Context, m *ocserve.Manager, serveSess, sessionID string, out chan<- map[string]any, turnStartedAt int64) (bool, error) {
         toolNames := map[string]string{} // tool call id → tool name (input.started)
         usedEmitted := map[string]bool{}  // the pill law: use BEFORE result, exactly once
         var usage map[string]any
         finish := "stop"
+        lastEvAt := time.Now().UnixMilli()
         emitToolUse := func(callID, name, args string) {
                 if callID == "" || usedEmitted[callID] {
                         return
@@ -396,6 +426,7 @@ func (s *Server) ocServePump(ctx context.Context, m *ocserve.Manager, serveSess,
                         "tool_use_id": callID}
         }
         pump := func(ev ocserve.Event) error {
+                lastEvAt = time.Now().UnixMilli()
                 switch ev.Type {
                 case "session.reasoning.delta":
                         if ev.Data.Delta == "" {
@@ -465,26 +496,81 @@ func (s *Server) ocServePump(ctx context.Context, m *ocserve.Manager, serveSess,
                                 // the wall: the recycle law's trigger
                                 return errRecycle
                         }
-                        msg := "the OpenCode free bridge turn failed"
-                        errKind := "oc_bridge_error"
-                        if ev.Data.Error != nil && ev.Data.Error.Message != "" {
-                                msg = ev.Data.Error.Message
+                        errType, errMsg, status := "", "", 0
+                        if ev.Data.Error != nil {
+                                errType, errMsg, status = ev.Data.Error.Type, ev.Data.Error.Message, ev.Data.Error.Status
                         }
-                        if ev.IsAuthError() {
-                                errKind = "oc_bridge_auth"
-                                msg = "OpenCode rejected the bridge key — check the OpenCode key in the providers screen (" + msg + ")"
+                        for _, e := range ocServeFailEvents(sessionID, errType, errMsg, status) {
+                                out <- e
                         }
-                        out <- map[string]any{"type": "error", "session_id": sessionID,
-                                "error": errKind, "message": msg}
-                        out <- map[string]any{"type": "status", "session_id": sessionID, "state": "error", "usage": nil}
                 }
                 return nil
         }
-        err := m.StreamEvents(ctx, serveSess, pump)
-        if err == errRecycle {
-                return true, nil
+        // v1.59.2: the stream rides its own goroutine; the silence watchdog
+        // polls the durable record and owns the off-wire terminal (THE
+        // NO-HANG GUARD — see the function comment).
+        pctx, pcancel := context.WithCancel(ctx)
+        defer pcancel()
+        eventsDone := make(chan error, 1)
+        go func() { eventsDone <- m.StreamEvents(pctx, serveSess, pump) }()
+        probe := time.NewTicker(ocServeSilenceProbe)
+        defer probe.Stop()
+        for {
+                select {
+                case err := <-eventsDone:
+                        if err == errRecycle {
+                                return true, nil
+                        }
+                        return false, err
+                case <-probe.C:
+                        quiet := int64(ocServeSilenceProbe / time.Millisecond)
+                        if time.Now().UnixMilli()-lastEvAt < quiet*3/4 {
+                                continue // live events are flowing — no probe needed
+                        }
+                        ended, failed, errType, errMsg, ansText := m.SessionIdleSince(serveSess, turnStartedAt)
+                        if !ended {
+                                continue // still running — the quiet phase of a long turn
+                        }
+                        pcancel()
+                        <-eventsDone // the cancelled stream returns shortly
+                        if failed && strings.Contains(strings.ToLower(errMsg), "free tier") {
+                                // the classic wall — the recycle law owns it
+                                return true, nil
+                        }
+                        if failed {
+                                for _, e := range ocServeFailEvents(sessionID, errType, errMsg, 0) {
+                                        out <- e
+                                }
+                                return false, nil
+                        }
+                        // the off-wire SUCCESS: the assistant text + the idle terminal
+                        if strings.TrimSpace(ansText) != "" {
+                                out <- map[string]any{"type": "assistant", "session_id": sessionID, "text": ansText}
+                        }
+                        out <- map[string]any{"type": "status", "session_id": sessionID,
+                                "state": "idle", "usage": map[string]any{"input_tokens": 0, "output_tokens": 0,
+                                        "total_tokens": 0, "reasoning_tokens": 0, "finish_reason": "stop", "output_cut": false}}
+                        return false, nil
+                }
         }
-        return false, err
+}
+
+// ocServeFailEvents builds the honest failure pair (error + terminal
+// status) — ONE truth for both the wire path and the no-hang watchdog.
+func ocServeFailEvents(sessionID, errType, errMsg string, status int) []map[string]any {
+        msg := strings.TrimSpace(errMsg)
+        if msg == "" {
+                msg = "the OpenCode free bridge turn failed"
+        }
+        kind := "oc_bridge_error"
+        if errType == "provider.auth" || status == 401 {
+                kind = "oc_bridge_auth"
+                msg = "OpenCode rejected the bridge key — check the OpenCode key in the providers screen (" + msg + ")"
+        }
+        return []map[string]any{
+                {"type": "error", "session_id": sessionID, "error": kind, "message": msg},
+                {"type": "status", "session_id": sessionID, "state": "error", "usage": nil},
+        }
 }
 
 // errRecycle is the internal sentinel for the recycle law.

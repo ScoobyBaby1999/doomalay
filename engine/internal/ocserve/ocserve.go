@@ -808,6 +808,88 @@ func (m *Manager) SessionExists(serveSess string) bool {
         return out.Data.ID == serveSess
 }
 
+// SessionIdleSince polls the session's OWN durable record — the last
+// messages (GET /api/session/{id}/message?limit=2, newest first). It answers
+// whether the turn that started at sinceMs has ALREADY ENDED off-wire (the
+// v1.59.2 NO-HANG GUARD: the global /api/event stream is volatile — events
+// fired before the stream connects are missed, and an instantly-failed turn
+// would otherwise hang the pump forever). ended=true means the newest
+// message is an idle marker NEWER than sinceMs; failed carries the idle
+// outcome (with errType/errMsg for the honest error), and a non-failed
+// ending carries the assistant text (the off-wire success path).
+func (m *Manager) SessionIdleSince(serveSess string, sinceMs int64) (ended, failed bool, errType, errMsg, assistantText string) {
+        if serveSess == "" {
+                return false, false, "", "", ""
+        }
+        m.mu.Lock()
+        base, pw := m.baseURL, m.serverPassword
+        m.mu.Unlock()
+        if base == "" {
+                return false, false, "", "", ""
+        }
+        ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+        defer cancel()
+        req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/api/session/"+serveSess+"/message?limit=2", nil)
+        if err != nil {
+                return false, false, "", "", ""
+        }
+        req.Header.Set("Accept", "application/json")
+        req.Header.Set("Authorization", "Basic "+basicAuth("opencode", pw))
+        resp, err := http.DefaultClient.Do(req)
+        if err != nil {
+                return false, false, "", "", ""
+        }
+        defer resp.Body.Close()
+        if resp.StatusCode != 200 {
+                return false, false, "", "", ""
+        }
+        var out struct {
+                Data []struct {
+                        Type    string `json:"type"`
+                        Time    struct {
+                                Created int64 `json:"created"`
+                        } `json:"time"`
+                        Outcome string `json:"outcome"`
+                        Error   *struct {
+                                Type    string `json:"type"`
+                                Message string `json:"message"`
+                        } `json:"error"`
+                        Text string `json:"text"`
+                } `json:"data"`
+        }
+        if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&out); err != nil {
+                return false, false, "", "", "" // HTML or any non-JSON body — not an answer
+        }
+        if len(out.Data) == 0 {
+                return false, false, "", "", ""
+        }
+        newest := out.Data[0]
+        // >= not >: an instant failure lands its idle marker in the SAME
+        // millisecond the turn started (live-observed: the no-route failure
+        // fired ~5ms after the prompt, often the same ms as the stamp). The
+        // false-positive guard is the SILENCE window itself — the probe only
+        // fires well into the turn, and a PREVIOUS turn's idle marker can
+        // only collide when that turn ended the very ms this one started
+        // (the serve serializes prompts per session; the recycle births a
+        // FRESH session anyway).
+        if newest.Type != "idle" || newest.Time.Created < sinceMs {
+                return false, false, "", "", "" // still running (or a PREVIOUS turn's idle)
+        }
+        if newest.Outcome == "failed" {
+                et, em := "", ""
+                if newest.Error != nil {
+                        et, em = newest.Error.Type, newest.Error.Message
+                }
+                return true, true, et, em, ""
+        }
+        // the off-wire success: the assistant message rides just under the idle
+        at := ""
+        if len(out.Data) > 1 && out.Data[1].Type == "assistant" {
+                at = out.Data[1].Text
+        }
+        return true, false, "", "", at
+}
+
 // DeleteSession removes a serve-side session (v1.59.2: the chat-delete
 // path's best-effort cleanup — a deleted app chat must not leave its serve
 // twin behind). LIVE-PROBED against the pinned 2.1.2: DELETE
