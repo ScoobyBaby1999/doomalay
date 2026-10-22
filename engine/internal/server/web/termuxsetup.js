@@ -248,7 +248,10 @@
       '<span class="tsx-num wait" id="tsx-num-' + key + '">' + (STEP_NUM[key] || '') + '</span>' +
       '<span class="tsx-mid">' +
         '<span class="tsx-name">' + esc(name) + '</span>' +
-        '<span class="tsx-desc">' + esc(sub) + '</span>' +
+        // v1.63.4: `sub` renders as HTML (the paste phrase rides the theme
+        // accent) — every caller passes a static literal; no user input
+        // ever rides this line.
+        '<span class="tsx-desc">' + sub + '</span>' +
         (extraMid || '') +
         '<span class="tsx-err" id="tsx-err-' + key + '"></span>' +
       '</span>' +
@@ -273,15 +276,17 @@
     var checkNow = '<button class="tsx-btn ghost" id="tsx-btn-checknow" type="button" ' +
       'aria-label="force one status check now">check now</button>';
     // v1.29.1: Open Termux now CARRIES the command — one tap puts the
-    // current bootstrap command on the clipboard AND opens Termux (the
-    // label's ⌘ marks it). Termux's security model forbids typing into
-    // the terminal from outside (RUN_COMMAND needs the very property
-    // this command sets), so the honest maximum is: the user long-presses
-    // → Paste → Enter. The hint below the command teaches exactly that.
+    // current bootstrap command on the clipboard AND opens Termux. Termux's
+    // security model forbids typing into the terminal from outside
+    // (RUN_COMMAND needs the very property this command sets), so the
+    // honest maximum is: the user long-presses → Paste → Enter.
+    // v1.63.4 THE SETUP COPY (PLAN-V163 §4, the user's ask #4): the label
+    // says the whole gesture — 'Open Termux ↗ then hold and Paste' (the
+    // redirect icon marks the app hand-off) — and the page-level
+    // explanation hint about the auto-copy is GONE (the user asked for its
+    // removal; the tap's own toast still confirms the copy honestly).
     var openTx = '<button class="tsx-btn" id="tsx-btn-termux" type="button" ' +
-      'aria-label="copy the command and open the Termux app">Open Termux ⌘</button>';
-    var hint = '<span class="tsx-hint">Open Termux copies the command — in Termux: ' +
-      'long-press the terminal → Paste, then Enter</span>';
+      'aria-label="copy the command and open the Termux app to paste it">Open Termux ↗ then hold and Paste</button>';
     var settings = '<button class="tsx-btn" id="tsx-btn-settings" type="button" ' +
       'aria-label="open the permission settings screen">Open settings</button>';
     return '<div class="tsx-page" id="tsx-page">' +
@@ -299,9 +304,16 @@
       '<div class="tsx-steps" role="list">' +
         stepRow('install', 'Install Termux', 'the real terminal app, from F-Droid',
           gh, fdroid) +
-        stepRow('bootstrap', 'Bootstrap once', 'paste one command in Termux',
-          cmd + hint, copy + checkNow + openTx) +
-        stepRow('permission', 'Allow commands', 'grant Doomalay permission to run Termux commands',
+        // v1.63.4: the paste phrase under 'Bootstrap once' rides the theme
+        // ACCENT (the user: 'make the paste under the bootstrap once text
+        // primary color or get a theme text color') — the whole desc is
+        // HTML now (static literals, no escaping need).
+        stepRow('bootstrap', 'Bootstrap once', 'in Termux: <b style="color:var(--accent);font-weight:700">hold and Paste</b> the command, then Enter',
+          cmd, copy + checkNow + openTx) +
+        // v1.63.4: step ③ names the REAL screens (the user's ask): the
+        // Additional Permissions page → 'Run commands in Termux
+        // environment'; 'Manage app' is optional to disable after.
+        stepRow('permission', 'Allow commands', 'go to Additional Permissions and allow Run commands in Termux environment — optionally disable Manage app if unused',
           '', settings) +
       '</div>' +
       '<div class="tsx-foot">states refresh live while this is open — the live ASCII progress bar runs on the Termux terminal itself, while the bootstrap runs</div>' +
@@ -804,9 +816,9 @@
         'background:var(--surface-2);border:1px solid var(--border);border-radius:8px;' +
         'padding:6px 8px;margin-top:3px;word-break:break-all;white-space:normal;' +
         'user-select:text;-webkit-user-select:text;cursor:pointer;overflow-wrap:anywhere}.tsx-mono{font-family:var(--mono,monospace);font-size:calc(var(--ui-small-fs) - 2px);color:var(--text-2);overflow-wrap:anywhere}' +
-      // v1.29.1: the paste-gesture hint under the bootstrap command
-      '.tsx-hint{font-size:calc(var(--ui-small-fs) - 2px);color:var(--text-3-dim);' +
-        'line-height:1.45;margin-top:4px;overflow-wrap:break-word}' +
+      // v1.63.4: .tsx-hint (the paste-gesture explanation under the
+      // bootstrap command) is RETIRED with its markup — the button label
+      // says the whole gesture now.
       // the state chip — done rides the accent family, now is SOLID accent
       // (on-accent), wait stays muted (the theme-var chip law)
       '.tsx-chip{flex-shrink:0;font-size:calc(var(--ui-small-fs) - 2px);' +
