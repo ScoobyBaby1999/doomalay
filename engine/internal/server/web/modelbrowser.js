@@ -697,15 +697,28 @@
       }
 
       if (!opened) {
+        // v1.63.3 THE ONPOP FRESH RENDER: a pushed page (the cloud gate's
+        // providers screen) popping back restores the open-time html
+        // SNAPSHOT — onPop re-renders the catalogue FRESH from its closure
+        // state (search, filters, tabs all live on).
+        var popOpts = {
+          onSwap: wireZones,
+          onPop: function () { render(); }
+        };
         if (opts.useReplaceContent && window.ConnectOverlay.isOpen()) {
-          window.ConnectOverlay.replaceContent(html, { onSwap: wireZones });
+          window.ConnectOverlay.replaceContent(html, popOpts);
         } else {
-          window.ConnectOverlay.open(html, { onSwap: wireZones });
+          window.ConnectOverlay.open(html, popOpts);
         }
         opened = true;
         wireOnce();
       } else {
         var contentEl = window.ConnectOverlay.getContentEl();
+        // v1.63.3 THE STACK GUARD: a pushed page (the cloud providers
+        // screen) owns the scroller while stacked — a catalog sync landing
+        // mid-stack must never swap it away (#mb-wrap is OUR marker; the
+        // zone updaters are already absent-zone-safe).
+        if (!contentEl || !contentEl.querySelector('#mb-wrap')) return;
         contentEl.innerHTML = html;
         wireZones();
       }
@@ -806,8 +819,17 @@
       // so the tab group never renders underneath it.
       return '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;padding-right:34px">' +
         '<h2 style="font-size: calc(var(--ui-fs) + 3px);font-weight:600;color:var(--text-1);margin:0;flex:1">Select a model</h2>' +
-        // v0.34: the three tabs — ★ favorites | Providers | Models
+        // v1.63.3 THE CLOUD GATE (PLAN-V163 §3, the user's ask #2): a cloud
+        // glyph LEFT of the ★ tab, the tab's own size, pressed → the cloud
+        // provider screen OPENS as a pushed stack level (usePushPage) — the
+        // Android back gesture pops back HERE (the model catalogue), never
+        // the canvas. A hairline divider separates the action from the tabs
+        // (tabs switch views; the cloud opens a nested screen). Theme tokens
+        // only (the theme law).
         '<div style="display:flex;background:var(--surface-1);border:1px solid var(--surface-2);border-radius:10px;padding:3px">' +
+          '<button data-mb-cloud="1" aria-label="open the cloud provider screen" title="cloud providers — keys, installs, pills" style="display:flex;align-items:center;background:transparent;border:none;border-right:1px solid var(--surface-2);color:var(--text-3);font-size:12px;font-weight:600;font-family:inherit;padding:6px 10px 6px 8px;border-radius:8px 0 0 8px;cursor:pointer;-webkit-tap-highlight-color:transparent;touch-action:manipulation">' +
+            '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/></svg>' +
+          '</button>' +
           tabBtn('favorites', '★' + (favCount ? ' ' + favCount : ''), 'var(--warn)') +
           tabBtn('providers', 'Providers', 'var(--ok)') +
           tabBtn('models', 'Models', 'var(--accent)') +
@@ -2736,6 +2758,15 @@
       if ((el = t.closest('[data-viewtab]'))) {
         e.stopPropagation();
         switchView(el.getAttribute('data-viewtab'));
+        return;
+      }
+      // v1.63.3 THE CLOUD GATE: the cloud glyph opens the cloud provider
+      // screen as a PUSHED stack level — back pops to this catalogue.
+      if (t.closest('[data-mb-cloud]')) {
+        e.stopPropagation();
+        if (window.ProvidersScreen && window.ProvidersScreen.open) {
+          try { window.ProvidersScreen.open(null, { usePushPage: true }); } catch (e) {}
+        }
         return;
       }
       if (t.closest('#mb-refresh')) {
