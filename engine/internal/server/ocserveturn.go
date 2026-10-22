@@ -199,7 +199,7 @@ func (s *Server) ocServeChatDir(m *ocserve.Manager, chatID string) (string, bool
                 "url":      fmt.Sprintf("http://127.0.0.1:%d/mcp/oc/%s", port, safeChat),
                 "headers":  map[string]string{"X-Doomalay-Session": safeChat}, // the belt: headers RIDED live-proven
                 "oauth":    false,                                            // plain loopback HTTP — no OAuth probing
-                "codemode": false,                                           // DIRECT tools: the model calls calculator/fleet bare-named (the 1:1 pill law)
+                "codemode": true, // THE PROVEN ROUTE: 2.1.2 serves MCP tools through Code Mode as tools.doomalay_<tool> (live-proven end-to-end: the attach probe computed 17*23=391 through tools.doomalay.calculator). codemode:false excluded them from Code Mode entirely (live-convicted: "Unknown tool 'doomalay_calculator'" + the empty search) with the direct exposure unproven on this build — never ship the unproven arm when the proven one works. The nested doomalay.* statuses ride the live pill (v1.58.1's toolCalls progress law).
                 "timeout":  map[string]int{"startup": 20000, "catalog": 20000, "execution": 300000},
         }
         cfg := map[string]any{

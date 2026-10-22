@@ -72,7 +72,7 @@ func (s *Server) toolsBlockFor(sess *store.Session, serveMode, mcpBound bool) st
                 b.WriteString("• The doomalay app's tools are NOT connected on this device's opencode build — use your own tools; do not assume any other tool exists.]")
                 return b.String()
         }
-        b.WriteString("• The doomalay app's tools (connected through the \"doomalay\" MCP server — call them the same way, by bare name): ")
+        b.WriteString("• The doomalay app's tools (connected through the \"doomalay\" MCP server — inside Code Mode they are tools.doomalay_<name>, e.g. tools.doomalay_calculator; call them exactly like every other Code Mode tool): ")
         var names []string
         for _, d := range mcpbus.Defs() {
                 names = append(names, d.Name)

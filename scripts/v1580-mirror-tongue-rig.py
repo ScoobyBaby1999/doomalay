@@ -325,7 +325,7 @@ def main():
         entry = ((chatcfg.get("mcp") or {}).get("servers") or {}).get("doomalay") or {}
         check("M2 the per-chat config points at /mcp/oc/<chat>",
               str(entry.get("url", "")).endswith(f"/mcp/oc/{sid}"), str(entry.get("url")))
-        check("M2 codemode:false (direct tools, the 1:1 pill law)", entry.get("codemode") is False)
+        check("M2 codemode:true (THE PROVEN ROUTE — Code Mode's tools.doomalay_<tool>; false excluded them entirely, live-convicted)", entry.get("codemode") is True)
         check("M2 the ws workspace exists", os.path.isdir(os.path.join(datadir, "opencode-serve", "chats", sid, "ws")))
     else:
         check("M2 the per-chat config exists", False, chatcfgp)
@@ -370,13 +370,20 @@ def main():
             uses = tool_uses(evs)
             results = tool_results(evs)
             calc_use = [u for u in uses if u.get("name") == "calculator"]
+            # THE PROVEN ROUTE: 2.1.2 serves the doomalay MCP tools through Code
+            # Mode as tools.doomalay_<tool> (live-proven: 391 end-to-end; a
+            # direct call is an accepted alternative)
+            cm_use = [u for u in uses if str(u.get("name")) == "execute" and "doomalay_calculator" in str(u.get("args", ""))]
             calc_res = [t for t in results if t.get("name") == "calculator" and "391" in t.get("text", "")]
-            if calc_use:
-                check("S4 the MCP calculator call happens", True, f"uses={[(u.get('name'), u.get('summary')) for u in uses]}")
-                check("S4 THE BARE-NAME LAW", not str(calc_use[0].get("name")).startswith("opencode:"), str(calc_use[0].get("name")))
-                check("S4 THE DERIVED SUMMARY (never static)", "17*23" in str(calc_use[0].get("summary")), str(calc_use[0].get("summary")))
-                check("S4 the result rides (391)", bool(calc_res),
-                      (calc_res[0]["text"][:100] if calc_res else "no result") + " | answer=" + assistant_text(evs)[:100])
+            cm_res = [t for t in results if t.get("name") == "execute" and "391" in t.get("text", "")]
+            if calc_use or cm_use:
+                u = (calc_use or cm_use)[0]
+                check("S4 the MCP calculator call happens (direct OR Code Mode's tools.doomalay_*)", True,
+                      f"uses={[(u2.get('name'), str(u2.get('summary'))[:60]) for u2 in uses]}")
+                check("S4 THE BARE-NAME LAW (never opencode:)", not str(u.get("name")).startswith("opencode:"), str(u.get("name")))
+                check("S4 THE DERIVED SUMMARY (never static)", "17*23" in str(u.get("summary")) or "doomalay_calculator" in str(u.get("summary")), str(u.get("summary"))[:100])
+                check("S4 the result rides (391)", bool(calc_res or cm_res),
+                      ((calc_res or cm_res)[0]["text"][:100]) + " | answer=" + assistant_text(evs)[:100])
                 landed["S4"] = True
                 pending = [p for p in pending if p != "S4"]
             elif ok and assistant_text(evs):
