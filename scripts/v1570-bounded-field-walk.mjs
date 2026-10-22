@@ -99,15 +99,19 @@ section('W1 the edge (pan until the camera stops)');
 {
   // slam toward the right edge (+8192) — the clamp catches at maxX;
   // then the REAL finger tries to push past it.
+  // (v1.62.1 re-anchor: the bound is now the CANONICAL half − vw — the
+  // viewport's edge lands exactly on the world's edge — replacing the old
+  // lopsided half-viewport-margin law half − vw/2, which the v1.62 wave
+  // convicted as the fit-all crossing lurch's root cause)
   abEval("doomalay.setView(200000, 0, 1)");
   await sleep(500);
-  const clamped = abJson("(function(){var p=doomalay.cameraProbe();var maxX=p.worldSize/2-(p.w/p.scale)/2;return JSON.stringify({x:Math.round(p.x),maxX:Math.round(maxX),atClamp:Math.abs(p.x-maxX)<1})})()");
+  const clamped = abJson("(function(){var p=doomalay.cameraProbe();var maxX=p.worldSize/2-(p.w/p.scale);return JSON.stringify({x:Math.round(p.x),maxX:Math.round(maxX),atClamp:Math.abs(p.x-maxX)<1})})()");
   ok('a violent setView past the edge CLAMPS at maxX (the bounds are real)', clamped && clamped.atClamp, JSON.stringify(clamped));
   // the edge line is on screen now (the affordance)
   const edge = abJson("(function(){var els=[];document.querySelectorAll('body > div').forEach(function(d){if(d.style.display==='block'&&(d.style.width==='2px'||d.style.height==='2px'))els.push(d.style.width==='2px'?'v':'h')});return JSON.stringify({lines:els})})()");
   ok('the edge affordance line is VISIBLE at the boundary', edge && edge.lines.length >= 1, JSON.stringify(edge));
   // the real finger pushes PAST the edge — the camera must not move beyond
-  const cam0 = abJson("(function(){var p=doomalay.cameraProbe();return JSON.stringify({x:p.x,maxX:p.worldSize/2-(p.w/p.scale)/2})})()");
+  const cam0 = abJson("(function(){var p=doomalay.cameraProbe();return JSON.stringify({x:p.x,maxX:p.worldSize/2-(p.w/p.scale)})})()");
   ab(['mouse', 'move', '1100', '280', '--duration', '150']);
   ab(['mouse', 'down']);
   for (let i = 0; i < 6; i++) {
@@ -118,7 +122,7 @@ section('W1 the edge (pan until the camera stops)');
   }
   ab(['mouse', 'up']);
   await sleep(500);
-  const cam1 = abJson("(function(){var p=doomalay.cameraProbe();return JSON.stringify({x:p.x,maxX:p.worldSize/2-(p.w/p.scale)/2})})()");
+  const cam1 = abJson("(function(){var p=doomalay.cameraProbe();return JSON.stringify({x:p.x,maxX:p.worldSize/2-(p.w/p.scale)})})()");
   ok('the finger CANNOT push the camera past the edge (the clamp held through the whole pan)', cam1 && cam1.x <= cam1.maxX + 1, JSON.stringify({ startX: cam0 && cam0.x, endX: cam1 && cam1.x, maxX: cam1 && cam1.maxX }));
 }
 

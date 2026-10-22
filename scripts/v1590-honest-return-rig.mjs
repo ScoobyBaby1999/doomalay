@@ -101,8 +101,11 @@ for (const f of ['chatpanel.js', 'app.js', 'chatclient.js']) {
 }
 {
   const ot = fs.readFileSync(path.join(__ROOT, 'engine', 'internal', 'server', 'ocserveturn.go'), 'utf8');
+  // (v1.62 re-anchor: the parallel wave's v1.61 rework renamed the binding
+  // var bound→persisted — the pin rides the SEMANTIC: the persisted binding
+  // is adopted only after SessionExists, whatever the local is named)
   ok('v1.59.2: the binding persists (chat.ocserve.<sid>) and adopts after a restart',
-    ot.includes('func ocServeBindKey') && ot.includes('m.SessionExists(bound)'));
+    ot.includes('func ocServeBindKey') && /m\.SessionExists\((bound|persisted)\)/.test(ot));
   const oc = fs.readFileSync(path.join(__ROOT, 'engine', 'internal', 'ocserve', 'ocserve.go'), 'utf8');
   ok('v1.59.2: SessionExists speaks the live-probed GET /api/session/{id} shape',
     oc.includes('func (m *Manager) SessionExists'));
