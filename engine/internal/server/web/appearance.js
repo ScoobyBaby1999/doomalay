@@ -1261,14 +1261,18 @@
           rangeRow('gridSize', 'Grid Spacing', getState().gridSize || 1, 1, 5, 0.5, '')
         ) +
         // v1.42.3 THE EDGE: the bounded world — the 7-second metric as
-        // the user's dial (16k/32k/64k/128k/off). app.js's onChange
-        // listener re-applies live (clamp + conform + the edge line).
+        // the user's dial. v1.57.1 THE TRUE BOUNDS: 8k joins at the
+        // bottom (intimate), 16k is the new default (cozy — the whole
+        // world fits the viewport at max zoom-out on any phone), every
+        // other rung incl. ∞ stays. app.js's onChange listener
+        // re-applies live (clamp + conform + the edge line).
         section('World Size', '' +
-          selectRow('worldSize', 'Bounded world', (typeof s.worldSize === 'number' ? s.worldSize : 65536), [
-            { value: 16384, label: '16k — quick' },
+          selectRow('worldSize', 'Bounded world', (typeof s.worldSize === 'number' ? s.worldSize : 16384), [
+            { value: 8192, label: '8k — intimate' },
+            { value: 16384, label: '16k — cozy · whole world in view' },
             { value: 32768, label: '32k — roomy' },
-            { value: 65536, label: '64k — default (7s traverse)' },
-            { value: 131072, label: '128k — vast' },
+            { value: 65536, label: '64k — vast' },
+            { value: 131072, label: '128k — endless' },
             { value: 0, label: 'Off — infinite' }
           ])
         ) +

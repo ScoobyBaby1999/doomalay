@@ -34,6 +34,21 @@
 
   // ── constants (moved from app.js) ─────────────────────────────────
   var GRID_BASE = 48;      // base grid spacing in px (at scale 1, gridSize 1)
+
+  // ▀▀ v1.57.1 THE FAR-FIELD FADE (PLAN-V157 §1 — the map view) ▀▀▀▀▀▀▀▀▀▀▀
+  // Below the spacing where the sea stops reading, it fades to nothing:
+  // at the fit-all overview zoom (min(W,H)/WORLD_SIZE — e.g. 0.024 on a
+  // phone at 16k) the lattice spacing is ~1.1px — sub-pixel mush. The
+  // ramp is keyed on the LIVE spacing (gridSize-aware): full at ≥6px —
+  // EXACTLY today's minimum (48·1·0.125), so every currently-reachable
+  // zoom renders byte-identical — and zero at ≤2.5px. What remains at
+  // the far end is the clean map view: the background field, the icon
+  // dots, the portal rings, the edge lines, the origin dot. Alpha math
+  // only — zero color literals (the census pin holds).
+  function farFieldK(spacingPx) {
+    if (!(spacingPx > 0)) return 1;
+    return Math.max(0, Math.min(1, (spacingPx - 2.5) / 3.5));
+  }
   var DOT_RADIUS = 1.4;
   var ORIGIN_RADIUS = 12;   // v0.88.2: 5 → 12 — "make the dot marking the
                             // center of the grid noticeably larger than
@@ -710,7 +725,7 @@
   var TEMPO = 0.6;   // v1.06.3: 0.5 → 0.6 — a touch livelier (the user's
                      // "extremely static" + the widened hero tsp spread)
   var TL = { fp: '', tiles: null, pendP: null, pendCam: null, bakeT: 0,
-             gen: 0, cellRecords: 0, legacyFails: 0,
+             gen: 0, cellRecords: 0, legacyFails: 0, lastFarK: 1,
              // v1.06.1 THE ZOOM LADDER: per-level tile sets, LRU + byte-capped.
              // A zoom into a SEEN level = instant pattern swap (zero bakes);
              // an unseen level bakes ASYNC at its canonical scale — never
@@ -1295,6 +1310,9 @@
 
   function renderOverLayer(gctx2, W, H, cam, P) {
     if (!gctx2 || !TL.tiles || !TL.fp) return 0;
+    // v1.57.1: the far-field — the over layer dies with the sea at the
+    // map view (a stale cached bake must not re-summon it).
+    if (farFieldK(GRID_BASE * (P.gridSize || 1) * cam.scale) <= 0.004) return 0;
     var T = TL.tiles;
     var offsetX = cam.ox, offsetY = cam.oy, scale = cam.scale;
     var spacingNow = GRID_BASE * (P.gridSize || 1) * scale;
@@ -1680,6 +1698,10 @@
       jrMin: Infinity, jrMax: 0, wMin: Infinity, wMax: 0,
       glow: 0, glowCols: [], overDots: 0, overLines: 0 };
     var dotRBase = Math.max(0.6, DOT_RADIUS * Math.min(scale, 1.3));
+    // v1.57.1: the far-field key — the live spacing decides the sea's fate
+    // (full at today's minimum spacing; the map view at the fit-all zoom).
+    var farK = farFieldK(GRID_BASE * (P.gridSize || 1) * scale);
+    TL.lastFarK = farK;   // v1.57.1: the state accessor's truth (both render paths)
     var segMode = effFracL > 0 || animLines;
     var overDotsOn = false;   // v1.10.2 THE HONEST SKY
     var overLinesOn = false;   // v1.10.2 THE HONEST SKY
@@ -1695,7 +1717,8 @@
     // ── FULL-LINE MODE (no variation, no line animation): the immediate
     // pass, lifted from the legacy renderer — ≈40 quads, ≤2 fills, and
     // the v0723 source contracts live in the legacy copy below.
-    if (!hideLines && !segMode) {
+    // v1.57.1: the far-field — past the fade the sea is gone entirely.
+    if (!hideLines && !segMode && farK > 0.004) {
       var lineBands = amp > 0 ? AMP_BANDS : 1;
       var segBuckets = new Map();
       var lineBandStyle = lcPaint(lineSpec2, lineFallback2, gctx, W, H);
@@ -1785,6 +1808,7 @@
       segBuckets.forEach(function (bk) {
         var sc = bk.sc;
         sc.fillStyle = bk.s;
+        if (farK < 1) sc.globalAlpha = farK;   // v1.57.1: the far-field ramp
         sc.beginPath();
         var ops = bk.ops;
         for (var oi = 0; oi < ops.length; oi += 8) {
@@ -1795,13 +1819,17 @@
           sc.closePath();
         }
         sc.fill();
+        if (farK < 1) sc.globalAlpha = 1;
         dbg.batches++; dbg.buckets++;
       });
     }
 
     // ── THE ONE-OBJECT TILES ──────────────────────────────────────────
-    var T = tlBakeTiles(P, cam, W, H);
-    var ps = T.scaleQ ? (scale / T.scaleQ) : 1;
+    // v1.57.1: past the far-field fade the tile sea + the bake are SKIPPED
+    // entirely — the overview frame paints background + icons + edges
+    // only (cheaper than any lattice frame before it).
+    var T = (farK > 0.004) ? tlBakeTiles(P, cam, W, H) : null;
+    var ps = (T && T.scaleQ) ? (scale / T.scaleQ) : 1;
     var spacingNow = GRID_BASE * (P.gridSize || 1) * scale;
     var dprSnap = TL_DPR || 1;
     // the BREATH: two checker-parity groups, counter-phase — the shimmer
@@ -1811,7 +1839,7 @@
     // v0.98: per-layer periods — each parity layer phase-wraps at its own
     // tile size (the interleave); coverage stats follow the layer.
 
-    for (var li = 0; li < T.list.length; li++) {
+    for (var li = 0; li < (T ? T.list.length : 0); li++) {
       var bt = T.list[li];
       if (bt.kind === 'lines' && (hideLines || !segMode)) continue;
       if (bt.kind !== 'lines' && hideDots) continue;
@@ -1837,7 +1865,7 @@
       phx = Math.round(phx * dprSnap) / dprSnap;
       phy = Math.round(phy * dprSnap) / dprSnap;
       var alpha = bt.kind === 'dotsA' ? breathA : (bt.kind === 'dotsB' ? breathB : 1);
-      tlFill(gc, bt.tile, phx, phy, Tcss, alpha, W, H);
+      tlFill(gc, bt.tile, phx, phy, Tcss, alpha * farK, W, H);   // v1.57.1: the far-field rides the fill
       dbg.batches++;
       var nxL = Math.ceil(W / Tcss) + 1, nyL = Math.ceil(H / Tcss) + 1;
       var cov = nxL * nyL * bt.tile.n;
@@ -1867,15 +1895,15 @@
     // tiles): a 320-cell-period noise field, far past perception, kills
     // the wallpaper read of the M-cell tile repetition — and its slow
     // drift gives the whole canvas a constant, subtle life.
-    if (paintModulation(gctx, W, H, P, cam, animT)) dbg.batches++;
+    if (T && paintModulation(gctx, W, H, P, cam, animT)) dbg.batches++;   // v1.57.1: rides the far-field gate
 
     // ── THE HERO FIREFLIES (animDots only — the few real movers) ──────
     // v0.97.1: the band-level weight range (heroes included) feeds the
     // instrument — the tiles alone miss the biggest dots at high variation
-    if (T.jrMin < dbg.jrMin) dbg.jrMin = T.jrMin;
-    if (T.jrMax > dbg.jrMax) dbg.jrMax = T.jrMax;
+    if (T && T.jrMin < dbg.jrMin) dbg.jrMin = T.jrMin;
+    if (T && T.jrMax > dbg.jrMax) dbg.jrMax = T.jrMax;
     var heroCount = 0;
-    if (!hideDots && T.heroes.length) {
+    if (!hideDots && T && T.heroes.length && farK > 0.004) {
       var HERO_CAP = 40;
       for (var hi = 0; hi < T.heroes.length && heroCount < HERO_CAP; hi++) {
         var h = T.heroes[hi];
@@ -1893,7 +1921,7 @@
             var hx2 = gx + Math.cos(orA) * h.orR * ps;
             var hy2 = gy + Math.sin(orA) * h.orR * ps;
             if (hx2 < -20 || hx2 > W + 20 || hy2 < -20 || hy2 > H + 20) continue;
-            var tal = 0.62 + 0.38 * (0.5 + 0.5 * pulse);
+            var tal = (0.62 + 0.38 * (0.5 + 0.5 * pulse)) * farK;   // v1.57.1: the far-field ramp
             var hgc = (h.over ? gctx2 : gctx);   // v0.98: the bake-stable layer assignment
             if (!hgc) continue;
             hgc.save();
@@ -1951,15 +1979,16 @@
         threshL: overLinesOn ? overThreshL : null },
       camera: { x: offsetX, y: offsetY, scale: scale },
       fps: Math.round(lcFps),
-      batches: dbg.batches, buckets: dbg.buckets + T.list.length,
+      batches: dbg.batches, buckets: dbg.buckets + (T ? T.list.length : 0),
       cache: { gen: LC.gen, colorGen: LC.cgen,
         dot: TL.cellRecords, vline: LC.vline.size, hline: LC.hline.size,
-        vseg: T.M * T.M, hseg: T.M * T.M },
+        vseg: (T ? T.M * T.M : 0), hseg: (T ? T.M * T.M : 0) },   // v1.57.1: null-safe (the far-field skip)
       // v0.97: the one-object instrument — the rigs can prove the mode
-      oneObject: { tiles: T.list.length, mega: T.MA, megaA: T.MA, megaB: T.MB,
-                   pairCells: T.cells, raster: Math.round((T.R || 1) * 100) / 100,
-                   heroes: heroCount, bakeGen: T.gen, tileMs: Math.round(T.bakeMs || 0),
-                   bakeError: TL.bakeError || null },
+      oneObject: { tiles: T ? T.list.length : 0, mega: T ? T.MA : 0, megaA: T ? T.MA : 0, megaB: T ? T.MB : 0,
+                   pairCells: T ? T.cells : 0, raster: Math.round((T && T.R ? T.R : 1) * 100) / 100,
+                   heroes: heroCount, bakeGen: T ? T.gen : 0, tileMs: Math.round((T && T.bakeMs) || 0),
+                   bakeError: TL.bakeError || null,
+                   farK: Math.round(farK * 1000) / 1000 },   // v1.57.1: the far-field truth (the rig's contract)
       glow: { n: dbg.glow, colors: dbg.glowCols, sprites: LC.sprites.size },
       hits: LC.hits, misses: LC.misses,
       paintMs: Math.round((lcNow - t0) * 10) / 10
@@ -1982,8 +2011,15 @@
     paintCanvasBackground(gctx, P.canvasSpec, P.bgFallback, W, H, P.bgP, scale, offsetX, offsetY);
 
     var amp = P.amp;
-    var hideLines = !!P.hideLines;
-    var hideDots = !!P.hideDots;
+    // v1.57.1 THE FAR-FIELD (the map view): the legacy A/B path rides the
+    // binary form — past the fade the sea is skipped via the existing
+    // hide machinery (zero structural change); the RAMP range renders
+    // unfaded here (the legacy path is the debug fallback — the tiled
+    // path owns the true fade; documented honestly).
+    var farKLeg = farFieldK(GRID_BASE * (P.gridSize || 1) * scale);
+    TL.lastFarK = farKLeg;   // v1.57.1: the legacy twin sets the accessor's truth too
+    var hideLines = !!P.hideLines || farKLeg <= 0.004;
+    var hideDots = !!P.hideDots || farKLeg <= 0.004;
     var scatterL = P.scatterL, scatterD = P.scatterD;
     var sizeVarL = P.sizeVarL, sizeVarD = P.sizeVarD;
     var rotVarL = P.rotVarL, rotVarD = P.rotVarD;
@@ -2595,6 +2631,7 @@
         tiles: TL.tiles ? TL.tiles.list.length : 0,
         mega: TL.tiles ? TL.tiles.M : 0,
         heroes: TL.tiles ? TL.tiles.heroes.length : 0,
+        farK: Math.round((TL.lastFarK === undefined ? 1 : TL.lastFarK) * 1000) / 1000,   // v1.57.1: the far-field truth (fresh per render; 0 is REAL — no falsy-or)
         bakeGen: TL.gen,
         pending: !!TL.bakeT,
         zoomHold: Z_HOLD,   // v1.09.3: the still-hand state (the rig proof)

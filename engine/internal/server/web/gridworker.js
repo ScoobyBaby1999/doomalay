@@ -222,7 +222,19 @@ function paintFrame(m) {
   blob.orbitStars = paintedDots;   // v0.90.1: the honest star-paint counter (worker mode)
   // v0.97.1: the worker's one-object state rides the blob (the rigs + the
   // perf HUD read it main-side; the worker's TL is otherwise unreachable)
-  if (Lattice.oneObject) { try { blob.oneObject = Lattice.oneObject(); } catch (e) {} }
+  if (Lattice.oneObject) {
+    try {
+      var oo = Lattice.oneObject();
+      // v1.57.1: the render stats' oneObject carries the far-field truth
+      // (farK + the null-T skip counts) — merge it through the state twin
+      // (the accessor's shape is the rigs' older contract; farK joins it).
+      if (out && out.oneObject && out.oneObject.farK !== undefined) {
+        oo.farK = out.oneObject.farK;
+        oo.renderTiles = out.oneObject.tiles;
+      }
+      blob.oneObject = oo;
+    } catch (e) {}
+  }
   if (atomStats) blob.atoms = atomStats;
   else if (m.atomsOnly) blob.atoms = atomStats || blob.atoms || { chats: 0, stars: 0, shells: 0 };
   self.postMessage({ t: 'debug', blob: blob, pf: Pf });

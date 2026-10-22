@@ -42,20 +42,26 @@ for (const f of ['app.js', 'physics.js', 'settings.js', 'appearance.js']) {
 // ══ §1 source pins ══════════════════════════════════════════════════
 section('§1 the bounded world is real');
 const ax = read('app.js');
-ok('applyWorldSize exists + snaps to the sanctioned ladder', /function applyWorldSize\(sz\)/.test(ax) && /\[16384, 32768, 65536, 131072, 0\]/.test(ax));
+ok('applyWorldSize exists + snaps to the sanctioned ladder', /function applyWorldSize\(sz\)/.test(ax) && /\[8192, 16384, 32768, 65536, 131072, 0\]/.test(ax));   // v1.57.1: 8k joins, 16k default
 ok('clampCamera exists (both axes independent + degenerate centering)', /function clampCamera\(\)/.test(ax) && /offsetX = -vw \/ 2;/.test(ax) && /var maxX = half - vw \/ 2;/.test(ax));
 ok('the finger pan clamps', /offsetX \+= ddx; offsetY \+= ddy;\s*\n\s*clampCamera\(\);.*the finger's camera never leaves the world/s.test(ax));
 ok('momentum clamps', /offsetX \+= velX; offsetY \+= velY;\s*\n\s*clampCamera\(\);.*momentum dies AT the edge/s.test(ax));
 ok('the compass glide clamps every flight frame', /offsetY = glide\.fromY \+ \(toOy - glide\.fromY\) \* ease;\s*\n\s*clampCamera\(\);/s.test(ax));
 ok('setView clamps (the rig writer)', /clampCamera\(\);.*no stale snapshot escapes the bounds \(the plan's boot-heal law\)/s.test(ax));
 ok('zoomAt + pinch clamp', /clampCamera\(\);.*the zoomed viewport span re-enters the world/s.test(ax) && /clampCamera\(\);.*the pinch's viewport span re-enters the world/s.test(ax));
-ok('the boot restore clamps AFTER the settings apply (the boot law)', ax.indexOf('applyWorldSize(window.Settings.getState().worldSize)') < ax.indexOf("offsetX = (saved.offset && saved.offset.x) || 0;"));
+// v1.57.1 re-pin: the ORIGINAL indexOf order check compared init()'s
+// applyWorldSize call against applyWorldState's DEFINITION site (the
+// function body sits ABOVE init textually) — a harness falsity that
+// failed on the clean tree. The honest law: inside init()'s body the
+// settings apply (line offset of the try-call) BEFORE the boot restore
+// call at `applyWorldState(saved, { boot: true })`.
+ok('the boot restore clamps AFTER the settings apply (the boot law)', ax.indexOf('applyWorldSize(window.Settings.getState().worldSize)') < ax.indexOf('applyWorldState(saved, { boot: true })'));
 ok('the boot-heal clamp sits after the scale heal', /Math\.min\(MAX_SCALE, saved\.scale\)\);\s*\n\s*\}\s*\n\s*clampCamera\(\);/s.test(ax));
 ok('resize + orientationchange re-clamp', /addEventListener\('resize', function \(\) \{ resize\(\); clampCamera\(\); updateEdgeAffordance\(\); \}\);/.test(ax));
 ok('the edge affordance rides --border-strong-rgb (zero literals)', /rgba\(var\(--border-strong-rgb\),0\.35\)/.test(ax) && /function updateEdgeAffordance\(\)/.test(ax));
 ok('the edge refresh rides the latticeDue cadence (O(1) skip-if-identical)', /renderIconsCulled\(\);.*O\(visible\), not O\(world\)\s*\n\s*updateEdgeAffordance\(\);/s.test(ax));
 ok('cameraProbe exported (the read-back law)', /cameraProbe: function \(\)/.test(ax));
-ok('the settings change coerces + gates', /var sz = Number\(st && st\.worldSize !== undefined \? st\.worldSize : 65536\);/.test(ax));
+ok('the settings change coerces + gates', /var sz = Number\(st && st\.worldSize !== undefined \? st\.worldSize : 16384\);/.test(ax));   // v1.57.1: the new default
 
 const px = read('physics.js');
 ok('setBounds + conform exist', /setBounds\(half\)/.test(px) && /conform\(half\)/.test(px));
@@ -64,9 +70,14 @@ ok('conform pulls sleepers + dirties the static grid (the shrink migration)', /f
 ok('the wall pass is exempt for orbits (the steering owns them)', /if \(this\._half && !e\._orbit\) \{/.test(px));
 
 const st = read('settings.js');
-ok('worldSize defaults to 65536', /worldSize: 65536,/.test(st));
+ok('worldSize defaults to 16384 (v1.57.1 THE TRUE BOUNDS)', /worldSize: 16384,/.test(st));
+ok('the one-time 65536 migration rides loadState (the spaceParallaxV69 precedent)', /saved\.worldSize === 65536 && !saved\.worldSizeV157/.test(st) && /merged\.worldSize = defaultState\.worldSize;/.test(st) && /merged\.worldSizeV157 = true;/.test(st));
 const ap = read('appearance.js');
-ok('the Sizing page carries the World Size dial (5 options)', /selectRow\('worldSize', 'Bounded world'/.test(ap) && /16k \u2014 quick/.test(ap) && /Off \u2014 infinite/.test(ap));
+ok('the Sizing page carries the World Size dial (6 rungs, 8k..128k + off)', /selectRow\('worldSize', 'Bounded world'/.test(ap) && /8192, label: '8k \u2014 intimate'/.test(ap) && /16k \u2014 cozy \u00b7 whole world in view/.test(ap) && /Off \u2014 infinite/.test(ap));
+ok('v1.57.1 the adaptive fit-all min zoom (the canonical contain-fit)', /function minScale\(\)/.test(ax) && /Math\.min\(W, H\) \/ WORLD_SIZE/.test(ax) && /Math\.max\(1 \/ 64, Math\.min\(MIN_SCALE, fit\)\)/.test(ax));
+ok('v1.57.1 zoomAt + pinch read the adaptive floor', /Math\.max\(minScale\(\), Math\.min\(MAX_SCALE, scale \* factor\)\)/.test(ax) && /Math\.max\(minScale\(\), Math\.min\(MAX_SCALE, pinchStartScale \* factor\)\)/.test(ax));
+ok('v1.57.1 the saved-scale restore re-clamps after resize (the W/H dependency)', /var msRestore = minScale\(\);/.test(ax) && /if \(scale < msRestore\) scale = msRestore;/.test(ax));
+ok('v1.57.1 cameraProbe carries minScaleLive (the rig read-back)', /minScaleLive: minScale\(\)/.test(ax));
 
 // ══ §2 behavioral — the REAL physics.js in a vm ════════════════════
 section('§2 the walls, behavioral');

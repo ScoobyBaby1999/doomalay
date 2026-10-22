@@ -100,6 +100,20 @@
   // zoom-out readable and finger-friendly.
   const MIN_SCALE = 0.125;
   const MAX_SCALE = 2.1;
+  // v1.57.1 THE TRUE BOUNDS (PLAN-V157 §1): the ADAPTIVE FIT-ALL min
+  // zoom — the canonical contain-fit formula (xyflow getViewportForBounds
+  // / pixi-viewport fitWorld / excalidraw zoomToFitBounds / tldraw
+  // 'fit-max'): min(vw/worldW, vh/worldH) = min(W,H)/WORLD_SIZE, clamped
+  // to [1/64, MIN_SCALE]. At max zoom-out the WHOLE bounded world fits
+  // the viewport — the edge lines are VISIBLE, the world reads as a
+  // finite plate (the user's "as if it is still infinite" dies). 1/64
+  // floor: an icon's ~120px disc keeps ≥1.9px at the deepest overview
+  // (a visible dot, not nothing). Infinite worlds (0) keep MIN_SCALE.
+  function minScale() {
+    if (!WORLD_SIZE) return MIN_SCALE;
+    var fit = Math.min(W, H) / WORLD_SIZE;
+    return Math.max(1 / 64, Math.min(MIN_SCALE, fit));
+  }
   let velX = 0, velY = 0;
   let animating = false;
 
@@ -968,7 +982,7 @@
     setView: function (ox, oy, s) {
       if (typeof ox === 'number') offsetX = ox;
       if (typeof oy === 'number') offsetY = oy;
-      if (typeof s === 'number') scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, s));
+      if (typeof s === 'number') scale = Math.max(minScale(), Math.min(MAX_SCALE, s));
       clampCamera();   // v1.42.3: no stale snapshot escapes the bounds (the plan's boot-heal law)
       update();
     },
@@ -976,7 +990,10 @@
     // read-only camera + bounds truth for the E2E rigs; W2's per-canvas
     // camera work builds on this).
     cameraProbe: function () {
-      return { x: offsetX, y: offsetY, scale: scale, worldSize: WORLD_SIZE, w: W, h: H, maxScale: MAX_SCALE, minScale: MIN_SCALE };
+      // v1.57.1: minScaleLive = the adaptive fit-all floor (a rig's
+      // truth); minScale stays the infinite-world base (the legacy
+      // contract's shape).
+      return { x: offsetX, y: offsetY, scale: scale, worldSize: WORLD_SIZE, w: W, h: H, maxScale: MAX_SCALE, minScale: MIN_SCALE, minScaleLive: minScale() };
     },
     // v1.42.5 THE SWAP: the canonical switch + the registry probe (the
     // manager panel + v1.42.6's portals both ride the ONE switchTo).
@@ -1331,22 +1348,32 @@
   // ▀▀ v1.42.3 THE EDGE — the bounded world (PLAN-V142 §3.1) ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
   // The 7-second metric, formalized: at max zoom-out (0.125) a steady
   // drag moves ~8k-12k world px/s; 7s of full traverse ≈ 56k-84k px.
-  // Default 65,536 (2^16 — power-of-two tile math, float32-safe by
-  // 256x per the plan's R1 verdict), centered on the origin
-  // (±32,768). The user's dial, not a wall: Settings → Sizing
-  // (16k / 32k / 64k / 128k / ∞-off). 0 = the legacy infinite world.
-  var WORLD_SIZE = 65536;
+  // v1.57.1 THE TRUE BOUNDS (PLAN-V157 §1): the default is 16,384
+  // (±8,192 — ~136 icons across at scale 1, a ~1.5s traverse). With
+  // the adaptive fit-all min zoom (minScale above) the WHOLE world
+  // fits the viewport at max zoom-out on any phone — the bounds are
+  // VISIBLE, the world a finite plate (the user: "as if it is still
+  // infinite"). The user's dial, not a wall: Settings → Sizing
+  // (8k / 16k / 32k / 64k / 128k / ∞-off). 0 = the legacy infinite
+  // world. settings.js migrates the old 65,536 default once
+  // (the worldSizeV157 flag — a deliberate re-pick survives forever).
+  var WORLD_SIZE = 16384;
   function applyWorldSize(sz) {
     var n = Number(sz);
-    if (!isFinite(n) || n < 0) n = 65536;
-    var sizes = [16384, 32768, 65536, 131072, 0];
+    if (!isFinite(n) || n < 0) n = 16384;
+    var sizes = [8192, 16384, 32768, 65536, 131072, 0];
     // snap to the sanctioned ladder (settings carry the exact values;
     // a stray value falls to the default)
-    if (sizes.indexOf(n) < 0) n = 65536;
+    if (sizes.indexOf(n) < 0) n = 16384;
     var changed = n !== WORLD_SIZE;
     WORLD_SIZE = n;
     if (world && world.setBounds) world.setBounds(n ? n / 2 : 0);
     if (changed && world && world.conform) world.conform(n ? n / 2 : 0);  // a shrink pulls stranded icons home
+    // v1.57.1: the fit-all floor rides the size — a smaller world may
+    // allow zooming OUT further than the old scale; a larger one may
+    // need the current scale pulled up inside the new floor.
+    var ms = minScale();
+    if (scale < ms) scale = ms;
     clampCamera();
     updateEdgeAffordance();
   }
@@ -2151,7 +2178,7 @@
 
   // ── Zoom ──────────────────────────────────────────────────────
   function zoomAt(factor, cx, cy) {
-    const newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale * factor));
+    const newScale = Math.max(minScale(), Math.min(MAX_SCALE, scale * factor));
     if (newScale === scale) return;
     const f = 1 / scale - 1 / newScale;
     offsetX = offsetX + cx * f;
@@ -2262,7 +2289,7 @@
       e.preventDefault();
       const d = touchDist(e.touches[0], e.touches[1]);
       const factor = d / pinchStartDist;
-      const newScale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, pinchStartScale * factor));
+      const newScale = Math.max(minScale(), Math.min(MAX_SCALE, pinchStartScale * factor));
       const worldX = pinchCenter.x / pinchStartScale + pinchStartOffsetX;
       const worldY = pinchCenter.y / pinchStartScale + pinchStartOffsetY;
       offsetX = worldX - pinchCenter.x / newScale;
@@ -2918,7 +2945,7 @@
       offsetX = (saved.offset && saved.offset.x) || 0;
       offsetY = (saved.offset && saved.offset.y) || 0;
       if (typeof saved.scale === 'number') {
-        scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, saved.scale));
+        scale = Math.max(minScale(), Math.min(MAX_SCALE, saved.scale));
       }
       clampCamera();   // v1.42.3: no stale snapshot escapes the bounds (the boot-heal law)
       updateEdgeAffordance();   // the edge line reflects the restored camera immediately (tick may not run at rest)
@@ -3000,6 +3027,12 @@
     // v0.85.4: the world layer evaluates its gate on the restored count
     if (window.World3D) { window.World3D.evaluate(); window.World3D.sync(); }
     resize();
+    // v1.57.1: the fit-all floor depends on W/H — re-clamp the restored
+    // scale AFTER resize() (a saved overview zoom of a small world stays
+    // legal; a larger world's floor pulls a too-deep scale up).
+    var msRestore = minScale();
+    if (scale < msRestore) scale = msRestore;
+    clampCamera();
 
     // v0.84.1 THE ATOM FEED — every restored chat with bound workspaces
     // gets its orbiting stars: one count fetch per session (parallel,
@@ -3175,13 +3208,15 @@
     // v1.42.3 THE EDGE: the world bounds ride the settings — applied
     // BEFORE the camera restore so the boot-heal clamp sees the real
     // bounds (the plan's law: no stale snapshot escapes).
-    try { applyWorldSize(window.Settings.getState().worldSize); } catch (e) { applyWorldSize(65536); }
+    // v1.57.1: the fallback is the new 16,384 default (settings.js owns
+    // the migration; the ladder snaps any stray).
+    try { applyWorldSize(window.Settings.getState().worldSize); } catch (e) { applyWorldSize(16384); }
     // v1.42.3: a live worldSize change re-applies (clamp + conform +
     // the edge affordance) — the value-change gate pattern.
     window.Settings.onChange(function (st) {
       // the select stores a string — coerce (the ladder snaps strays)
-      var sz = Number(st && st.worldSize !== undefined ? st.worldSize : 65536);
-      if (!isFinite(sz) || sz < 0) sz = 65536;
+      var sz = Number(st && st.worldSize !== undefined ? st.worldSize : 16384);
+      if (!isFinite(sz) || sz < 0) sz = 16384;
       if (sz !== WORLD_SIZE) applyWorldSize(sz);
     });
     // Settings names override config names if the user has edited them.

@@ -80,10 +80,16 @@
     // layer (deactivate + the gate pass re-boots, ~100ms).
     worldAA: 'auto',           // 'auto' = hardware gl only (the verdict) | 'on' | 'off'
     worldDpr: 0,               // 0 = the legacy 2× cap | 1 / 1.5 / 2 / 3 explicit
-    // ── v1.42.3 THE EDGE (PLAN-V142 §3.1): the bounded world —
-    // 65,536 px default (2^16, float32-safe by 256×, the 7-second
-    // metric's mid-band). The Sizing page dials 16k/32k/64k/128k/0-off.
-    worldSize: 65536,
+    // ── v1.42.3 THE EDGE (PLAN-V142 §3.1): the bounded world.
+    // ── v1.57.1 THE TRUE BOUNDS (PLAN-V157 §1): the default shrinks
+    // 65,536 → 16,384 — at MIN_SCALE 0.125 a phone saw 1/20th of the
+    // old world's width, so the edge was a rumor and the bounds never
+    // READ (the user: "as if it is still infinite"). 16k + the
+    // adaptive fit-all min zoom (app.js minScale) puts the WHOLE
+    // world in view at max zoom-out on any phone. The Sizing page
+    // dials 8k/16k/32k/64k/128k/0-off; loadState() migrates the old
+    // never-touched default once.
+    worldSize: 16384,
     // ── Text ──────────────────────────────────────────────────
     fontFamily: 'system',
     // ── Default chatbot names (editable) ───────────────────────
@@ -128,6 +134,16 @@
           merged.dotRotation = merged.lineRotation = merged.gridRotation;
         }
         merged.gridV75 = true;
+      }
+      // v1.57.1 THE TRUE BOUNDS: the world-size default moves
+      // 65,536 → 16,384 once (the spaceParallaxV69 precedent). Anyone
+      // carrying the OLD DEFAULT — chosen by nobody, shipped by v1.42.3
+      // — lands on the new manageable size; the flag marks the move so
+      // a DELIBERATE re-pick of 64k (or any value) survives every
+      // future load untouched. The dial keeps every rung incl. ∞.
+      if (saved.worldSize === 65536 && !saved.worldSizeV157) {
+        merged.worldSize = defaultState.worldSize;
+        merged.worldSizeV157 = true;
       }
       return merged;
     } catch (e) { return Object.assign({}, defaultState); }
