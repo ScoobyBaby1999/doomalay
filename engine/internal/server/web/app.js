@@ -848,8 +848,18 @@
     // icon → the new chat reused the OLD chat's state (same conversation,
     // "identical to the old one") and third chats dead-ended. Generate an
     // id guaranteed unused across the restored world.
+    // v1.59.3 THE GHOST — THE MONOTONIC LAW: first-free was not enough — a
+    // DELETED chat's id was immediately reissued, and any residue the
+    // delete missed (LS rows after a reload, a future map keyed by icon
+    // id) adopted the newborn. New ids are now max+1 WITHIN the session:
+    // a retired id is never reissued while the page lives (the delete
+    // path clears the LS residues too, so a post-reload reissue is safe).
     const used = new Set(world.entities.map(e => e.id));
     let n = 1;
+    for (const e of world.entities) {
+      const m = /^chat_(\d+)$/.exec(e.id || '');
+      if (m) n = Math.max(n, parseInt(m[1], 10) + 1);
+    }
     while (used.has('chat_' + n)) n++;
     const icon = new ChatIcon.ChatIcon({ id: 'chat_' + n, name, family, iconIndex, x: worldX, y: worldY });
     world.add(icon);
@@ -2024,12 +2034,20 @@
         const cur = (window.ChatPanel && typeof window.ChatPanel.current === 'function') ? window.ChatPanel.current() : null;
         if (cur && cur.state && sid && cur.state.sessionId === sid && panel && typeof panel.close === 'function') panel.close();
       } catch (e) {}
+      // v1.59.3 THE GHOST: the chat's EVERY live residue dies with it — the
+      // panel state (messages, the dead sessionId, the close-time DOM
+      // stash, the client), the stash LRU slot, the draft + scroll LS rows.
+      // WITHOUT this, a newborn chat reissuing the id adopted the dead
+      // state whole ("the old chat popped up with a new name but the same
+      // wonky malformed chat history"). Runs AFTER the panel close so the
+      // close-time stash lands inside the state we're dropping.
+      try { if (window.ChatPanel && window.ChatPanel.forgetState) window.ChatPanel.forgetState(icon.id); } catch (e) {}
       world.remove(icon.id);
       if (icon.el && icon.el.parentNode) icon.el.parentNode.removeChild(icon.el);
       heldIcon = null;
       if (window.World3D && window.World3D.sync) window.World3D.sync();   // v0.85.4 twin
       hideCanvasEmpty();
-      scheduleSave();
+      saveNow();   // v1.59.3: a destructive action never waits on the 200ms debounce
       startAnimation();
       if (msg && window.DoomToast) window.DoomToast(msg);
     };

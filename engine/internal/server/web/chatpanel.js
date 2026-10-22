@@ -633,6 +633,18 @@
       } catch (e) {}
     }, 600);
   }
+  // v1.59.3 THE GHOST: a deleted chat's scroll memory dies with it — a
+  // reissued icon id (after a reload) must never inherit the dead chat's
+  // reading position.
+  function deleteScrollLS(id) {
+    try {
+      var m = readScrollMap();
+      if (m[id] !== undefined) {
+        delete m[id];
+        localStorage.setItem(SCROLL_KEY, JSON.stringify(m));
+      }
+    } catch (e) {}
+  }
   function rememberScroll(state, pos) {
     state._scrollPos = pos;
     if (state._icon && state._icon.id) saveScrollLS(state._icon.id, pos);
@@ -1768,12 +1780,16 @@
           if (state.sessionId) {
             window.Artifacts.setSession(state.sessionId, { name: icon.name });
             refreshArtifactCount(state, bodyEl);
-            connectWS(bodyEl, state, msgContainer);
+            // v1.59.1 THE BOTTOM: a fresh state bulk-loads the log (REST),
+            // mounts the tail, THEN connects cursor-armed (&since= the
+            // bootstrapped maxSeq) — the load lands at the bottom, not as a
+            // top-down event replay.
+            connectWSFresh(bodyEl, state, msgContainer);
           } else {
             ensureSession(icon, state, function () {
               if (state.sessionId) window.Artifacts.setSession(state.sessionId, { name: icon.name });
               refreshArtifactCount(state, bodyEl);
-              if (bodyEl.querySelector('#chat-input')) connectWS(bodyEl, state, msgContainer);
+              if (bodyEl.querySelector('#chat-input')) connectWSFresh(bodyEl, state, msgContainer);
             });
           }
         });
@@ -2132,6 +2148,13 @@
     var latest = exportLatestFor(state);
     var dl = function (url) { window.open(url, '_blank'); };
     var noSession = !sid;
+    // v1.59.3 THE HONEST EXPORT: a dead engine session must never open a
+    // dead URL — the raw 404 "session not found" JSON in a black WebView
+    // window was the crash the user hit exporting the ghost chat. The
+    // session is verified BEFORE the view opens; offline/5xx degrades to
+    // the rows (the download itself then fails honestly — never a lie,
+    // never a guaranteed-dead URL).
+    var sessionDead = false;
 
     function build() {
       return {
@@ -2142,7 +2165,7 @@
           // 0–500 SLIDER (0 = full log) instead of the tap-to-cycle
           // ladder; the CSV glyph reads white (var(--text-1)).
           function fmtRow(ico, title, attr, icoStyle) {
-            return '<button class="pv-row" ' + attr + (noSession ? ' style="opacity:0.5"' : '') + '>' +
+            return '<button class="pv-row" ' + attr + ((noSession || sessionDead) ? ' style="opacity:0.5"' : '') + '>' +
               '<span class="pv-row-ico"' + (icoStyle || '') + '>' + ico + '</span>' +
               '<span class="pv-row-meta"><span class="pv-row-title">' + title + '</span></span>' +
               '<span class="pv-row-chev">⇩</span></button>';
@@ -2151,6 +2174,7 @@
           return (
             '<p class="pv-hint">the transcript as a file — md / csv / json / txt / html, straight from the engine\'s event log</p>' +
             (noSession ? '<div class="art-loading" style="padding:14px">send a message first — nothing to export yet</div>' :
+            sessionDead ? '<div class="art-loading" style="padding:14px">this chat\'s engine session is gone (deleted or reset elsewhere) — there is nothing left to export</div>' :
             fmtRow('📝', 'Markdown', 'data-x="md" data-url="' + base + '/export.md' + qs + '"') +
             fmtRow('▦', 'CSV', 'data-x="csv" data-url="' + base + '/export.csv' + qs + '"', ' style="color:var(--text-1)"') +
             fmtRow('🧾', 'JSON', 'data-x="json" data-url="' + base + '/export.json' + qs + '"') +
@@ -2169,13 +2193,13 @@
             // exact default — mirroring the mind slider's "whole chat"
             // semantics instead of 0 doubling as full.
             '<input type="range" class="pv-range" min="-1" max="500" step="1" value="' + (latest > 0 ? latest : -1) + '"' +
-              ' aria-label="export the last N messages"' + (noSession ? ' disabled' : '') + '>'
+              ' aria-label="export the last N messages"' + ((noSession || sessionDead) ? ' disabled' : '') + '>'
           );
         },
         onMount: function (el) {
           el.querySelectorAll('[data-x]').forEach(function (b) {
             b.addEventListener('click', function () {
-              if (noSession) return;
+              if (noSession || sessionDead) return;
               // v0.82.5 THE EXPORT TRUTH: every format rides the ENGINE
               // (Content-Disposition → the WebView's DownloadListener).
               // The old client-side txt/html used a Blob-URL <a download>,
@@ -2224,7 +2248,19 @@
         }
       };
     }
-    panel.pushView(build());
+    // v1.59.3: the ping-then-push — the session's existence is proven
+    // BEFORE the view renders (a dead session shows the honest state, not
+    // dead rows). A fetch failure (offline) keeps the rows: the download
+    // will fail on its own merits, honestly.
+    var push = function () { panel.pushView(build()); };
+    if (sid) {
+      fetch('/api/sessions/' + encodeURIComponent(sid)).then(function (r) {
+        sessionDead = (r.status === 404);
+        push();
+      }).catch(function () { push(); });
+    } else {
+      push();
+    }
   }
 
   // ── v0.27: THE MIND PILL (user spec: the context window / memory gets
@@ -3762,7 +3798,87 @@
   // and every subsequent send executed in the WRONG session's event log —
   // the live cross-chat leak (one chat's model reply appearing inside
   // another chat's transcript). The client is rebuilt instead.
-  function connectWS(bodyEl, state, msgContainer) {
+  // ── v1.59.1 THE BOTTOM ─────────────────────────────────────────────
+  // THE LOAD LAW (the user's, verbatim): "We want convos to load from the
+  // bottom not from the top." The Android reality: leaving the app destroys
+  // the WebView; on return the page reloads, chatStates is empty, and the
+  // old path connected the WS with lastSeq=0 → the engine replayed the
+  // ENTIRE event log → every event ran the LIVE pipeline (appendMessage per
+  // event + scroll math + the streaming machinery) — minutes of "watching
+  // history go by" on a long convo, buttons mid-flight theater included.
+  // THE FIX keeps the pipeline's OOP intact — ONE fold truth (handleEvent,
+  // data-only), ONE renderer (renderHost's own tail-window shape), ONE
+  // transport (the ChatClient, its seq cursor PRE-ARMED so the connect asks
+  // &since=<maxSeq> and the engine ships only the gap + the live tail).
+
+  // bootstrapHistory: a FRESH state for an EXISTING session fetches the log
+  // in ONE GET (the REST twin of the WS replay — the exact ToJSON wire
+  // shape) and folds it data-only. cb always runs (a failed fetch degrades
+  // honestly to today's full WS replay — never a blank panel).
+  function bootstrapHistory(state, cb) {
+    if (!state || !state.sessionId || state.client ||
+        state.messages.length > 0 || (state.lastEventI || 0) > 0) { cb(); return; }
+    fetch('/api/sessions/' + encodeURIComponent(state.sessionId) + '/events')
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (data) {
+        var evs = data && data.events;
+        if (evs && evs.length) {
+          state._bulkLoad = true;   // handleEvent's data-only gate
+          var maxSeq = 0;
+          try {
+            for (var i = 0; i < evs.length; i++) {
+              var ev = evs[i];
+              if (!ev || typeof ev !== 'object') continue;
+              ev._replay = true;    // historical — nothing re-arms streaming
+              if (typeof ev.seq === 'number' && ev.seq > maxSeq) maxSeq = ev.seq;
+              handleEvent(ev, state, null, null, null, null, null);
+            }
+          } finally {
+            state._bulkLoad = false;
+          }
+          state._bulkMaxSeq = maxSeq;
+        }
+        cb();
+      })
+      .catch(function () { cb(); });   // offline/shape failure → the WS replay owns it
+  }
+
+  // mountTranscriptTail: the transcript that arrives AFTER renderHost (the
+  // bootstrap lands post-bind) mounts in renderHost's OWN shape — the last
+  // OPEN_TAIL rows now, the older history in idle backfill chunks (scroll-
+  // compensated), the reading law's scroll restore. The greeting/starters
+  // die with the first real row, exactly like the live append path.
+  function mountTranscriptTail(bodyEl, state) {
+    var msgs = bodyEl.querySelector('#chat-messages');
+    if (!msgs || !state.messages.length) return false;
+    var tailFrom = (state.messages.length > OPEN_TAIL) ? state.messages.length - OPEN_TAIL : 0;
+    msgs.innerHTML = renderMessages(state.messages.slice(tailFrom), tailFrom);
+    var starters = bodyEl.querySelector('#chat-starters');
+    if (starters && starters.parentNode) starters.parentNode.removeChild(starters);
+    mountAllFormatting(msgs, state);
+    scheduleBackfill(msgs, bodyEl.querySelector('#chat-scroll'), state, tailFrom);
+    return true;
+  }
+
+  // connectWSFresh: the bind-callback flow for a state that may be fresh —
+  // bootstrap the log, mount the tail, paint the honest meters/button, then
+  // connect with the cursor pre-armed. A state that already holds messages
+  // (stash restore, re-render) sails straight through to connectWS.
+  function connectWSFresh(bodyEl, state, msgContainer) {
+    bootstrapHistory(state, function () {
+      if (state._bulkMaxSeq > 0 && state.messages.length > 0 && !state.client) {
+        if (mountTranscriptTail(bodyEl, state)) {
+          var scrollEl = bodyEl.querySelector('#chat-scroll');
+          if (scrollEl) restoreChatScroll(scrollEl, state);
+          refreshHeaderMeters(bodyEl, state);
+          syncSendButton(bodyEl, state);
+        }
+      }
+      connectWS(bodyEl, state, msgContainer, state._bulkMaxSeq || 0);
+    });
+  }
+
+  function connectWS(bodyEl, state, msgContainer, sinceSeq) {
     if (!state.sessionId) return;
     if (state.client && state.client.sessionId !== state.sessionId) {
       try { state.client.close(); } catch (e) { /* already dead */ }
@@ -3780,6 +3896,10 @@
       return;
     }
     state.client = new window.ChatClient('', state.sessionId, '');
+    // v1.59.1: a bootstrapped log pre-arms the seq cursor — the connect asks
+    // &since=<maxSeq> so the engine replays only the gap (usually nothing)
+    // + the live tail. The full-replay burst (the visual replay) is dead.
+    if (sinceSeq > 0) state.client.lastSeq = sinceSeq;
     var scrollEl = bodyEl.querySelector('#chat-scroll');
     state.client.onEvent = function (ev) { handleEvent(ev, state, msgContainer, scrollEl, bodyEl, null, null); };
     wireClientClose(bodyEl, state, msgContainer);
@@ -4299,7 +4419,15 @@
     // if it ever mismatches this chat's session, it is not ours to render
     // (guards against any future engine-side routing change).
     if (ev.session_id && state.sessionId && ev.session_id !== state.sessionId) return;
-    if (isOwner(state) && currentCtx && currentCtx.bodyEl) {
+    // v1.59.1 THE BOTTOM: _bulkLoad forces the data-only sandbox mode — the
+    // fresh-state bootstrap (bootstrapHistory) folds the WHOLE log through
+    // this same pipeline without touching the DOM (the background-chat
+    // branch below, battle-tested by every background stream), then ONE
+    // tail-shaped mount renders the result. The fresh-state load path
+    // finally inherits the v0.97 C3 windowing law instead of replaying
+    // every event live (the "watching history go by" minutes on a long
+    // convo after the Android WebView reloaded).
+    if (isOwner(state) && !state._bulkLoad && currentCtx && currentCtx.bodyEl) {
       // owner → resolve the LIVE targets (stale closure inputs are ignored)
       var liveC = currentCtx.bodyEl.querySelector('#chat-messages');
       var liveS = currentCtx.bodyEl.querySelector('#chat-scroll');
@@ -7045,6 +7173,40 @@
     }
   }, true);
 
+  // ── v1.59.3 THE GHOST ─────────────────────────────────────────────
+  // THE DEATH LAW: a deleted chat's EVERY live residue dies with it. The
+  // conviction chain (the user's report: "I deleted an opencode chat,
+  // created a new one, and the old chat popped up with a new name but the
+  // same wonky malformed chat history"): deleteIconNow removed the icon +
+  // the engine session but left chatStates[icon.id] fully alive — its
+  // messages, its dead sessionId, its _domStash (the panel-close handler
+  // stashes the DOM into the dying state moments earlier), its client —
+  // and createIconAt reissued the FIRST FREE id, so the newborn chat
+  // adopted the dead state whole (the stashed DOM literally re-attached).
+  // The export path then opened /api/sessions/{dead}/export.md — the raw
+  // 404 "session not found" JSON in a black WebView window. Everything
+  // below clears every residue under one roof.
+  function forgetChatState(chatId) {
+    if (!chatId) return;
+    var st = chatStates[chatId];
+    if (st) {
+      if (st.client) {
+        try { st.client.close(); } catch (e) { /* already dead */ }
+        st.client = null;
+      }
+      st._domStash = null;   // the stashed DOM dies with the state
+      st._stashLen = 0;
+      if (currentCtx && currentCtx.state === st) currentCtx = null;
+      delete chatStates[chatId];
+    }
+    var idx = domStashLRU.indexOf(chatId);
+    if (idx >= 0) domStashLRU.splice(idx, 1);
+    // the LS residues (drafts + scroll memory key by the icon id — a
+    // reissued id after a reload must never inherit them)
+    try { clearDraftLS(chatId); } catch (e) {}
+    deleteScrollLS(chatId);
+  }
+
   window.ChatPanel = {
     // v0.52: the public activation seam — the hub's local-library rows
     // (templatesheet) and any surface with a resolved template activate
@@ -7060,6 +7222,11 @@
     },
     getState: function (id) { return chatStates[id]; },
     current: function () { return currentCtx; },
+    // v1.59.3 THE GHOST: the delete path's cleanup seam — a chat's death
+    // clears its state, stash, client, and LS residues (app.js's
+    // deleteIconNow calls it right after the panel close so the close-time
+    // stash is consumed by the drop, never by a reissued id).
+    forgetState: function (id) { forgetChatState(id); },
     // v1.29.1 THE STASHED CHAT: exposed for the rigs + the E2E walk —
     // stash/restore are the panel-lifecycle pair the tests drive directly.
     stashChatDOM: stashChatDOM,

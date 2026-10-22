@@ -408,6 +408,10 @@ func (s *Server) handleSessionsDelete(w http.ResponseWriter, r *http.Request) {
         // v0.30: the chat's tweak + background kv rows ride along — a chat
         // must not leak preferences past its own life.
         s.deleteSessionTweaks(id)
+        // v1.59.2 THE SERVE MEMORY: the opencode serve bridge binding dies with
+        // the chat (the serve-side session is best-effort cleaned — only when a
+        // serve is already up; the delete never blocks on the bridge).
+        s.dropOcServeBinding(id)
         writeJSON(w, 200, map[string]bool{"ok": true})
 }
 

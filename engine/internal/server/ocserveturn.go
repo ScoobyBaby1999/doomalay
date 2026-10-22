@@ -122,15 +122,52 @@ func (s *Server) ocServeManager(ctx context.Context) *ocserve.Manager {
         return m
 }
 
+// ocServeBindKey answers the persisted-binding setting key for an app chat
+// (the chat.tweaks.<sid> kv pattern — app_settings rows that ride along with
+// the session's life).
+func ocServeBindKey(appSessionID string) string { return "chat.ocserve." + appSessionID }
+
+// ocServeBindingGet reads the persisted serve-session binding ("" = none).
+func (s *Server) ocServeBindingGet(appSessionID string) string {
+        v, err := s.db.GetSetting(ocServeBindKey(appSessionID))
+        if err != nil {
+                return ""
+        }
+        return strings.TrimSpace(v)
+}
+
+// ocServeBindingSet persists the app→serve session binding.
+func (s *Server) ocServeBindingSet(appSessionID, serveSessionID string) {
+        if err := s.db.SetSetting(ocServeBindKey(appSessionID), serveSessionID); err != nil {
+                log.Printf("ocserve: persist binding for %s failed: %v", appSessionID, err)
+        }
+}
+
 // ocServeSessionID get-or-creates the serve session for an app chat.
-// In-memory only: an engine restart births a fresh serve session and the
-// next turn replays the persona + compacted context (the opening text) —
-// serve sessions are cheap and the recycle law is the same mechanism.
+// v1.59.2 THE SERVE MEMORY: the binding now OUTLIVES the engine — a fresh
+// map entry first consults the PERSISTED binding (chat.ocserve.<sid>) and,
+// when the serve still holds that session (SessionExists — the 2.x serve's
+// sessions are durable in its own SQLite, live-verified), ADOPTS it: the
+// turn rides the serve's own full history (fresh=false — NO opening-text
+// recap, the model keeps its context and its thinking). The old law — an
+// engine restart birthed a fresh serve session and the next turn re-fed a
+// 1500-char/message recap — was the user's "the convo actually does start
+// from fresh and the model doesn't have time to think". A dead binding
+// (serve storage wiped / session gone) self-heals exactly like before:
+// fresh session + opening text, once.
 func (s *Server) ocServeSessionID(m *ocserve.Manager, sess *store.Session) (string, bool, error) {
         s.ocServeSessMu.Lock()
         defer s.ocServeSessMu.Unlock()
         if id, ok := s.ocServeSessions[sess.ID]; ok {
                 return id, false, nil
+        }
+        if bound := s.ocServeBindingGet(sess.ID); bound != "" && m.SessionExists(bound) {
+                if s.ocServeSessions == nil {
+                        s.ocServeSessions = map[string]string{}
+                }
+                s.ocServeSessions[sess.ID] = bound
+                log.Printf("ocserve: adopted serve session %s for chat %s (the binding survived the restart)", bound, sess.ID)
+                return bound, false, nil
         }
         id, err := m.CreateSession(sess.Title)
         if err != nil {
@@ -140,16 +177,49 @@ func (s *Server) ocServeSessionID(m *ocserve.Manager, sess *store.Session) (stri
                 s.ocServeSessions = map[string]string{}
         }
         s.ocServeSessions[sess.ID] = id
+        s.ocServeBindingSet(sess.ID, id)
         return id, true, nil
 }
 
 // ocServeForgetSession drops a poisoned serve session (THE RECYCLE LAW: a
 // shape violation or an upstream flag poisons the session — clean turns
-// on it keep failing; a fresh session recovers).
+// on it keep failing; a fresh session recovers). v1.59.2: the PERSISTED
+// binding dies with it (a recycled session must never be re-adopted after
+// a restart — the poison would outlive the engine).
 func (s *Server) ocServeForgetSession(sessID string) {
         s.ocServeSessMu.Lock()
         delete(s.ocServeSessions, sessID)
         s.ocServeSessMu.Unlock()
+        _ = s.db.DeleteSetting(ocServeBindKey(sessID))
+}
+
+// dropOcServeBinding is the chat-DELETE path's cleanup (v1.59.2): the
+// app-side rows die first (memory map + the persisted binding — the truth),
+// then the serve-side session is deleted BEST-EFFORT — only when a serve
+// is ALREADY healthy (the delete never spawns, never installs, never
+// blocks on the bridge — the v1.55.1 no-long-hold law). A failed or
+// skipped delete leaves a tiny orphaned row in the serve's own storage —
+// logged, honest, harmless.
+func (s *Server) dropOcServeBinding(appSessionID string) {
+        bound := s.ocServeBindingGet(appSessionID)
+        s.ocServeForgetSession(appSessionID)
+        if bound == "" {
+                return
+        }
+        if !s.ocServeBridgeAvailable() {
+                return
+        }
+        s.ocServeMu.Lock()
+        m := s.ocServe
+        s.ocServeMu.Unlock()
+        if m == nil {
+                return
+        }
+        if err := m.DeleteSession(bound); err != nil {
+                log.Printf("ocserve: orphan serve session %s left behind (best-effort delete failed: %v)", bound, err)
+        } else {
+                log.Printf("ocserve: serve session %s deleted with chat %s", bound, appSessionID)
+        }
 }
 
 // ocServeOpeningText composes a FRESH serve session's first message: the

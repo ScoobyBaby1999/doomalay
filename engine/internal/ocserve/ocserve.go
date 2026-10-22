@@ -759,6 +759,96 @@ func (m *Manager) CreateSession(title string) (string, error) {
         return out.Data.ID, nil
 }
 
+// SessionExists answers whether the serve still holds the session (v1.59.2
+// THE SERVE MEMORY — the adoption check). The 2.x serve's sessions are
+// durable in its own SQLite, so a binding that survived an engine restart
+// usually points at a LIVING session. THE SHAPE GUARD: the 2.x router
+// falls through unknown /api/* routes to the bundled web IDE (HTTP 200 +
+// HTML — the SDK's own version-mismatch trap), so a 200 is only proof when
+// the body is JSON carrying the session's own id. 404 = honestly gone;
+// anything else = not provable → false (the caller self-heals a fresh
+// session + the opening text — never a hard failure).
+func (m *Manager) SessionExists(serveSess string) bool {
+        if serveSess == "" {
+                return false
+        }
+        m.mu.Lock()
+        base, pw := m.baseURL, m.serverPassword
+        m.mu.Unlock()
+        if base == "" {
+                return false
+        }
+        ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+        defer cancel()
+        req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/api/session/"+serveSess, nil)
+        if err != nil {
+                return false
+        }
+        req.Header.Set("Accept", "application/json")
+        req.Header.Set("Authorization", "Basic "+basicAuth("opencode", pw))
+        resp, err := http.DefaultClient.Do(req)
+        if err != nil {
+                return false
+        }
+        defer resp.Body.Close()
+        if resp.StatusCode == 404 {
+                return false
+        }
+        if resp.StatusCode != 200 {
+                return false
+        }
+        var out struct {
+                Data struct {
+                        ID string `json:"id"`
+                } `json:"data"`
+        }
+        if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out); err != nil {
+                return false // HTML or any non-JSON body — the SPA trap, not a session
+        }
+        return out.Data.ID == serveSess
+}
+
+// DeleteSession removes a serve-side session (v1.59.2: the chat-delete
+// path's best-effort cleanup — a deleted app chat must not leave its serve
+// twin behind). LIVE-PROBED against the pinned 2.1.2: DELETE
+// /api/session/{id} answers 204 and the session is GONE (a follow-up GET
+// answers 404 SessionNotFoundError; a second DELETE answers 404) — the
+// legacy DELETE /session/{id} answers 405 on this build and is NOT used.
+// Best-effort by contract: the caller logs, never blocks.
+func (m *Manager) DeleteSession(serveSess string) error {
+        if serveSess == "" {
+                return errors.New("ocserve: empty session id")
+        }
+        m.mu.Lock()
+        base, pw := m.baseURL, m.serverPassword
+        m.mu.Unlock()
+        if base == "" {
+                return errors.New("ocserve: not running")
+        }
+        ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+        defer cancel()
+        req, err := http.NewRequestWithContext(ctx, http.MethodDelete, base+"/api/session/"+serveSess, nil)
+        if err != nil {
+                return err
+        }
+        req.Header.Set("Accept", "application/json")
+        req.Header.Set("Authorization", "Basic "+basicAuth("opencode", pw))
+        resp, err := http.DefaultClient.Do(req)
+        if err != nil {
+                return err
+        }
+        defer resp.Body.Close()
+        body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+        if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+                return nil // 204 = deleted (the live-probed truth)
+        }
+        msg := string(body)
+        if len(msg) > 120 {
+                msg = msg[:120]
+        }
+        return fmt.Errorf("ocserve delete session: HTTP %d, body %q", resp.StatusCode, msg)
+}
+
 // SelectModel pins the SESSION's model (the 2.x law: model selection
 // lives on the session, not the prompt — the adapter calls this before
 // every prompt, keeping the per-turn model choice).
