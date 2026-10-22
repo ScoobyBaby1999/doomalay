@@ -305,6 +305,15 @@
       void contentEl.offsetWidth;
       contentEl.style.opacity = '1';
       contentEl.style.transform = 'scale(1) translateY(0)';
+      // v1.63.1 THE ONPOP HOOK (PLAN-V163 §1): after the restored page's
+      // onSwap wires its DOM, its opts.onPop fires — the page that was
+      // stacked-over re-renders itself FRESH from live truth (the old law
+      // restored the open-time html SNAPSHOT: a providers row stacked under
+      // TermuxSetup popped back to the stale pre-setup pills). Pages that
+      // pass no onPop keep the exact v0.46 behavior.
+      if (page.opts && typeof page.opts.onPop === 'function') {
+        try { page.opts.onPop(); } catch (e) { console.error(e); }
+      }
     }, 150);
     return true;
   }

@@ -88,21 +88,37 @@ func (s *Server) ocBridgeKeyPresent() bool {
 // ocBridgeLadder walks the gates in order — the shared half of both
 // routes. It answers the ladder state + the human detail; ok=false means a
 // gate is closed.
+//
+// v1.63.1 THE ALWAYS-TRUTH (PLAN-V163 §1): the termux gates are evaluated
+// FIRST and UNCONDITIONALLY — the old ladder masked them behind the key
+// gate (a walled device answered termux_installed=false even with Termux
+// fully set up). The providers row's requirements pill names EVERY missing
+// rung ("opencode requires API key + termux setup + opencode install" —
+// only the missing pieces), so the termux truth must survive the walled
+// state. One probe, fresh every call (the Kotlin side is cheap), shared by
+// every branch below.
 func (s *Server) ocBridgeLadder() (state, detail string, termuxInstalled, termuxReady bool) {
+        tInstalled, tReady := false, false
+        bridgeLive := false
+        if s.termux != nil {
+                if st, err := s.termux.Status(context.Background()); err == nil && st != nil {
+                        tInstalled, tReady = st.Installed, st.Permission
+                        bridgeLive = true
+                }
+        }
         if !s.ocBridgeKeyPresent() {
-                return "walled", "Add your OpenCode key first — the free models need it", false, false
+                return "walled", "Add your OpenCode key first — the free models need it", tInstalled, tReady
         }
         if s.termux == nil {
                 return "unconfigured", "This engine build has no Termux bridge configured (DOOMALAY_TERMUX_BRIDGE)", false, false
         }
-        st, err := s.termux.Status(context.Background())
-        if err != nil || st == nil {
-                return "unconfigured", "The Termux bridge is not answering right now — open Termux once and retry", false, false
+        if !bridgeLive {
+                return "unconfigured", "The Termux bridge is not answering right now — open Termux once and retry", tInstalled, tReady
         }
-        if !st.Installed {
+        if !tInstalled {
                 return "termux_missing", "Install Termux from F-Droid first (the button below opens the page), then run the one-line setup", false, false
         }
-        if !st.Permission {
+        if !tReady {
                 return "not_bootstrapped", "Termux is installed but the Doomalay setup line hasn't run in it yet — copy the line below, paste it in Termux once, come back", true, false
         }
         return "ready", "", true, true

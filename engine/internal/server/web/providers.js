@@ -82,15 +82,20 @@
   // pills: "only show after I click get API key / vanish with setup
   // progress" — the user's secondary ask 2). The ladder:
   //   first paint (no truth yet) → live "checking opencode…" (the pulse)
+  //   ANY missing rung            → dim "opencode requires API key + termux
+  //                                setup + opencode install (one-time
+  //                                ~SIZE)" — the missing pieces only
+  //                                (v1.63.1, the user's ask #3: the gate
+  //                                pill never disappears; the size rides
+  //                                the route's live size_hint)
   //   ready / termux gates       → action "+ install opencode" (not setup)
   //   installing                 → live "installing opencode .. N%" (the
   //                               poll's real bytes/percent — never static)
   //   install_failed            → err "failed, retry"
   //   up | desktop              → dim "✓ opencode setup" (setup — the user's
   //                               law: the dim theme color)
-  //   walled                    → dim "opencode needs its key" (the honest
-  //                               gate — paste the key below)
-  //   unconfigured              → dim "opencode not set up here"
+  //   unconfigured              → dim "opencode not set up here" (the honest
+  //                               no-bridge state — no rungs knowable)
   // A fetch hiccup keeps the LAST truth (finish(null) never clears it).
   function providerPills(name) {
     if (name !== 'opencode') return [];
@@ -100,6 +105,24 @@
     var b = ocBridgeLatest;
     var st = String(b.state || '');
     var pills = [];
+    // v1.63.1 THE HONEST PILL (the user's ask #3, PLAN-V163 §1): while
+    // ANY rung is missing, ONE dim pill names them ALL — "opencode
+    // requires API key + termux setup + opencode install" (the missing
+    // pieces only; the size rides the route's live size_hint) — and it
+    // NEVER disappears (the old walled pill "opencode needs its key" hid
+    // the termux/install rungs entirely; the unconfigured state keeps its
+    // honest no-bridge text — no rungs are knowable there).
+    var tReady = !!(b.termux_installed && b.termux_ready);
+    if (st !== 'desktop' && st !== 'unconfigured') {
+      var need = [];
+      if (!b.key_present) need.push('API key');
+      if (!tReady) need.push('termux setup');
+      if (st !== 'up' && st !== 'installing')
+        need.push('opencode install (one-time ~' + (b.size_hint || '72.5MB') + ')');
+      if (need.length) {
+        pills.push({ key: 'oc-need', tone: 'dim', text: 'opencode requires ' + need.join(' + ') });
+      }
+    }
     if (st === 'ready' || st === 'termux_missing' || st === 'not_bootstrapped') {
       pills.push({ key: 'oc-install', tone: 'action', text: '+ install opencode' });
     } else if (st === 'installing') {
@@ -111,8 +134,6 @@
       pills.push({ key: 'oc-install', tone: 'err', text: 'failed, retry' });
     } else if (st === 'up' || st === 'desktop') {
       pills.push({ key: 'oc-setup', tone: 'dim', text: '✓ opencode setup' });
-    } else if (st === 'walled') {
-      pills.push({ key: 'oc-gate', tone: 'dim', text: 'opencode needs its key' });
     } else if (st === 'unconfigured') {
       pills.push({ key: 'oc-gate', tone: 'dim', text: 'opencode not set up here' });
     }
@@ -120,10 +141,12 @@
     //   overlay owns the one-liner + F-Droid + live ladder):
     //   gates closed → "+ setup termux" (action → window.TermuxSetup.open())
     //   installed   → dim "✓ termux setup"
-    if (st !== 'desktop' && st !== 'unconfigured' && st !== 'walled') {
-      if (b.termux_installed && b.termux_ready) {
+    // v1.63.1: walled joins the action states — termux setup is a REAL rung
+    // of the requirements ladder; the user can start it before the key.
+    if (st !== 'desktop' && st !== 'unconfigured') {
+      if (tReady) {
         pills.push({ key: 'oc-termux', tone: 'dim', text: '✓ termux setup' });
-      } else if (st === 'termux_missing' || st === 'not_bootstrapped' || st === 'ready' || st === 'installing' || st === 'install_failed') {
+      } else if (st === 'termux_missing' || st === 'not_bootstrapped' || st === 'ready' || st === 'installing' || st === 'install_failed' || st === 'walled') {
         pills.push({ key: 'oc-termux', tone: 'action', text: '+ setup termux' });
       }
     }
@@ -276,8 +299,20 @@
     function ocBridgeStopPoll() {
       if (ocBridgePoll) { clearTimeout(ocBridgePoll); ocBridgePoll = null; }
     }
-    fetchOcBridge(function () {
-      if (!opened) return;
+    // v1.63.1 THE RACE FIX (PLAN-V163 §1 — the frozen-pill conviction): the
+    // bridge status is a µs-fast local route — it lands BEFORE the
+    // models/keys Promise.all opens the panel (opened=true), and the old
+    // `if (!opened) return` swallowed ocBridgeStartPoll() FOREVER: the
+    // always-on poll never armed, the pills froze at their first truth
+    // ("+ setup termux" never flipped to "✓ termux setup"). Retry until the
+    // panel opens (render() ALWAYS runs — the withTimeout guarantees the
+    // models/keys side resolves), then arm. The 400-attempt cap is a belt
+    // (60s) against a pathological never-open.
+    fetchOcBridge(function armPoll(tries) {
+      if (!opened) {
+        if ((tries || 0) < 400) setTimeout(function () { armPoll((tries || 0) + 1); }, 150);
+        return;
+      }
       render();
       ocBridgeStartPoll();
     });
@@ -368,7 +403,7 @@
 
     function render() {
       var html =
-        '<div style="padding:20px">' +
+        '<div id="prov-root" style="padding:20px">' +
         header() +
         slider() +
         '<div id="provider-list" style="margin-top:18px;display:flex;flex-direction:column;gap:10px">' +
@@ -383,8 +418,23 @@
       // onSwap: wireEvents must run AFTER the DOM swap. replaceContent()
       // defers the swap by 150ms (fade-out) — wiring synchronously here
       // attached listeners to the OLD content (v0.10.1 dead-buttons bug).
+      //
+      // v1.63.1 THE STACK GUARD (PLAN-V163 §1): #prov-root is OUR marker.
+      // A re-render only swaps the scroller when the marker is PRESENT —
+      // a pushed page (TermuxSetup, the model browser's cloud gate) owns
+      // the scroller while it is stacked on top, and the old law let the
+      // always-on poll's tick REPLACE that page mid-flow (the setup
+      // ladder vanished under the user's fingers). Absent marker → skip
+      // the swap; the truth waits in ocBridgeLatest and opts.onPop
+      // re-renders FRESH the moment we are popped back to.
       if (!opened) {
-        if (opts.useReplaceContent && window.ConnectOverlay.isOpen()) {
+        if (opts.usePushPage && window.ConnectOverlay.isOpen()) {
+          window.ConnectOverlay.pushPage(html, {
+            onClose: opts.onClose,
+            onSwap: wireEvents,
+            onPop: function () { fetchOcBridge(function () { render(); }); }
+          });
+        } else if (opts.useReplaceContent && window.ConnectOverlay.isOpen()) {
           window.ConnectOverlay.replaceContent(html, {
             onClose: opts.onClose,
             onSwap: wireEvents
@@ -392,12 +442,18 @@
         } else {
           window.ConnectOverlay.open(html, {
             onClose: opts.onClose,
-            onSwap: wireEvents
+            onSwap: wireEvents,
+            // v1.63.1 THE ONPOP FRESH RENDER: popPage restores the open-time
+            // html SNAPSHOT — the pills froze at the pushed page's truth
+            // (the user's ask #5: "doesn't dynamically update once termux
+            // is setup"). onPop re-fetches the bridge truth and re-renders.
+            onPop: function () { fetchOcBridge(function () { render(); }); }
           });
         }
         opened = true;
       } else {
         var contentEl = window.ConnectOverlay.getContentEl();
+        if (!contentEl || !contentEl.querySelector('#prov-root')) return;
         contentEl.innerHTML = html;
         wireEvents();
       }
