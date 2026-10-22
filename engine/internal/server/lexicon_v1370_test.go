@@ -57,7 +57,7 @@ func TestV1370_BlocksOffExcludes(t *testing.T) {
         sess := newV1370Session(t, s, "v1370a")
 
         text := "line one\n\n{repo_access}\n\n{artifacts}\n\n{library}\n\n{controls}\n\n{session}\n\nafter {date}"
-        on := s.expandPromptBlocks(text, sess, "", false)
+        on := s.expandPromptBlocks(text, sess, "", false, false, false)
         for _, k := range placeholderBlocks {
                 if strings.Contains(on, "{"+k+"}") {
                         t.Fatalf("blocks ON: {%s} must expand, got literal", k)
@@ -65,7 +65,7 @@ func TestV1370_BlocksOffExcludes(t *testing.T) {
         }
 
         sess.PhBlocksOff = true
-        off := s.expandPromptBlocks(text, sess, "", false)
+        off := s.expandPromptBlocks(text, sess, "", false, false, false)
         for _, k := range placeholderBlocks {
                 if strings.Contains(off, "{"+k+"}") {
                         t.Fatalf("blocks OFF: {%s} must be gone, got literal", k)
@@ -83,7 +83,7 @@ func TestV1370_BlocksOffExcludes(t *testing.T) {
         // {date} is a FACT — it still expands even with the blocks off (the
         // earlier substituteAllVars pass owns it; expandPromptBlocks's own twin
         // stands for the direct-call shape).
-        off2 := s.expandPromptBlocks("today is {date}", sess, "", false)
+        off2 := s.expandPromptBlocks("today is {date}", sess, "", false, false, false)
         if strings.Contains(off2, "{date}") {
                 t.Fatalf("the {date} fact must still expand with blocks off: %q", off2)
         }
@@ -95,12 +95,12 @@ func TestV1370_OverridesWin(t *testing.T) {
         s := newV1370Server(t)
         sess := newV1370Session(t, s, "v1370b")
 
-        base := s.expandPromptBlocks("head\n\n{session}\n\ntail", sess, "", false)
+        base := s.expandPromptBlocks("head\n\n{session}\n\ntail", sess, "", false, false, false)
 
         ov := map[string]string{"session": "MY SESSION TRUTH"}
         raw, _ := json.Marshal(ov)
         sess.BlockOverrides = string(raw)
-        got := s.expandPromptBlocks("head\n\n{session}\n\ntail", sess, "", false)
+        got := s.expandPromptBlocks("head\n\n{session}\n\ntail", sess, "", false, false, false)
         if !strings.Contains(got, "MY SESSION TRUTH") {
                 t.Fatalf("the override must win, got: %q", got)
         }
@@ -110,7 +110,7 @@ func TestV1370_OverridesWin(t *testing.T) {
 
         // reset: an empty map restores the live truth
         sess.BlockOverrides = "{}"
-        reset := s.expandPromptBlocks("head\n\n{session}\n\ntail", sess, "", false)
+        reset := s.expandPromptBlocks("head\n\n{session}\n\ntail", sess, "", false, false, false)
         if reset != base {
                 t.Fatalf("reset must restore the live base\ngot:  %q\nwant: %q", reset, base)
         }

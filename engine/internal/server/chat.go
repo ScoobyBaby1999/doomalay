@@ -807,6 +807,21 @@ func (s *Server) systemPromptFor(sess *store.Session) string {
 }
 
 func (s *Server) systemPromptForMetrics(sess *store.Session, m personaMetrics, bundleName string) string {
+        return s.systemPromptForMetricsMode(sess, m, bundleName, false, false)
+}
+
+// systemPromptForMetricsMode — v1.58.2 THE WIDE SHELF: serveMode composes
+// the prompt for an OPENCODE SERVE session (the turn runs through the
+// genuine opencode 2 client); mcpBound says whether the per-chat doomalay
+// MCP binding landed (the {tools} block's catalog rides it — an unbound
+// session gets the honest native-only note instead). The persona/preamble
+// chain is IDENTICAL — the MIRROR blocks simply speak the serve's truth:
+// {tools} expands to the merged catalog (opencode's own toolset + the app's
+// tools via the doomalay MCP server) and {artifacts} teaches the MCP
+// artifact tools (the ACTION prose grammar does not run on the serve path
+// — a block that taught it would burn the model's turns on a protocol it
+// cannot use; the chatlog's Tier-0 finding).
+func (s *Server) systemPromptForMetricsMode(sess *store.Session, m personaMetrics, bundleName string, serveMode, mcpBound bool) string {
         ph := s.mergedPlaceholders(sess) // v0.29: global customs + this chat's local customs
 
         // ── the persona (the voice) — the unchanged resolution chain ──
@@ -841,7 +856,7 @@ func (s *Server) systemPromptForMetrics(sess *store.Session, m personaMetrics, b
         // is never touched by user-defined {keys}); {artifacts} yields to
         // a persona that already teaches the protocol (the old
         // no-duplication rule, kept).
-        return s.expandPromptBlocks(composed, sess, bundleName, teachesArtifact)
+        return s.expandPromptBlocks(composed, sess, bundleName, teachesArtifact, serveMode, mcpBound)
 }
 
 // libStateLine (v0.67.2) — the LIVE library state, appended to every
@@ -2856,6 +2871,13 @@ func (s *Server) forwardEvents(ctx context.Context, pipe *chatPipe, sessionID st
                         if d, ok := ev["delta"].(string); ok {
                                 out["delta"] = d
                         }
+                        // v1.58.1 THE ID-FIRST LIVE TAIL: the opencode progress
+                        // frames carry the tool call's own id — pass it through
+                        // so the PWA's stream matcher pairs the ping with ITS
+                        // call (parallel same-name calls never cross-wire).
+                        if id, ok := ev["tool_use_id"].(string); ok && id != "" {
+                                out["tool_use_id"] = id
+                        }
                         if b, err := json.Marshal(out); err == nil {
                                 _ = pipe.send(b)
                         }
@@ -2920,6 +2942,16 @@ func (s *Server) forwardEvents(ctx context.Context, pipe *chatPipe, sessionID st
                         }
                         if v, ok := ev["text"].(string); ok && v != "" {
                                 toolEv["text"] = v
+                        }
+                        // v1.58.1 THE ID-FIRST PAIRING: the call's id rides INSIDE
+                        // the persisted payload — the PWA's replay lift
+                        // (JSON.parse(pay.text)) replaces the whole payload, so a
+                        // top-level-only id would vanish on reload; inside the
+                        // JSON it survives BOTH paths (live events carry it
+                        // top-level + here; the replay lift reads it from the
+                        // parsed object).
+                        if v, ok := ev["tool_use_id"].(string); ok && v != "" {
+                                toolEv["tool_use_id"] = v
                         }
                         if len(toolEv) == 0 {
                                 if v, ok := ev["text"].(string); ok {
@@ -3300,6 +3332,19 @@ func (s *Server) sessionMcpTurn(sessionID string) *mcpbus.Turn {
                         return llm.RunLocalTool(name, argJSON, sink)
                 },
                 Sink: &sessionArtifactSink{s: s, sessID: sessionID},
+                // v1.58.2 THE WIDE SHELF: the journal + the fleet ride the /mcp
+                // session turn too — the v1.47 waves wired them onto the direct
+                // ChatRequest only, and the live truth-probe convicted the gap
+                // ("the fleet tool needs a live session on this server" with the
+                // binding header RIDING). The opencode serve path speaks THIS
+                // turn; a chat's own diary + roster are exactly the tools the
+                // wide shelf promises.
+                Djournal: func(ctx context.Context, argJSON string) string {
+                        return s.runDjournalAction(ctx, sessionID, argJSON)
+                },
+                Fleet: func(ctx context.Context, argJSON string) string {
+                        return s.runFleetAction(ctx, sessionID, argJSON)
+                },
                 Search: func(ctx context.Context, query string) (string, []mcpbus.Source, error) {
                         results, err := llm.WebSearch(ctx, query, 5, keys["TAVILY_API_KEY"])
                         if err != nil {

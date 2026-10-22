@@ -4703,11 +4703,18 @@
       var sName = ev.name || 'termux';
       var sDelta = ev.delta || ev.text || '';
       if (!sDelta) return;
+      // v1.58.1 THE ID-FIRST LIVE TAIL: an id-carrying stream ping (the
+      // opencode progress frames) pairs ONLY with its own call's pill;
+      // the id-less shapes (termux chunks) keep the name law unchanged.
+      var sTuid = ev.tool_use_id || '';
       for (var sMi = state.messages.length - 1; sMi >= 0; sMi--) {
         var sMsg = state.messages[sMi];
         if (!sMsg || sMsg.role !== 'tool' || !sMsg.tool || sMsg.res !== undefined) continue;
         var sPay = sMsg.payload || {};
-        if ((sPay.name || '') === sName) {
+        var sHit = sTuid
+          ? ((sPay.tool_use_id || '') === sTuid)
+          : ((sPay.name || '') === sName);
+        if (sHit) {
           sMsg.streamText = (sMsg.streamText || '') + sDelta;
           if (sMsg.streamText.length > 262144) sMsg.streamText = sMsg.streamText.slice(-262144);
           // the activity line names the running label + the received size
@@ -5945,9 +5952,30 @@
   // already used; a turn's tool calls are sequential). Returns the merged
   // msg or null (no pending use → the caller renders the standalone result
   // pill — the legacy safety net). Pure over the messages array (rig).
+  //
+  // v1.58.1 THE ID-FIRST PAIRING: engine tool events carry the call's own
+  // tool_use_id — a result with an id pairs ONLY with its own call's pill
+  // (parallel same-name calls can never mis-merge). The legacy name law
+  // stays byte-identical for the id-less shapes (native ACTION tools,
+  // older records).
   function mergeToolResult(messages, pay, ei) {
     var name = (pay && pay.name) || '';
+    var tuid = (pay && pay.tool_use_id) || '';
     if (!messages) return null;
+    if (tuid) {
+      for (var j = messages.length - 1; j >= 0; j--) {
+        var mj = messages[j];
+        if (!mj || mj.role !== 'tool' || !mj.tool || mj.res !== undefined) continue;
+        var mjp = mj.payload || {};
+        if ((mjp.tool_use_id || '') === tuid) {
+          mj.res = String((pay && (pay.text || pay.result)) || '');
+          mj.resPayload = pay;
+          if (ei) mj.ei2 = ei;
+          return mj;
+        }
+      }
+      return null; // an id-carrying result never merges by name — its call's pill is the only vessel
+    }
     for (var i = messages.length - 1; i >= 0; i--) {
       var m = messages[i];
       if (!m || m.role !== 'tool' || !m.tool || m.res !== undefined) continue;

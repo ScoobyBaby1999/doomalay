@@ -322,7 +322,17 @@ var placeholderBuiltins = []string{"name", "model", "provider", "skills", "date"
 // silently shadow the live block in every persona AND the preamble —
 // no longer creatable anywhere (the API PUT, the bot's placeholder_set,
 // or a session PATCH carrying one).
-var placeholderBlocks = []string{"repo_access", "artifacts", "library", "controls", "session"}
+// placeholderBlocks — the six MIRROR block keys (expandPromptBlocks,
+// preambles.go, renders them live at turn time). Reserved as of v1.27.1
+// THE HARD REFUSE: customs substitute FIRST (substituteAllVars runs
+// before expandPromptBlocks), so a custom key named like a block would
+// silently shadow the live block in every persona AND the preamble —
+// no longer creatable anywhere (the API PUT, the bot's placeholder_set,
+// or a session PATCH carrying one). v1.58.2 THE WIDE SHELF adds {tools}:
+// the session's live tool truth (the merged opencode+doomalay catalog on
+// serve chats; empty — collapsed — on native ones, whose ACTION grammar
+// rides its own blocks).
+var placeholderBlocks = []string{"tools", "repo_access", "artifacts", "library", "controls", "session"}
 
 // isReservedPlaceholderKey — the hard-refuse law: built-ins + block names
 // are never custom keys. The class string names the collision honestly.

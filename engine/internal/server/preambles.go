@@ -34,6 +34,7 @@ import (
         "strings"
         "time"
 
+        "github.com/ScoobyBaby1999/doomalay/engine/internal/llm"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/store"
 )
 
@@ -124,7 +125,7 @@ func defaultPreambleFor(sess *store.Session) string {
                 where = ", chatting inside the Doomalay app from your Hugging Face Space. "
         }
         return "You are {model}, hosted via {provider}" + where + "Today is {date}.\n\n" +
-                "{repo_access}\n\n{artifacts}\n\n{library}\n\n{controls}\n\n{session}"
+                "{tools}\n\n{repo_access}\n\n{artifacts}\n\n{library}\n\n{controls}\n\n{session}"
 }
 
 // preambleTextFor resolves the chat's preamble RAW TEMPLATE:
@@ -165,7 +166,7 @@ func preambleTextFor(sess *store.Session) string {
 //     that block's live expansion (the CodeMirror editor's save; ↺ reset
 //     clears it). The {artifacts} yield rule (personaTeachesArtifact)
 //     applies FIRST — the no-duplication law survives overrides.
-func (s *Server) expandPromptBlocks(text string, sess *store.Session, bundleName string, personaTeachesArtifact bool) string {
+func (s *Server) expandPromptBlocks(text string, sess *store.Session, bundleName string, personaTeachesArtifact bool, serveMode, mcpBound bool) string {
         if !strings.Contains(text, "{") {
                 return text
         }
@@ -197,12 +198,30 @@ func (s *Server) expandPromptBlocks(text string, sess *store.Session, bundleName
                 return live
         }
         out := text
+        if strings.Contains(out, "{tools}") {
+                // v1.58.2 THE WIDE SHELF — the {tools} MIRROR block (the simple
+                // placeholder the persona system already speaks): the live tool
+                // truth for THIS session. Serve chats carry the merged catalog
+                // (opencode's own toolset + the app's tools via the doomalay MCP
+                // server, built LIVE from the mcpbus registry — never a static
+                // list); an UNBOUND serve chat carries the honest native-only note
+                // (the model never hallucinates tools it does not have); native
+                // chats carry "" (the ACTION grammar rides its own blocks; the
+                // collapse law eats the gap — zero native-prompt change).
+                out = strings.ReplaceAll(out, "{tools}", yield("tools", s.toolsBlockFor(sess, serveMode, mcpBound)))
+        }
         if strings.Contains(out, "{repo_access}") {
                 out = strings.ReplaceAll(out, "{repo_access}", yield("repo_access", s.workspaceManifestFor(sess.ID)))
         }
         if strings.Contains(out, "{artifacts}") {
                 art := ""
                 if !personaTeachesArtifact {
+                        // v1.58.2 note: the ```artifact fence protocol is REPLY-TEXT
+                        // grammar the PWA formatter extracts for EVERY provider — the serve
+                        // path included (live-verified in the research: the fence is not the
+                        // ACTION tool-call prose). One protocol everywhere; the MCP artifact
+                        // tools (docx_create & friends) complement it through the {tools}
+                        // block's catalog.
                         art = artifactSystemPrompt
                 }
                 out = strings.ReplaceAll(out, "{artifacts}", yield("artifacts", art))
@@ -354,6 +373,11 @@ func (s *Server) handleSessionBlocks(w http.ResponseWriter, r *http.Request) {
                 }
         }
         emit("repo_access", s.workspaceManifestFor(sess.ID))
+        // v1.58.2: the {tools} block's preview rides the same serve gate the
+        // turn path uses — an opencode-provider chat on a free model slot
+        // composes through the serve bridge (the merged catalog); every
+        // other chat collapses the block empty (the native truth).
+        serveChat := sess.Provider == "opencode" && llm.IsOpenCodeFreeModelSlot(sess.Model)
         if teachesArtifact {
                 if _, ok := ov["artifacts"]; ok {
                         emit("artifacts", artifactSystemPrompt)   // the override rides (emit swaps it in)
@@ -368,6 +392,7 @@ func (s *Server) handleSessionBlocks(w http.ResponseWriter, r *http.Request) {
         emit("library", libraryPreamble(sess)+s.libStateLine(sess))
         emit("controls", s.chatMetadataPreamble(sess, ""))
         emit("session", s.sessionContextPreamble(sess))
+        emit("tools", s.toolsBlockFor(sess, serveChat, serveChat))
         writeJSON(w, 200, map[string]any{"blocks": blocks,
                 "ph_blocks_off": sess.PhBlocksOff})
 }

@@ -76,24 +76,30 @@
   // providerPills(name) answers the ordered pill descriptors for a
   // provider row (left → right). Extend this table to attach pills to any
   // provider — the renderer is generic.
+  //
+  // v1.58.3 THE ALWAYS LAW: the opencode pill renders from the FIRST paint
+  // in EVERY state — never [] (the v157-A audit convicted the fetch-gated
+  // pills: "only show after I click get API key / vanish with setup
+  // progress" — the user's secondary ask 2). The ladder:
+  //   first paint (no truth yet) → live "checking opencode…" (the pulse)
+  //   ready / termux gates       → action "+ install opencode" (not setup)
+  //   installing                 → live "installing opencode .. N%" (the
+  //                               poll's real bytes/percent — never static)
+  //   install_failed            → err "failed, retry"
+  //   up | desktop              → dim "✓ opencode setup" (setup — the user's
+  //                               law: the dim theme color)
+  //   walled                    → dim "opencode needs its key" (the honest
+  //                               gate — paste the key below)
+  //   unconfigured              → dim "opencode not set up here"
+  // A fetch hiccup keeps the LAST truth (finish(null) never clears it).
   function providerPills(name) {
-    if (name !== 'opencode' || !ocBridgeLatest) return [];
+    if (name !== 'opencode') return [];
+    if (!ocBridgeLatest) {
+      return [{ key: 'oc-check', tone: 'live', text: 'checking opencode…', live: true }];
+    }
     var b = ocBridgeLatest;
     var st = String(b.state || '');
     var pills = [];
-    // THE OPENCODE PILL — the install lifecycle the bridge ladder drives:
-    //   ready   → "+ install opencode" (action)
-    //   installing → "installing opencode.. N%" (live tone + pulse; the
-    //             poll's real bytes/percent — never static)
-    //   install_failed → "failed, retry" (err tone; the retry resumes
-    //             from the byte checkpoint — no progress is ever lost)
-    //   up | desktop → dim "✓ opencode setup" (installed — the user's
-    //             law: pills "go away or say opencode setup … in a dim
-    //             theme color")
-    //   termux_missing | not_bootstrapped → "+ install opencode" too (the
-    //             engine answers the gate honestly; the termux pill beside
-    //             it owns the gate step)
-    //   walled | unconfigured → none (paste the key first / no bridge)
     if (st === 'ready' || st === 'termux_missing' || st === 'not_bootstrapped') {
       pills.push({ key: 'oc-install', tone: 'action', text: '+ install opencode' });
     } else if (st === 'installing') {
@@ -105,12 +111,16 @@
       pills.push({ key: 'oc-install', tone: 'err', text: 'failed, retry' });
     } else if (st === 'up' || st === 'desktop') {
       pills.push({ key: 'oc-setup', tone: 'dim', text: '✓ opencode setup' });
+    } else if (st === 'walled') {
+      pills.push({ key: 'oc-gate', tone: 'dim', text: 'opencode needs its key' });
+    } else if (st === 'unconfigured') {
+      pills.push({ key: 'oc-gate', tone: 'dim', text: 'opencode not set up here' });
     }
     // THE TERMUX PILL — the two-gate hand-off (the existing TermuxSetup
-    // overlay owns the one-liner + F-Droid + live ladder):
+    //   overlay owns the one-liner + F-Droid + live ladder):
     //   gates closed → "+ setup termux" (action → window.TermuxSetup.open())
     //   installed   → dim "✓ termux setup"
-    if (st !== 'desktop' && st !== 'unconfigured') {
+    if (st !== 'desktop' && st !== 'unconfigured' && st !== 'walled') {
       if (b.termux_installed && b.termux_ready) {
         pills.push({ key: 'oc-termux', tone: 'dim', text: '✓ termux setup' });
       } else if (st === 'termux_missing' || st === 'not_bootstrapped' || st === 'ready' || st === 'installing' || st === 'install_failed') {
@@ -232,26 +242,44 @@
             if (d.ok === false && d.detail && window.toast) {
               window.toast(d.detail);
             }
-            if (d.state === 'installing') ocBridgeStartPoll();
           }
         }).catch(function () {});
     }
+    // v1.58.3 THE ALWAYS-ON POLL: the light poll runs WHILE THE PANEL IS
+    // OPEN — not just during installs (the v157-A conviction: pills tied
+    // to "setup progress" flickered/vanished because the poll died the
+    // moment the state left 'installing'). State-aware cadence: 2s while
+    // installing (the byte ladder), 5s at rest (the steady truth); a
+    // hiccup keeps the last truth (fetchOcBridge never clears it). The
+    // route is non-blocking (the v1.55.1 no-long-hold law) + single-flight
+    // + aborting — the WebView's 6-connection pool never starves.
     function ocBridgeStartPoll() {
       if (ocBridgePoll) return;
-      ocBridgePoll = setInterval(function () {
-        if (!opened) { clearInterval(ocBridgePoll); ocBridgePoll = null; return; }
-        fetchOcBridge(function () {
-          render();
-          if (ocBridge && ocBridge.state !== 'installing') {
-            clearInterval(ocBridgePoll); ocBridgePoll = null;
-          }
-        });
-      }, 2000);
+      var tick = function () {
+        // THE VISIBILITY GUARD: the providers module owns no close hook —
+        // the overlay's own isOpen() is the truth (the panel may be closed
+        // or reused for another screen; a leaked poll would fetch forever).
+        var visible = opened && !(window.ConnectOverlay && window.ConnectOverlay.isOpen && !window.ConnectOverlay.isOpen());
+        if (!visible) { ocBridgePoll = null; return; }
+        var installing = ocBridgeLatest && String(ocBridgeLatest.state || '') === 'installing';
+        ocBridgePoll = setTimeout(function () {
+          var visible2 = opened && !(window.ConnectOverlay && window.ConnectOverlay.isOpen && !window.ConnectOverlay.isOpen());
+          if (!visible2) { ocBridgePoll = null; return; }
+          fetchOcBridge(function () {
+            render();
+            tick();
+          });
+        }, installing ? 2000 : 5000);
+      };
+      tick();
+    }
+    function ocBridgeStopPoll() {
+      if (ocBridgePoll) { clearTimeout(ocBridgePoll); ocBridgePoll = null; }
     }
     fetchOcBridge(function () {
       if (!opened) return;
       render();
-      if (ocBridge && ocBridge.state === 'installing') ocBridgeStartPoll();
+      ocBridgeStartPoll();
     });
     var gotLive = false;
     var isPartial = false;

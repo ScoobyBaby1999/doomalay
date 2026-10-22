@@ -38,7 +38,7 @@ func TestV1271_ReservedKeyLaw(t *testing.T) {
         if len(placeholderBuiltins) != 7 {
                 t.Fatalf("builtin vocabulary drifted: %v", placeholderBuiltins)
         }
-        if len(placeholderBlocks) != 5 {
+        if len(placeholderBlocks) != 6 { // v1.58.2: {tools} joins the MIRROR blocks
                 t.Fatalf("block vocabulary drifted: %v", placeholderBlocks)
         }
         for _, k := range append(append([]string{}, placeholderBuiltins...), placeholderBlocks...) {
@@ -171,7 +171,7 @@ func TestV1272_GetCarriesVocabulary(t *testing.T) {
         if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
                 t.Fatalf("decode: %v", err)
         }
-        if len(out.Builtin) != 7 || len(out.Blocks) != 5 {
+        if len(out.Builtin) != 7 || len(out.Blocks) != 6 { // v1.58.2: {tools} joins
                 t.Fatalf("vocabulary drifted: builtin=%v blocks=%v", out.Builtin, out.Blocks)
         }
         for _, want := range []string{"date", "session", "repo_access"} {
@@ -265,7 +265,9 @@ func TestV1271_BlocksEndpoint(t *testing.T) {
                 if len([]rune(b.Text)) > blockPreviewCap {
                         t.Fatalf("block %s preview exceeds the cap: %d", k, len(b.Text))
                 }
-                if b.Chars == 0 && k != "artifacts" {
+                // v1.58.2: {tools} may honestly render EMPTY (native chats collapse it —
+                // the serve-only merged catalog; the same exception as {artifacts})
+                if b.Chars == 0 && k != "artifacts" && k != "tools" {
                         t.Fatalf("block %s renders empty (chars=0)", k)
                 }
         }

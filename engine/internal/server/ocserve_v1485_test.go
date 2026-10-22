@@ -61,6 +61,10 @@ type fakeServe struct {
         volatileMiss bool
         volatileOK   bool
         messages     map[string][]map[string]any
+        // v1.60 THE WIDE SHELF: every POSTed /move body (the per-chat binding
+        // law) + the reject switch (the graceful-degradation pin).
+        moveBodies []map[string]any
+        moveReject bool
 }
 
 // v1592Msg appends a message record (oldest→newest) to a session.
@@ -152,6 +156,17 @@ func (f *fakeServe) handler(w http.ResponseWriter, r *http.Request) {
                 delete(f.sessions, id)
                 f.deletes = append(f.deletes, id)
                 w.WriteHeader(204)
+        case strings.HasSuffix(r.URL.Path, "/move") && r.Method == "POST":
+                // v1.60 THE WIDE SHELF: the per-chat binding's move route
+                var body map[string]any
+                b, _ := io.ReadAll(r.Body)
+                json.Unmarshal(b, &body)
+                f.moveBodies = append(f.moveBodies, body)
+                if f.moveReject {
+                        w.WriteHeader(404)
+                        return
+                }
+                io.WriteString(w, `{}`)
         case r.URL.Path == "/api/event":
                 w.Header().Set("Content-Type", "text/event-stream")
                 if f.volatileMiss || f.volatileOK {
@@ -229,7 +244,7 @@ func TestOcServeEventMapping(t *testing.T) {
         fake.mu.Unlock()
         // StreamEvents needs the CURRENT /api/event frames; the fake serves them
         // fresh per connection, so run the pump directly
-        recycled, err := s.ocServePump(context.Background(), m, "ses_fake_pre", "chat1", events, time.Now().UnixMilli())
+        recycled, err := s.ocServePump(context.Background(), m, "ses_fake_pre", "chat1", "opencode/big-pickle", events, time.Now().UnixMilli())
         close(events)
         <-done
         if err != nil {
@@ -253,8 +268,14 @@ func TestOcServeEventMapping(t *testing.T) {
         if got[0]["text"] != "thinking hard" || got[1]["text"] != "the answer" {
                 t.Fatalf("delta texts wrong: %v %v", got[0]["text"], got[1]["text"])
         }
-        if got[2]["name"] != "opencode:glob" || got[3]["name"] != "opencode:glob" {
+        // v1.58.1 THE INFORMATIVE PILL: the name is BARE (the PWA titles the
+        // pill with it — no "opencode:" prefix) + the summary is DERIVED
+        // from the args (glob's pattern — never a static "running").
+        if got[2]["name"] != "glob" || got[3]["name"] != "glob" {
                 t.Fatalf("tool names wrong: %v %v", got[2]["name"], got[3]["name"])
+        }
+        if got[2]["summary"] != "*" {
+                t.Fatalf("the summary must be the derived operand (glob's pattern): %v", got[2]["summary"])
         }
         if got[2]["args"] != `{"pattern":"*"}` {
                 t.Fatalf("the tool args must ride input.ended's serialized text: %v", got[2]["args"])
@@ -552,7 +573,7 @@ func TestOcServeOpeningTextTrimLaw(t *testing.T) {
         db.AppendEvent("chat1", "assistant", "first answer", "")
         // the in-flight emit (the turn persisted it before dispatch)
         db.AppendEvent("chat1", "user", "the new message", "")
-        text := s.ocServeOpeningText(sess, "the new message")
+        text := s.ocServeOpeningText(sess, "the new message", false)
         if n := strings.Count(text, "the new message"); n != 1 {
                 t.Fatalf("the in-flight message must ride the opening text EXACTLY ONCE (v1.48.1's law), got %d", n)
         }

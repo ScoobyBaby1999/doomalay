@@ -141,7 +141,12 @@ type Server struct {
         ocServe         *ocserve.Manager
         ocServeMu       sync.Mutex
         ocServeSessions map[string]string
-        ocServeSessMu   sync.Mutex
+        // v1.58.2 THE WIDE SHELF: the per-chat doomalay MCP binding landed
+        // (the serve session was moved into its per-chat config dir — the
+        // {tools} block's merged catalog rides it; an unbound session gets
+        // the honest native-only note).
+        ocServeBound map[string]bool
+        ocServeSessMu sync.Mutex
         // v1.55.1 THE HONEST LADDER: the START serializer. ocServeMu now
         // guards only the manager POINTER (microsecond windows — the
         // bridge status route may peek it freely); every SLOW thing
@@ -422,6 +427,25 @@ func (s *Server) routes() {
                         }),
                 )
                 s.mux.Handle("/mcp", httpSrv)
+                // v1.58.2 THE WIDE SHELF — the per-chat MCP route: the opencode
+                // serve's per-session config points each serve session's doomalay
+                // MCP entry at /mcp/oc/<app-chat-id> (a per-chat URL is the only
+                // binding the serve's static-config world can carry; the custom
+                // header RIDES TOO — live-probed — but the URL path needs no
+                // header support upstream). The wrapper clones the request with
+                // the chat id injected as X-Doomalay-Session: the SAME resolution
+                // path the header speaks, zero new resolution code.
+                s.mux.Handle("/mcp/oc/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+                        chatID := strings.TrimPrefix(r.URL.Path, "/mcp/oc/")
+                        if chatID == "" || strings.Contains(chatID, "/") {
+                                http.NotFound(w, r)
+                                return
+                        }
+                        r2 := r.Clone(r.Context())
+                        r2.Header.Set("X-Doomalay-Session", chatID)
+                        r2.URL.Path = "/mcp"
+                        httpSrv.ServeHTTP(w, r2)
+                }))
                 mcpbus.SetSessionTurnResolver(s.sessionMcpTurn)
                 go func() {
                         for _, cfg := range mcpbus.LoadServerConfigs(s.cfg.DataDir) {

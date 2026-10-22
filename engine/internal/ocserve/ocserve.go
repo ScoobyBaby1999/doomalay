@@ -64,6 +64,7 @@ import (
         "net/http"
         "os"
         "os/exec"
+        "path"
         "path/filepath"
         "runtime"
         "strings"
@@ -168,29 +169,36 @@ func (m *Manager) SetProgressForTest(stage string, bytes, total int64) {
 }
 
 // Config is the exact permission file the gate law prescribes for the 2.x
-// agent (the 2.x tool names — live-probed: the legacy `permission` object
-// is still valid, `shell` is the 2.x name for the command tool, `edit`
-// covers edit/write/patch): execution + writes DENIED, the read-only
-// explorer tools allowed, and the headless-hostile ask-flows denied (a
-// serve turn has no human to answer an `ask` — deny answers the agent
-// honestly instead of hanging).
+// agent. v1.58.2 THE OPEN HANDS (PLAN-V158 §2): the DENY-everything shackles
+// are DEAD — the user's law is 1:1 native parity ("full access as a real
+// user"), and the v157 live probes proved open hands pass the free gate
+// (permissive config, real turns, cost 0). The V2 RULES-ARRAY grammar
+// (live-captured from the docs): ordered {action, resource, effect} rules,
+// LAST-MATCH-WINS, layered ON TOP of the agent's own base policy
+// ({"action":"*","resource":"*","effect":"allow"} — the shipped default),
+// so everything unmatched stays allowed. Our rules carve only the honest
+// exceptions:
+//   · question deny — a serve turn has no human to answer an ask; deny
+//     answers the agent honestly instead of hanging headlessly.
+//   · doomalay_* allow — THE WIDE SHELF belt: the app's MCP tools (the
+//     direct-tool permission action is <server>_<tool>, the docs' own
+//     grammar) are explicitly, visibly allowed — never hostage to an
+//     upstream default-policy change.
+//   · *.env / *.env.* reads deny — the honest secrets line (API keys live
+//     in .env files; a deny teaches, an ask would hang).
+// websearch rides the serve's own authenticated account through the tavily
+// provider selection (R5 — the device's "Web search cancelled" disease was
+// the missing provider selection; NO tavily key needed, live-proven).
 const permissionConfig = `{
   "$schema": "https://opencode.ai/config.json",
-  "permission": {
-    "shell": "deny",
-    "edit": "deny",
-    "webfetch": "deny",
-    "task": "deny",
-    "question": "deny",
-    "external_directory": "deny",
-    "doom_loop": "deny",
-    "read": "allow",
-    "grep": "allow",
-    "glob": "allow",
-    "websearch": "allow"
-  }
-}
-`
+  "permissions": [
+    { "action": "question", "resource": "*", "effect": "deny" },
+    { "action": "doomalay_*", "resource": "*", "effect": "allow" },
+    { "action": "read", "resource": "*.env", "effect": "deny" },
+    { "action": "read", "resource": "*.env.*", "effect": "deny" }
+  ],
+  "websearch": { "provider": "tavily" }
+}`
 
 // FindBinary locates an opencode binary: the explicit env override first
 // (the rigs + users who installed their own), then the engine-managed
@@ -769,43 +777,43 @@ func (m *Manager) CreateSession(title string) (string, error) {
 // anything else = not provable → false (the caller self-heals a fresh
 // session + the opening text — never a hard failure).
 func (m *Manager) SessionExists(serveSess string) bool {
-        if serveSess == "" {
-                return false
-        }
-        m.mu.Lock()
-        base, pw := m.baseURL, m.serverPassword
-        m.mu.Unlock()
-        if base == "" {
-                return false
-        }
-        ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-        defer cancel()
-        req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/api/session/"+serveSess, nil)
-        if err != nil {
-                return false
-        }
-        req.Header.Set("Accept", "application/json")
-        req.Header.Set("Authorization", "Basic "+basicAuth("opencode", pw))
-        resp, err := http.DefaultClient.Do(req)
-        if err != nil {
-                return false
-        }
-        defer resp.Body.Close()
-        if resp.StatusCode == 404 {
-                return false
-        }
-        if resp.StatusCode != 200 {
-                return false
-        }
-        var out struct {
-                Data struct {
-                        ID string `json:"id"`
-                } `json:"data"`
-        }
-        if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out); err != nil {
-                return false // HTML or any non-JSON body — the SPA trap, not a session
-        }
-        return out.Data.ID == serveSess
+	if serveSess == "" {
+		return false
+	}
+	m.mu.Lock()
+	base, pw := m.baseURL, m.serverPassword
+	m.mu.Unlock()
+	if base == "" {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/api/session/"+serveSess, nil)
+	if err != nil {
+		return false
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Basic "+basicAuth("opencode", pw))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == 404 {
+		return false
+	}
+	if resp.StatusCode != 200 {
+		return false
+	}
+	var out struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out); err != nil {
+		return false // HTML or any non-JSON body — the SPA trap, not a session
+	}
+	return out.Data.ID == serveSess
 }
 
 // SessionIdleSince polls the session's OWN durable record — the last
@@ -818,76 +826,76 @@ func (m *Manager) SessionExists(serveSess string) bool {
 // outcome (with errType/errMsg for the honest error), and a non-failed
 // ending carries the assistant text (the off-wire success path).
 func (m *Manager) SessionIdleSince(serveSess string, sinceMs int64) (ended, failed bool, errType, errMsg, assistantText string) {
-        if serveSess == "" {
-                return false, false, "", "", ""
-        }
-        m.mu.Lock()
-        base, pw := m.baseURL, m.serverPassword
-        m.mu.Unlock()
-        if base == "" {
-                return false, false, "", "", ""
-        }
-        ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-        defer cancel()
-        req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/api/session/"+serveSess+"/message?limit=2", nil)
-        if err != nil {
-                return false, false, "", "", ""
-        }
-        req.Header.Set("Accept", "application/json")
-        req.Header.Set("Authorization", "Basic "+basicAuth("opencode", pw))
-        resp, err := http.DefaultClient.Do(req)
-        if err != nil {
-                return false, false, "", "", ""
-        }
-        defer resp.Body.Close()
-        if resp.StatusCode != 200 {
-                return false, false, "", "", ""
-        }
-        var out struct {
-                Data []struct {
-                        Type    string `json:"type"`
-                        Time    struct {
-                                Created int64 `json:"created"`
-                        } `json:"time"`
-                        Outcome string `json:"outcome"`
-                        Error   *struct {
-                                Type    string `json:"type"`
-                                Message string `json:"message"`
-                        } `json:"error"`
-                        Text string `json:"text"`
-                } `json:"data"`
-        }
-        if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&out); err != nil {
-                return false, false, "", "", "" // HTML or any non-JSON body — not an answer
-        }
-        if len(out.Data) == 0 {
-                return false, false, "", "", ""
-        }
-        newest := out.Data[0]
-        // >= not >: an instant failure lands its idle marker in the SAME
-        // millisecond the turn started (live-observed: the no-route failure
-        // fired ~5ms after the prompt, often the same ms as the stamp). The
-        // false-positive guard is the SILENCE window itself — the probe only
-        // fires well into the turn, and a PREVIOUS turn's idle marker can
-        // only collide when that turn ended the very ms this one started
-        // (the serve serializes prompts per session; the recycle births a
-        // FRESH session anyway).
-        if newest.Type != "idle" || newest.Time.Created < sinceMs {
-                return false, false, "", "", "" // still running (or a PREVIOUS turn's idle)
-        }
-        if newest.Outcome == "failed" {
-                et, em := "", ""
-                if newest.Error != nil {
-                        et, em = newest.Error.Type, newest.Error.Message
-                }
-                return true, true, et, em, ""
-        }
-        // the off-wire success: the assistant message rides just under the idle
-        at := ""
-        if len(out.Data) > 1 && out.Data[1].Type == "assistant" {
-                at = out.Data[1].Text
-        }
-        return true, false, "", "", at
+	if serveSess == "" {
+		return false, false, "", "", ""
+	}
+	m.mu.Lock()
+	base, pw := m.baseURL, m.serverPassword
+	m.mu.Unlock()
+	if base == "" {
+		return false, false, "", "", ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/api/session/"+serveSess+"/message?limit=2", nil)
+	if err != nil {
+		return false, false, "", "", ""
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Basic "+basicAuth("opencode", pw))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return false, false, "", "", ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return false, false, "", "", ""
+	}
+	var out struct {
+		Data []struct {
+			Type    string `json:"type"`
+			Time    struct {
+				Created int64 `json:"created"`
+			} `json:"time"`
+			Outcome string `json:"outcome"`
+			Error   *struct {
+				Type    string `json:"type"`
+				Message string `json:"message"`
+			} `json:"error"`
+			Text string `json:"text"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&out); err != nil {
+		return false, false, "", "", "" // HTML or any non-JSON body — not an answer
+	}
+	if len(out.Data) == 0 {
+		return false, false, "", "", ""
+	}
+	newest := out.Data[0]
+	// >= not >: an instant failure lands its idle marker in the SAME
+	// millisecond the turn started (live-observed: the no-route failure
+	// fired ~5ms after the prompt, often the same ms as the stamp). The
+	// false-positive guard is the SILENCE window itself — the probe only
+	// fires well into the turn, and a PREVIOUS turn's idle marker can
+	// only collide when that turn ended the very ms this one started
+	// (the serve serializes prompts per session; the recycle births a
+	// FRESH session anyway).
+	if newest.Type != "idle" || newest.Time.Created < sinceMs {
+		return false, false, "", "", "" // still running (or a PREVIOUS turn's idle)
+	}
+	if newest.Outcome == "failed" {
+		et, em := "", ""
+		if newest.Error != nil {
+			et, em = newest.Error.Type, newest.Error.Message
+		}
+		return true, true, et, em, ""
+	}
+	// the off-wire success: the assistant message rides just under the idle
+	at := ""
+	if len(out.Data) > 1 && out.Data[1].Type == "assistant" {
+		at = out.Data[1].Text
+	}
+	return true, false, "", "", at
 }
 
 // DeleteSession removes a serve-side session (v1.59.2: the chat-delete
@@ -898,37 +906,187 @@ func (m *Manager) SessionIdleSince(serveSess string, sinceMs int64) (ended, fail
 // legacy DELETE /session/{id} answers 405 on this build and is NOT used.
 // Best-effort by contract: the caller logs, never blocks.
 func (m *Manager) DeleteSession(serveSess string) error {
-        if serveSess == "" {
-                return errors.New("ocserve: empty session id")
-        }
-        m.mu.Lock()
-        base, pw := m.baseURL, m.serverPassword
-        m.mu.Unlock()
-        if base == "" {
-                return errors.New("ocserve: not running")
-        }
-        ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-        defer cancel()
-        req, err := http.NewRequestWithContext(ctx, http.MethodDelete, base+"/api/session/"+serveSess, nil)
-        if err != nil {
-                return err
-        }
-        req.Header.Set("Accept", "application/json")
-        req.Header.Set("Authorization", "Basic "+basicAuth("opencode", pw))
-        resp, err := http.DefaultClient.Do(req)
-        if err != nil {
-                return err
-        }
-        defer resp.Body.Close()
-        body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-        if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-                return nil // 204 = deleted (the live-probed truth)
-        }
-        msg := string(body)
-        if len(msg) > 120 {
-                msg = msg[:120]
-        }
-        return fmt.Errorf("ocserve delete session: HTTP %d, body %q", resp.StatusCode, msg)
+	if serveSess == "" {
+		return errors.New("ocserve: empty session id")
+	}
+	m.mu.Lock()
+	base, pw := m.baseURL, m.serverPassword
+	m.mu.Unlock()
+	if base == "" {
+		return errors.New("ocserve: not running")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, base+"/api/session/"+serveSess, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Basic "+basicAuth("opencode", pw))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil // 204 = deleted (the live-probed truth)
+	}
+	msg := string(body)
+	if len(msg) > 120 {
+		msg = msg[:120]
+	}
+	return fmt.Errorf("ocserve delete session: HTTP %d, body %q", resp.StatusCode, msg)
+}
+
+// ScratchDir answers the serve's scratch directory (its cwd/HOME — where
+// the global opencode.json lives). v1.58.2 THE WIDE SHELF: the server layer
+// writes each app chat's PER-CHAT config directory under it.
+func (m *Manager) ScratchDir() string {
+	if m.dataDir == "" {
+		return ""
+	}
+	return filepath.Join(m.dataDir, "opencode-serve")
+}
+
+// ViaTermux answers whether this serve lives in the Termux guest room (the
+// Android pocket bridge) — v1.58.2 THE TERMUX AUTO-ENABLE: a chat running
+// through the pocket bridge HAS the device's termux capability by
+// construction; the engine self-heals the per-chat flag so the gates + the
+// chip reflect the truth.
+func (m *Manager) ViaTermux() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.termux != nil
+}
+
+// MoveSession moves a serve session into a directory — v1.58.2 THE WIDE
+// SHELF's per-chat binding vehicle (live-probed against the real 2.1.2:
+// POST /api/session/{id}/move {"directory": …} is accepted and the moved
+// session re-resolves THAT directory's opencode.json — the per-session MCP
+// attach that gives every app chat its own X-Doomalay-Session binding,
+// concurrency-safe by construction: one config dir per chat).
+func (m *Manager) MoveSession(serveSess, dir string) error {
+	m.mu.Lock()
+	base, pw := m.baseURL, m.serverPassword
+	m.mu.Unlock()
+	if base == "" {
+		return errors.New("ocserve: not running")
+	}
+	body, _ := json.Marshal(map[string]any{"directory": dir})
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/api/session/"+serveSess+"/move", strings.NewReader(string(body)))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Basic "+basicAuth("opencode", pw))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("ocserve move session: HTTP %d", resp.StatusCode)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return nil
+}
+
+// CreateSessionInDir creates a session AND moves it into dir in one call —
+// the per-chat binding law (the config dir must be resolved before the
+// first prompt; the move is the live-proven attach vehicle). A failed move
+// returns the error honestly: a mis-bound session would answer another
+// chat's tools — the caller drops it (the recycle law).
+func (m *Manager) CreateSessionInDir(title, dir string) (string, error) {
+	id, err := m.CreateSession(title)
+	if err != nil {
+		return "", err
+	}
+	if err := m.MoveSession(id, dir); err != nil {
+		return id, err
+	}
+	return id, nil
+}
+
+// WriteServeFile writes a file UNDER the serve's scratch tree on the
+// platform the serve actually runs on — v1.58.2 THE WIDE SHELF's per-chat
+// config vehicle. Desktop (exec child): the plain engine filesystem (the
+// scratch IS an engine-side dir). Android (termux child): the jailed
+// exec's `cat >` heredoc under $HOME/.doomalay/opencode-serve/ (the
+// tmCmdWriteConfig law — RunWithStdin carries the bytes, zero-escaping;
+// the command's mkdir -p builds the parent first). relPath is
+// slash-separated and NEVER escapes the tree (path.Clean + the .. refuse).
+func (m *Manager) WriteServeFile(relPath, content string) error {
+	clean := path.Clean(relPath)
+	if strings.HasPrefix(clean, "..") || path.IsAbs(clean) || strings.HasPrefix(clean, "/") {
+		return fmt.Errorf("ocserve: serve file refuses an escaping path: %q", relPath)
+	}
+	m.mu.Lock()
+	termux := m.termux
+	m.mu.Unlock()
+	if termux != nil {
+		cmd := fmt.Sprintf("mkdir -p \"$(dirname \"$HOME/.doomalay/opencode-serve/%s\")\" && cat > \"$HOME/.doomalay/opencode-serve/%s\"", clean, clean)
+		res, err := termux.RunWithStdin(context.Background(), cmd, "", 30_000, content)
+		if err != nil {
+			return err
+		}
+		if res == nil || !res.Ok || res.ExitCode != 0 {
+			exit, stderr := -1, "no result"
+			if res != nil {
+				exit, stderr = res.ExitCode, res.Stderr
+			}
+			return fmt.Errorf("ocserve: termux serve write failed (exit %d): %s", exit, stderr)
+		}
+		return nil
+	}
+	scratch := m.ScratchDir()
+	if scratch == "" {
+		return errors.New("ocserve: no scratch dir")
+	}
+	full := filepath.Join(scratch, filepath.FromSlash(clean))
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(full, []byte(content), 0o644)
+}
+
+// ServeDir answers the ABSOLUTE path of a scratch subtree AS THE SERVE SEES
+// IT — the move API (POST /api/session/{id}/move {"directory": …}) needs
+// the serve's own filesystem truth, which differs by platform: desktop
+// (exec child) the engine path IS the serve's path; Android (termux child)
+// the jailed exec expands $HOME (the Play/F-Droid layouts differ — NEVER a
+// hard-coded prefix; the echo answers the real path through the bridge).
+func (m *Manager) ServeDir(relPath string) (string, error) {
+	clean := path.Clean(relPath)
+	if strings.HasPrefix(clean, "..") || path.IsAbs(clean) || strings.HasPrefix(clean, "/") {
+		return "", fmt.Errorf("ocserve: serve dir refuses an escaping path: %q", relPath)
+	}
+	m.mu.Lock()
+	termux := m.termux
+	scratch := filepath.Join(m.dataDir, "opencode-serve")
+	m.mu.Unlock()
+	if termux != nil {
+		res, err := termux.Run(context.Background(),
+			fmt.Sprintf("echo -n \"$HOME/.doomalay/opencode-serve/%s\"", clean), "", 15_000)
+		if err != nil {
+			return "", err
+		}
+		if res == nil || !res.Ok {
+			return "", errors.New("ocserve: termux serve dir resolve failed")
+		}
+		dir := strings.TrimSpace(res.Stdout)
+		if dir == "" {
+			return "", errors.New("ocserve: termux serve dir resolve answered empty")
+		}
+		return dir, nil
+	}
+	abs, err := filepath.Abs(filepath.Join(scratch, filepath.FromSlash(clean)))
+	if err != nil {
+		return "", err
+	}
+	return abs, nil
 }
 
 // SelectModel pins the SESSION's model (the 2.x law: model selection
@@ -1085,21 +1243,44 @@ type Event struct {
 }
 
 type eventData struct {
-        SessionID          string          `json:"sessionID"`
-        AssistantMessageID string          `json:"assistantMessageID"`
-        Agent              string          `json:"agent"`
-        Model              eventModel      `json:"model"`
-        Ordinal            int             `json:"ordinal"`
-        Delta              string          `json:"delta"`   // reasoning./text. delta payload
-        Text               string          `json:"text"`    // text.ended full text; tool.input.ended serialized input
-        Name               string          `json:"name"`    // tool.input.started tool name
-        ID                 string          `json:"id"`      // the tool call id
-        Input              json.RawMessage `json:"input"`   // tool.called
-        Content            []toolContent   `json:"content"` // tool.success/failed
-        Finish             string          `json:"finish"`
-        Cost               float64         `json:"cost"`
-        Tokens             eventTokens     `json:"tokens"`
-        Error              *eventError     `json:"error"`
+        SessionID          string            `json:"sessionID"`
+        AssistantMessageID string            `json:"assistantMessageID"`
+        Agent              string            `json:"agent"`
+        Model              eventModel        `json:"model"`
+        Ordinal            int               `json:"ordinal"`
+        Delta              string            `json:"delta"`   // reasoning./text. delta payload
+        Text               string            `json:"text"`    // text.ended full text; tool.input.ended serialized input
+        Name               string            `json:"name"`    // tool.input.started tool name
+        ID                 string            `json:"id"`      // the tool call id
+        Input              json.RawMessage   `json:"input"`   // tool.called
+        Content            []toolContent     `json:"content"` // tool.success/failed
+        Finish             string            `json:"finish"`
+        Cost               float64           `json:"cost"`
+        Tokens             eventTokens       `json:"tokens"`
+        Error              *eventError       `json:"error"`
+        // v1.58.1 THE INFORMATIVE PILL: the serve streams LIVE progress and
+        // an honest truncation verdict on the tool frames — metadata.toolCalls
+        // (Code Mode's nested calls with status), metadata.shellID (a live
+        // shell session), metadata.truncated (the serve shortened the
+        // result itself — surfaced to the user, never silently dropped).
+        Metadata EventToolMetadata `json:"metadata"`
+}
+
+// EventToolMetadata is the tool frames' metadata block (live-captured:
+// the execute frames carry toolCalls[]; the shell frames carry shellID;
+// the success frames carry the truncated verdict). Exported for the
+// server package's pill derivation (v1.57.1).
+type EventToolMetadata struct {
+        ToolCalls []EventToolCallStatus `json:"toolCalls"`
+        ShellID   string                `json:"shellID"`
+        Truncated *bool                 `json:"truncated"`
+}
+
+// EventToolCallStatus is one Code Mode nested call's live status.
+type EventToolCallStatus struct {
+        Tool   string          `json:"tool"`
+        Status string          `json:"status"`
+        Input  json.RawMessage `json:"input"`
 }
 
 type eventModel struct {

@@ -24,25 +24,79 @@ import (
 // OpenCode 2.1.2 npm CLI serve (2026-10-21, big-pickle turns through
 // /api/event SSE, the same probes CAPTURED-TRUTH documents).
 
-// TestPermissionConfigLaw pins the 2.x gate-law config: execution, writes,
-// and the headless-hostile ask-flows DENIED; the read-only explorers +
-// OpenCode's own websearch ALLOWED (2.x tool names — `shell` not `bash`,
-// `edit` covers edit/write/patch).
+// TestPermissionConfigLaw pins the v1.58.2 OPEN-HANDS gate-law config: the
+// V2 RULES ARRAY (ordered {action, resource, effect}, last-match-wins,
+// layered on the agent's own allow-all base policy) with exactly the
+// honest exceptions — question DENIED (a headless serve turn has no human
+// to answer an ask), the doomalay_* MCP tools explicitly ALLOWED (the
+// wide-shelf belt — never hostage to an upstream default-policy change),
+// the *.env secrets reads DENIED. Everything else (shell, edit, webfetch,
+// subagent, execute…) carries NO rule — the base policy allows it: the
+// user's 1:1-native-parity law ("full access as a real user"), and the
+// v157 live probes proved open hands pass the free gate. The websearch
+// provider selection rides alongside (R5: the missing selection was the
+// device's "Web search cancelled" disease; tavily rides the serve's own
+// authenticated account — no key needed).
 func TestPermissionConfigLaw(t *testing.T) {
         var cfg map[string]any
         if err := json.Unmarshal([]byte(permissionConfig), &cfg); err != nil {
                 t.Fatalf("config is not valid JSON: %v", err)
         }
-        perm, _ := cfg["permission"].(map[string]any)
-        for _, deny := range []string{"shell", "edit", "webfetch", "task", "question", "external_directory", "doom_loop"} {
-                if perm[deny] != "deny" {
-                        t.Fatalf("the gate law: %s must be denied (got %v) — execution + writes + ask-flows stay out of the headless agent", deny, perm[deny])
+        rules, ok := cfg["permissions"].([]any)
+        if !ok {
+                t.Fatalf("the V2 grammar: the config must carry the rules array, got %T", cfg["permissions"])
+        }
+        if cfg["permission"] != nil {
+                t.Fatalf("the V1 legacy object is DEAD: %v", cfg["permission"])
+        }
+        type rule struct{ action, resource, effect string }
+        got := []rule{}
+        for _, r := range rules {
+                m, _ := r.(map[string]any)
+                got = append(got, rule{m["action"].(string), m["resource"].(string), m["effect"].(string)})
+        }
+        // QUESTION DENY — the one headless-hostile ask-flow
+        qdeny := false
+        for _, r := range got {
+                if r.action == "question" && r.resource == "*" && r.effect == "deny" {
+                        qdeny = true
                 }
         }
-        for _, allow := range []string{"read", "grep", "glob", "websearch"} {
-                if perm[allow] != "allow" {
-                        t.Fatalf("the gate law: %s must be allowed (got %v)", allow, perm[allow])
+        if !qdeny {
+                t.Fatalf("the headless law: question must be DENIED — %v", got)
+        }
+        // THE WIDE SHELF BELT — doomalay_* explicitly allowed
+        dallow := false
+        for _, r := range got {
+                if r.action == "doomalay_*" && r.resource == "*" && r.effect == "allow" {
+                        dallow = true
                 }
+        }
+        if !dallow {
+                t.Fatalf("the wide-shelf belt: doomalay_* must be explicitly ALLOWED — %v", got)
+        }
+        // THE SECRETS LINE — *.env / *.env.* reads denied
+        envDenies := 0
+        for _, r := range got {
+                if r.action == "read" && r.effect == "deny" && (r.resource == "*.env" || r.resource == "*.env.*") {
+                        envDenies++
+                }
+        }
+        if envDenies != 2 {
+                t.Fatalf("the secrets line: both *.env and *.env.* reads must be DENIED — %v", got)
+        }
+        // THE OPEN HANDS — no shell/edit/webfetch/subagent/execute deny rules
+        // remain (the base allow-all policy carries them; the user's law)
+        for _, r := range got {
+                switch r.action {
+                case "shell", "edit", "webfetch", "task", "subagent", "execute", "external_directory", "doom_loop":
+                        t.Fatalf("the open hands: %s must carry NO rule (the base allow-all owns it) — %v", r.action, got)
+                }
+        }
+        // THE WEBSEARCH SELECTION (R5)
+        ws, _ := cfg["websearch"].(map[string]any)
+        if ws == nil || ws["provider"] != "tavily" {
+                t.Fatalf("the websearch provider selection must ride the config (R5): %v", cfg["websearch"])
         }
 }
 
@@ -377,17 +431,17 @@ func TestEnsureBinaryVerifiesIntegrity(t *testing.T) {
 // adoptable across engine restarts), a different key honestly derives a
 // different one (a key rotation re-spawns with the refreshed key.env).
 func TestStablePasswordLaw(t *testing.T) {
-	t.Setenv("DOOMALAY_OPENCODE_SERVE_PASSWORD", "")
-	m1 := New("", "key-one", nil)
-	m2 := New("", "key-one", nil)
-	m3 := New("", "key-two", nil)
-	if m1.ServerPassword() == "" || m1.ServerPassword() != m2.ServerPassword() {
-		t.Fatalf("the same key must derive the same password (the adoption law)")
-	}
-	if m1.ServerPassword() == m3.ServerPassword() {
-		t.Fatalf("a different key must derive a different password")
-	}
-	if len(m1.ServerPassword()) < 32 || strings.ContainsAny(m1.ServerPassword(), " \t") {
-		t.Fatalf("the derived password must be a clean full HMAC hex (got %q)", m1.ServerPassword())
-	}
+        t.Setenv("DOOMALAY_OPENCODE_SERVE_PASSWORD", "")
+        m1 := New("", "key-one", nil)
+        m2 := New("", "key-one", nil)
+        m3 := New("", "key-two", nil)
+        if m1.ServerPassword() == "" || m1.ServerPassword() != m2.ServerPassword() {
+                t.Fatalf("the same key must derive the same password (the adoption law)")
+        }
+        if m1.ServerPassword() == m3.ServerPassword() {
+                t.Fatalf("a different key must derive a different password")
+        }
+        if len(m1.ServerPassword()) < 32 || strings.ContainsAny(m1.ServerPassword(), " \t") {
+                t.Fatalf("the derived password must be a clean full HMAC hex (got %q)", m1.ServerPassword())
+        }
 }

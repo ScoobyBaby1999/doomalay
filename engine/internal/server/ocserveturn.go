@@ -17,12 +17,15 @@ package server
 
 import (
         "context"
+        "encoding/json"
         "fmt"
         "log"
         "os"
+        "path/filepath"
         "strings"
         "time"
 
+        "github.com/ScoobyBaby1999/doomalay/engine/internal/llm"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/ocserve"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/store"
 )
@@ -131,7 +134,11 @@ func ocServeBindKey(appSessionID string) string { return "chat.ocserve." + appSe
 // ocServeBindingGet reads the persisted serve-session binding ("" = none).
 // An error is LOGGED (never swallowed silently — the v1590 live rig
 // convicted a silent "" that hid the real failure from the diagnosis).
+// Nil-DB safe (the unit-test convention: Servers without a store answer "").
 func (s *Server) ocServeBindingGet(appSessionID string) string {
+        if s.db == nil {
+                return ""
+        }
         v, err := s.db.GetSetting(ocServeBindKey(appSessionID))
         if err != nil {
                 log.Printf("ocserve: binding read for %s failed: %v", appSessionID, err)
@@ -140,11 +147,85 @@ func (s *Server) ocServeBindingGet(appSessionID string) string {
         return strings.TrimSpace(v)
 }
 
-// ocServeBindingSet persists the app→serve session binding.
+// ocServeBindingSet persists the app→serve session binding. Nil-DB safe
+// (the unit-test convention: a storeless Server skips the persistence).
 func (s *Server) ocServeBindingSet(appSessionID, serveSessionID string) {
+        if s.db == nil {
+                return
+        }
         if err := s.db.SetSetting(ocServeBindKey(appSessionID), serveSessionID); err != nil {
                 log.Printf("ocserve: persist binding for %s failed: %v", appSessionID, err)
         }
+}
+
+// ocServeChatDir — v1.60 THE WIDE SHELF: writes the app chat's OWN
+// per-serve-session config directory (the per-chat MCP binding) + answers
+// the ABSOLUTE workspace dir the serve session moves into.
+//
+// THE BINDING LAW (live-proven, v158 research): each serve session is
+// MOVED into its own directory (POST /api/session/{id}/move) whose
+// opencode.json carries the doomalay MCP entry pointing at the engine's
+// per-chat route /mcp/oc/<app-chat-id> — one config dir per app chat,
+// concurrency-safe by construction (two chats turning at once each speak
+// to their own binding). The session's working directory is the ws/
+// SUBDIR (the model's file tools see a per-chat workspace, not the config
+// file itself); the config resolves from the PARENT — opencode's own
+// "current directory and its parents" law. On failure: ("", false) —
+// the turn degrades gracefully to a native-only session (the honest
+// unbound tools block says so; never a broken turn).
+// ocServeChatDir — v1.58.2 THE WIDE SHELF: writes the app chat's OWN
+// per-serve-session config directory (the per-chat MCP binding) + answers
+// the ABSOLUTE workspace dir the serve session moves into.
+//
+// THE BINDING LAW (live-proven, v158 research): each serve session is
+// MOVED into its own directory (POST /api/session/{id}/move) whose
+// opencode.json carries the doomalay MCP entry pointing at the engine's
+// per-chat route /mcp/oc/<app-chat-id> — one config dir per app chat,
+// concurrency-safe by construction (two chats turning at once each speak
+// to their own binding). The session's working directory is the ws/
+// SUBDIR (the model's file tools see a per-chat workspace, not the config
+// file itself); the config resolves from the PARENT — opencode's own
+// "current directory and its parents" law. On failure: ("", false) —
+// the turn degrades gracefully to a native-only session (the honest
+// unbound tools block says so; never a broken turn).
+func (s *Server) ocServeChatDir(m *ocserve.Manager, chatID string) (string, bool) {
+        port := 8080
+        if s.cfg != nil && s.cfg.Port > 0 { // the test server carries no cfg — the guard keeps the unit law
+                port = s.cfg.Port
+        }
+        safeChat := filepath.Base(chatID) // the jail law: no path tricks ride the chat id
+        entry := map[string]any{
+                "type":     "remote",
+                "url":      fmt.Sprintf("http://127.0.0.1:%d/mcp/oc/%s", port, safeChat),
+                "headers":  map[string]string{"X-Doomalay-Session": safeChat}, // the belt: headers RIDED live-proven
+                "oauth":    false,                                            // plain loopback HTTP — no OAuth probing
+                "codemode": false,                                           // DIRECT tools: the model calls calculator/fleet bare-named (the 1:1 pill law)
+                "timeout":  map[string]int{"startup": 20000, "catalog": 20000, "execution": 300000},
+        }
+        cfg := map[string]any{
+                "$schema": "https://opencode.ai/config.json",
+                "mcp":     map[string]any{"servers": map[string]any{"doomalay": entry}},
+        }
+        b, err := json.MarshalIndent(cfg, "", "  ")
+        if err != nil {
+                return "", false
+        }
+        if err := m.WriteServeFile("chats/"+safeChat+"/opencode.json", string(b)); err != nil {
+                log.Printf("ocserve: per-chat mcp config write failed: %v", err)
+                return "", false
+        }
+        // the ws dir must EXIST before the move (both platforms) — the .keep
+        // forces the tree creation through the same write law.
+        if err := m.WriteServeFile("chats/"+safeChat+"/ws/.keep", ""); err != nil {
+                log.Printf("ocserve: per-chat ws dir create failed: %v", err)
+                return "", false
+        }
+        dir, err := m.ServeDir("chats/" + safeChat + "/ws")
+        if err != nil {
+                log.Printf("ocserve: per-chat ws dir resolve failed: %v", err)
+                return "", false
+        }
+        return dir, true
 }
 
 // ocServeSessionID get-or-creates the serve session for an app chat.
@@ -153,41 +234,83 @@ func (s *Server) ocServeBindingSet(appSessionID, serveSessionID string) {
 // when the serve still holds that session (SessionExists — the 2.x serve's
 // sessions are durable in its own SQLite, live-verified), ADOPTS it: the
 // turn rides the serve's own full history (fresh=false — NO opening-text
-// recap, the model keeps its context and its thinking). The old law — an
-// engine restart birthed a fresh serve session and the next turn re-fed a
-// 1500-char/message recap — was the user's "the convo actually does start
-// from fresh and the model doesn't have time to think". A dead binding
-// (serve storage wiped / session gone) self-heals exactly like before:
-// fresh session + opening text, once.
-func (s *Server) ocServeSessionID(m *ocserve.Manager, sess *store.Session) (string, bool, error) {
-        s.ocServeSessMu.Lock()
+// recap, the model keeps its context and its thinking). A dead binding
+// self-heals exactly like before: fresh session + opening text, once.
+//
+// v1.60 THE WIDE SHELF: a FRESH session is created + MOVED into its own
+// per-chat config dir (the doomalay MCP binding) — the third return is the
+// BOUND state (the {tools} block speaks it honestly); an ADOPTED session
+// keeps the binding it was born with (the config dir persists on the serve
+// side with the session; the rewrite confirms the machinery still works).
+func (s *Server) ocServeSessionID(m *ocserve.Manager, sess *store.Session) (string, bool, bool, error) {
+                s.ocServeSessMu.Lock()
         defer s.ocServeSessMu.Unlock()
         if id, ok := s.ocServeSessions[sess.ID]; ok {
-                return id, false, nil
+                return id, false, s.ocServeBound[sess.ID], nil
         }
-        bound := s.ocServeBindingGet(sess.ID)
-        exists := bound != "" && m.SessionExists(bound)
-        if bound != "" && !exists {
-                log.Printf("ocserve: the persisted binding %q for chat %s did not resolve on the serve — a fresh serve session is incoming", bound, sess.ID)
-        }
-        if exists {
+        // v1.59.2 THE SERVE MEMORY: adopt a LIVING persisted binding (no recap —
+        // the model keeps its context + thinking).
+        persisted := s.ocServeBindingGet(sess.ID)
+        if persisted != "" && m.SessionExists(persisted) {
                 if s.ocServeSessions == nil {
                         s.ocServeSessions = map[string]string{}
                 }
-                s.ocServeSessions[sess.ID] = bound
-                log.Printf("ocserve: adopted serve session %s for chat %s (the binding survived the restart)", bound, sess.ID)
-                return bound, false, nil
+                if s.ocServeBound == nil {
+                        s.ocServeBound = map[string]bool{}
+                }
+                // v1.60 THE WIDE SHELF: the adopted session KEEPS the per-chat MCP
+                // binding it was born with (it was moved into its config dir at
+                // creation; the config persists with the serve). The (re)write confirms
+                // the machinery still serves this chat — a failure answers bound=false
+                // honestly (the tools block degrades, never the turn).
+                mcpBound := false
+                if _, ok := s.ocServeChatDir(m, sess.ID); ok {
+                        mcpBound = true
+                }
+                s.ocServeSessions[sess.ID] = persisted
+                s.ocServeBound[sess.ID] = mcpBound
+                log.Printf("ocserve: adopted serve session %s for chat %s (the binding survived the restart)", persisted, sess.ID)
+                return persisted, false, mcpBound, nil
         }
-        id, err := m.CreateSession(sess.Title)
+        if persisted != "" {
+                log.Printf("ocserve: the persisted binding %q for chat %s did not resolve on the serve — a fresh serve session is incoming", persisted, sess.ID)
+        }
+        // v1.60 THE WIDE SHELF: a FRESH session is born in its own per-chat
+        // config dir (the doomalay MCP binding); a failed move degrades to an
+        // unbound session honestly.
+        mcpBound := false
+        var id string
+        var err error
+        if dir, ok := s.ocServeChatDir(m, sess.ID); ok {
+                uid, uerr := m.CreateSessionInDir(sess.Title, dir)
+                if uerr == nil {
+                        id, mcpBound = uid, true
+                } else if uid != "" {
+                        // the session exists but the MOVE failed (an Android build without
+                        // /move, a full disk…): the honest degradation — keep it UNBOUND,
+                        // the native tools still run, the tools block says the truth.
+                        log.Printf("ocserve: per-chat move failed (%v) — session rides unbound", uerr)
+                        id = uid
+                } else {
+                        err = uerr
+                }
+        } else {
+                id, err = m.CreateSession(sess.Title)
+        }
         if err != nil {
-                return "", false, err
+                return "", false, false, err
         }
         if s.ocServeSessions == nil {
                 s.ocServeSessions = map[string]string{}
         }
+        if s.ocServeBound == nil {
+                s.ocServeBound = map[string]bool{}
+        }
         s.ocServeSessions[sess.ID] = id
+        s.ocServeBound[sess.ID] = mcpBound
+        // v1.59.2: the binding OUTLIVES the engine
         s.ocServeBindingSet(sess.ID, id)
-        return id, true, nil
+        return id, true, mcpBound, nil
 }
 
 // ocServeForgetSession drops a poisoned serve session (THE RECYCLE LAW: a
@@ -198,6 +321,7 @@ func (s *Server) ocServeSessionID(m *ocserve.Manager, sess *store.Session) (stri
 func (s *Server) ocServeForgetSession(sessID string) {
         s.ocServeSessMu.Lock()
         delete(s.ocServeSessions, sessID)
+        delete(s.ocServeBound, sessID)
         s.ocServeSessMu.Unlock()
         _ = s.db.DeleteSetting(ocServeBindKey(sessID))
 }
@@ -235,9 +359,16 @@ func (s *Server) dropOcServeBinding(appSessionID string) {
 // persona/system block + the compacted context + the current user text —
 // ALL in the message text (THE GATE LAW: the per-turn `system` field
 // poisons the turn; the persona must ride the text).
-func (s *Server) ocServeOpeningText(sess *store.Session, userText string) string {
+//
+// v1.58.2: the compose rides systemPromptForMetricsMode in SERVE mode — the
+// {artifacts} block speaks the serve truth (never the ACTION prose) and
+// the {tools} block carries the merged catalog when the per-chat doomalay
+// MCP binding landed (bound), or the honest native-only note when it did
+// not (the model never hallucinates tools it does not have — the chatlog's
+// Tier-0 disease, dead).
+func (s *Server) ocServeOpeningText(sess *store.Session, userText string, mcpBound bool) string {
         var b strings.Builder
-        sys := s.systemPromptForMetrics(sess, personaMetrics{}, bundleNameOf(""))
+        sys := s.systemPromptForMetricsMode(sess, personaMetrics{}, bundleNameOf(""), true, mcpBound)
         if t := strings.TrimSpace(sys); t != "" {
                 b.WriteString("[[System persona — you follow this for the whole conversation:\n")
                 b.WriteString(clampServer(t, 4000))
@@ -350,7 +481,7 @@ func (s *Server) ocServeStreamTurn(ctx context.Context, m *ocserve.Manager, sess
                 // guard's durable-record probe keys on it (an instant failure lands
                 // its idle marker moments after this, often before the pump starts)
                 turnStartedAt := time.Now().UnixMilli()
-                serveSess, fresh, err := s.ocServeSessionID(m, sess)
+                serveSess, fresh, mcpBound, err := s.ocServeSessionID(m, sess)
                 if err != nil {
                         return fmt.Errorf("serve bridge session: %w", err)
                 }
@@ -360,16 +491,38 @@ func (s *Server) ocServeStreamTurn(ctx context.Context, m *ocserve.Manager, sess
                 if err := m.SelectModel(serveSess, modelID); err != nil {
                         return fmt.Errorf("serve bridge select model: %w", err)
                 }
+                // v1.58.2 THE TERMUX AUTO-ENABLE (R8): the pocket bridge LIVES in
+                // the device's Termux — a chat running through it HAS the termux
+                // capability by construction. The engine self-heals the per-chat
+                // flag (the store update) + the progress line tells the user; the
+                // chip reflects the truth on its next session read. Desktop serves
+                // never trip this (ViaTermux is the pocket-bridge truth).
+                if m.ViaTermux() && !sess.Termux {
+                        sess.Termux = true
+                        if err := s.db.UpdateSession(sess); err != nil {
+                                sess.Termux = false // the flip never wedges the turn
+                                log.Printf("ocserve: termux auto-enable failed: %v", err)
+                        } else {
+                                out <- map[string]any{"type": "progress", "session_id": sessionID,
+                                        "message": "Termux capability enabled for this chat (the opencode pocket bridge runs there)"}
+                        }
+                }
                 text := userText
                 if fresh {
-                        text = s.ocServeOpeningText(sess, userText)
+                        text = s.ocServeOpeningText(sess, userText, mcpBound)
                 }
+                // v1.58.2 THE DYNAMIC PROGRESS LINES: the static "turn in
+                // flight" copy is DEAD — the pill now moves with the turn's own
+                // truth (connecting → the model thinking → the tool lines ride
+                // the tool_stream machinery from v1.58.1).
+                out <- map[string]any{"type": "progress", "session_id": sessionID,
+                        "message": "Connecting to OpenCode…"}
                 if err := m.Prompt(serveSess, text); err != nil {
                         return fmt.Errorf("serve bridge prompt: %w", err)
                 }
                 out <- map[string]any{"type": "progress", "session_id": sessionID,
-                        "message": "OpenCode free bridge: turn in flight (the genuine OpenCode 2 client)"}
-                recycled, err := s.ocServePump(ctx, m, serveSess, sessionID, out, turnStartedAt)
+                        "message": "OpenCode: " + strings.TrimPrefix(modelID, "opencode/") + " is thinking…"}
+                recycled, err := s.ocServePump(ctx, m, serveSess, sessionID, sess.Model, out, turnStartedAt)
                 if recycled {
                         // THE RECYCLE LAW: drop the poisoned serve session; the next
                         // attempt composes the full opening text on a fresh one.
@@ -396,6 +549,19 @@ var ocServeSilenceProbe = 12 * time.Second
 // ocServePump consumes the 2.x serve's SSE feed for one turn, mapping the
 // v2 event vocabulary onto the engine's. It returns recycled=true when
 // the turn hit OpenCode's free-tier wall (the recycle law's trigger).
+// v1.58.1 THE INFORMATIVE PILL (PLAN-V158 §1): the tool events now speak
+// the engine's OWN pill grammar — the name WITHOUT the "opencode:" prefix
+// + a DERIVED summary (the operand table in ocservetools.go) — so the
+// PWA's existing toolPillLabelParts else-branch renders opencode pills
+// byte-identically to native ones (title=verb, body=operand — the OOP
+// reuse the user asked for, zero new pill code). THE UNBOUNDED RESULT: the
+// silent 6000-char clampServer is DEAD — the result rides ClampMarked
+// with the window-physics budget (ocObsBudget — the v1.56.1 whole-return
+// law) + the serve's OWN metadata.truncated verdict surfaces honestly.
+// THE LIVE PILL: session.tool.progress frames ride the tool_stream
+// machinery (the termux live-tail law) — the pending pill's stream area
+// + the activity clock both move with the serve's real mid-tool truth.
+//
 // v1.59.2 THE NO-HANG GUARD: the global /api/event stream is VOLATILE (the
 // 2.x contract — events fired while not connected are MISSED), and a turn
 // that fails between the prompt POST and the stream's connect (no-route,
@@ -407,7 +573,7 @@ var ocServeSilenceProbe = 12 * time.Second
 // trailing idle message); a turn that already ended off-wire synthesizes
 // the honest terminal (error + status, or the assistant text + idle) and
 // RETURNS.
-func (s *Server) ocServePump(ctx context.Context, m *ocserve.Manager, serveSess, sessionID string, out chan<- map[string]any, turnStartedAt int64) (bool, error) {
+func (s *Server) ocServePump(ctx context.Context, m *ocserve.Manager, serveSess, sessionID, model string, out chan<- map[string]any, turnStartedAt int64) (bool, error) {
         toolNames := map[string]string{} // tool call id → tool name (input.started)
         usedEmitted := map[string]bool{}  // the pill law: use BEFORE result, exactly once
         var usage map[string]any
@@ -421,8 +587,11 @@ func (s *Server) ocServePump(ctx context.Context, m *ocserve.Manager, serveSess,
                 if args == "" {
                         args = "{}"
                 }
+                // v1.58.1: name BARE (the PWA titles the pill with it) + the
+                // summary DERIVED from the args (never a static "running" —
+                // an unparseable body still yields the tool's fallback law).
                 out <- map[string]any{"type": "tool_use", "session_id": sessionID,
-                        "name": "opencode:" + name, "summary": "running", "args": args,
+                        "name": name, "summary": ocToolSummary(name, args), "args": args,
                         "tool_use_id": callID}
         }
         pump := func(ev ocserve.Event) error {
@@ -446,6 +615,34 @@ func (s *Server) ocServePump(ctx context.Context, m *ocserve.Manager, serveSess,
                         // the pill's use event — with the serialized args the 2.x feed
                         // carries (input.ended's text IS the call's JSON)
                         emitToolUse(ev.Data.ID, toolNames[ev.Data.ID], ev.Data.Text)
+                case "session.tool.called":
+                        // v1.58.1 THE CALLED BELT: the serve mirrors the call's args here as
+                        // a STRUCTURED dict (live-captured: called rides AFTER input.ended
+                        // on the healthy path). When input.ended never rode (an upstream
+                        // event-shape change), the pill still gets its use row with the
+                        // structured input marshaled as the args — never a missing pill.
+                        if ev.Data.ID != "" {
+                                if ev.Data.Name != "" {
+                                        toolNames[ev.Data.ID] = ev.Data.Name
+                                }
+                                if len(ev.Data.Input) > 0 {
+                                        emitToolUse(ev.Data.ID, toolNames[ev.Data.ID], string(ev.Data.Input))
+                                }
+                        }
+                case "session.tool.progress":
+                        // v1.58.1 THE LIVE PILL: the serve's OWN mid-tool progress (Code
+                        // Mode's nested call statuses, a live shell session) rides the
+                        // tool_stream machinery — the pending pill's live stream area
+                        // grows + the activity clock bumps (the stall law) with the
+                        // serve's real truth. Nothing is invented: empty metadata → no ping.
+                        if line := ocProgressLine(ev.Data.Metadata); line != "" {
+                                name := toolNames[ev.Data.ID]
+                                if name == "" {
+                                        name = "opencode"
+                                }
+                                out <- map[string]any{"type": "tool_stream", "session_id": sessionID,
+                                        "name": name, "delta": line + "\n", "tool_use_id": ev.Data.ID}
+                        }
                 case "session.tool.success":
                         // belt: a result with no seen use still needs its use row
                         emitToolUse(ev.Data.ID, toolNames[ev.Data.ID], "")
@@ -453,8 +650,14 @@ func (s *Server) ocServePump(ctx context.Context, m *ocserve.Manager, serveSess,
                         for _, c := range ev.Data.Content {
                                 texts = append(texts, c.Text)
                         }
+                        // v1.58.1 THE UNBOUNDED RESULT: the silent 6000-char clamp is DEAD —
+                        // the whole-return law (ClampMarked + the window-physics budget)
+                        // + the serve's OWN truncated verdict (metadata.truncated) append
+                        // honestly (we never invent a truncation the serve didn't declare).
+                        res := llm.ClampMarked(strings.Join(texts, "\n"), ocObsBudget(model))
+                        res = ocResultText(res, ev.Data.Metadata.Truncated != nil && *ev.Data.Metadata.Truncated)
                         out <- map[string]any{"type": "tool_result", "session_id": sessionID,
-                                "name": "opencode:" + toolNames[ev.Data.ID], "text": clampServer(strings.Join(texts, "\n"), 6000),
+                                "name": toolNames[ev.Data.ID], "text": res,
                                 "tool_use_id": ev.Data.ID}
                 case "session.tool.failed":
                         emitToolUse(ev.Data.ID, toolNames[ev.Data.ID], "")
@@ -462,8 +665,10 @@ func (s *Server) ocServePump(ctx context.Context, m *ocserve.Manager, serveSess,
                         if ev.Data.Error != nil && ev.Data.Error.Message != "" {
                                 msg = ev.Data.Error.Message
                         }
+                        // v1.58.1: the failure text rides the same unbounded law (an
+                        // honest long error is never amputated at 6000 chars).
                         out <- map[string]any{"type": "tool_result", "session_id": sessionID,
-                                "name": "opencode:" + toolNames[ev.Data.ID], "text": clampServer(msg, 6000),
+                                "name": toolNames[ev.Data.ID], "text": llm.ClampMarked(msg, ocObsBudget(model)),
                                 "tool_use_id": ev.Data.ID}
                 case "session.step.ended":
                         if ev.Data.Finish != "" {
