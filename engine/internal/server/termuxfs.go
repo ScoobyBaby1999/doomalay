@@ -32,6 +32,7 @@ package server
 // 400 writeError.
 
 import (
+	"os"
         "context"
         "encoding/json"
         "errors"
@@ -200,8 +201,21 @@ func termuxQuote(s string) string {
 // one of the two safe roots (the engine-side belt under the script's
 // jail — the P| echo is checked against this).
 func termuxResolvedOK(p string) bool {
-        return p == "/storage/emulated/0" || strings.HasPrefix(p, "/storage/emulated/0/") ||
-                p == "/data/data/com.termux/files/home" || strings.HasPrefix(p, "/data/data/com.termux/files/home/")
+        if p == "/storage/emulated/0" || strings.HasPrefix(p, "/storage/emulated/0/") ||
+                p == "/data/data/com.termux/files/home" || strings.HasPrefix(p, "/data/data/com.termux/files/home/") {
+                return true
+        }
+        // v1.61.5 THE RIG ROOT: DOOMALAY_TERMUX_EXTRA_ROOT adds ONE extra
+        // safe root prefix (absolute, rig-only — the rig law that brought
+        // DOOMALAY_PROVIDER_HOLD_MS; the desktop rig's fake bridge jails to
+        // a local dir the real device never sees).
+        if x := os.Getenv("DOOMALAY_TERMUX_EXTRA_ROOT"); x != "" {
+                x = strings.TrimSuffix(strings.TrimSpace(x), "/")
+                if x != "" && (p == x || strings.HasPrefix(p, x+"/")) {
+                        return true
+                }
+        }
+        return false
 }
 
 // termuxFolderBase — v1.24.3 THE HONEST NAMES: the basename of a jailed

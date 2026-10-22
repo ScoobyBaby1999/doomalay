@@ -3239,6 +3239,18 @@ func (s *Server) emit(pipe *chatPipe, sessionID, evType, content, toolUseID stri
                         out["text"] = content
                         out["message"] = content
                 }
+        case "retry":
+                // v1.61.4 THE RETRY PILL: the sentinel's lifecycle rows
+                // persist as JSON (phase/class/provider/attempts/next_at/
+                // started_at/note) — lift the fields onto the wire frame
+                // exactly like the error payload so the PWA + the rigs read
+                // them top-level.
+                var robj map[string]any
+                if json.Unmarshal([]byte(content), &robj) == nil && len(robj) > 0 {
+                        for k, v := range robj {
+                                out[k] = v
+                        }
+                }
         case "tool_use":
                 out["name"] = content
         case "status":
