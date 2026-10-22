@@ -577,6 +577,10 @@
   // + arrows + atoms. Worker mode posts the frame; main mode paints it
   // inline on OUR contexts — byte-identical pipelines either way.
   function paintGridFrame(atomsOnly, forceEnts) {
+    try {
+      if (window.DoomalayPerf && !atomsOnly) window.DoomalayPerf.framePaints =
+        (window.DoomalayPerf.framePaints || 0) + 1;   // v1.57.3: the honest instrument (full frames; atomFrames already counts the cheap ones)
+    } catch (e) {}
     if (Painter.mode === 'worker' && Painter.worker) {
       var par01 = 0;
       try {
@@ -1266,6 +1270,7 @@
   }
   function update() {
     world.step();
+    try { if (window.DoomalayPerf) window.DoomalayPerf.stepCalls = (window.DoomalayPerf.stepCalls || 0) + 1; } catch (e) {}   // v1.57.3: the honest instrument (tick's twin — the rig proves ≤1 step/frame)
     // v0.85.2: renderGrid funnels through paintGridFrame — the lattice
     // + arrows + atoms ride ONE call (the worker message or the inline
     // main-thread paint)
@@ -1508,6 +1513,18 @@
   // instead of getting literally heavier (the audit's F3).
   var lastStepAt = 0;
   var lastAmbientFull = 0;   // v0.97: the ambient cadence gate's clock
+  // v1.57.3 THE ONE FRAME (PLAN-V157 §3): the input-recency clock — the
+  // coalesced update() (poked by every pointermove via scheduleUpdate)
+  // owns the frame while the finger is ACTIVELY moving; the tick defers
+  // (no double physics step, no double paint — the ambient loop and the
+  // input loop used to BOTH run per frame during pans/drags with an
+  // animate toggle on). A held-still finger (>48ms without a move)
+  // hands the frame BACK to tick — settling icons never freeze.
+  var lastInputMoveAt = -1e9;
+  function inputOwnsFrame(now) {
+    if (inputState !== 'PANNING' && inputState !== 'ICON_DRAG') return false;
+    return (now - lastInputMoveAt) < 48;
+  }
   function tick() {
     let moving = false;
     var now = performance.now();
@@ -1535,7 +1552,15 @@
     } else if (velX !== 0 || velY !== 0) {
       velX = 0; velY = 0;
     }
-    world.step(dtF);
+    // v1.57.3: THE STEP DEDUPE — while the finger actively owns the frame,
+    // the coalesced update() (guaranteed poked by the same pointermove)
+    // runs the ONE world.step; tick skipping here kills the double
+    // integration (the ambient-on pan used to step physics twice per
+    // frame). A held-still finger hands the step back to tick.
+    if (!inputOwnsFrame(now)) {
+      world.step(dtF);
+      try { if (window.DoomalayPerf) window.DoomalayPerf.stepCalls = (window.DoomalayPerf.stepCalls || 0) + 1; } catch (e) {}
+    }
     // v0.88.2: THE ORBIT PASS — the collision dots' members swirl (their
     // x/y is the orbit's; the ICONS' DOM transforms re-render — the
     // canvas furniture stays pixel-stable, no repaint needed for the
@@ -1564,7 +1589,8 @@
       const pr = pEl.getBoundingClientRect();
       covered = pr.top <= 1 && pr.bottom >= window.innerHeight - 1;
     }
-    if (!covered && inputState !== 'PANNING') {   // v0.94.1: during an active pan the coalesced update() owns the render
+    if (!covered && inputState !== 'PANNING' &&
+        !(inputState === 'ICON_DRAG' && (now - lastInputMoveAt) < 48)) {   // v0.94.1 + v1.57.3: during an active pan OR drag the coalesced update() owns the render (the double full-paint during icon drags with ambient on dies here)
       var atomsOnly = !moving && !ambientGridActive() &&
                       ((window.Atoms && window.Atoms.active(world.entities) &&
                         !(window.World3D && window.World3D.atomsOwned())) ||   // v0.85.4: the world layer owns the stars
@@ -2088,6 +2114,7 @@
   }
 
   function inputMove(screenX, screenY) {
+    lastInputMoveAt = performance.now();   // v1.57.3 THE ONE FRAME: the input-recency clock (tick defers to the coalesced update while the finger moves)
     if (inputState === 'IDLE' || inputState === 'MENU_OPEN') return;
 
     if (inputState === 'PENDING') {
