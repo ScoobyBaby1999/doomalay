@@ -133,8 +133,9 @@ for (const f of ['app.js', 'lattice.js', 'gridworker.js', 'gridicon.js']) {
   const at = read('atoms.js');
   ok('atoms: the spheres + stars pad-cull per element',
     /if \(fx < -fogR - 40 \|\| fx > W \+ fogR \+ 40/.test(at) && /if \(x < -vr - 120 \|\| x > W \+ vr \+ 120/.test(at));
-  ok('twinklers: the walk keys on the live camera (viewport-only) + the hard ceiling',
-    /var x0 = Math\.floor\(-bx \/ spacingNow\) - 1, x1 = Math\.ceil\(\(W - bx\) \/ spacingNow\) \+ 1;/.test(la) &&
+  ok('twinklers: the walk keys on the live camera (viewport-only) + the hard ceiling + THE PITCH LAW (v1.63.5 — the density is the 48px screen field, not the cell count)',
+    /var x0 = Math\.floor\(-bx \/ pitch\) - 1, x1 = Math\.ceil\(\(W - bx\) \/ pitch\) \+ 1;/.test(la) &&
+    /var pitch = Math\.min\(spacingNow, 48\);/.test(la) &&
     /\(x1 - x0\) \* \(y1 - y0\) > 16384\) return 0;/.test(la));
   ok('comets: spawn at the screen edges + the ±250 cull',
     /var sx = \(edge === 0\) \? -30 : \(edge === 2 \? W \+ 30/.test(la) && /x < -250 \|\| x > W \+ 250/.test(la));
@@ -308,17 +309,44 @@ section('§2 THE PROPORTIONAL STRIDE (v1.62.2)');
 }
 
 // ══ §3 THE EIGHT TILES ══════════════════════════════════════════════
-section('§3 THE EIGHT TILES (v1.62.3)');
+// §3 THE EIGHT TILES (v1.62.3) → v1.63.5 THE BIG CELLS RE-ANCHOR: the
+//    default world renders through THE LIVE SPATIAL PATH (renderCells —
+//    GRID_BASE 480, mode 'cells', no bake); the tile machinery pins ride
+//    the __doomalayLatticeTiled escape hatch (the pair ladder re-picks
+//    [4,6] at ×10 spacing — jointCells 12 = 5,760px = EXACTLY the old
+//    [10,24]@48 period — the "like 8 tiles give or take" law SURVIVES:
+//    16384/5760 = 2.84² = 8.09). The floor re-pin: the sea never fades at
+//    the ×10 cell law (the floor spacing 480·0.0238 = 11.4px ≥ the 6px
+//    full-on rung) — the COUNTABLE GRID IS THE MAP VIEW (the user's ask).
+section('§3 THE EIGHT TILES → THE BIG CELLS (v1.62.3 + the v1.63.5 re-anchor)');
 {
-  // the pair + the joint period, live
+  // THE CELLS LAW (the DEFAULT path — no hatch): mode cells + the
+  // countable world + the spatial records + no bake.
+  abEval('doomalay.setView(0,0,0.3)');
+  await sleep(900);
+  let ooCells = abJson("(function(){var s=window.DoomalayDebug||{};var o=s.oneObject||{};return JSON.stringify({mode:o.mode,tiles:o.tiles,raster:o.raster,d:s.dots,rt:o.renderTiles})})()");
+  ok('THE CELL LAW: GRID_BASE 480 — the default world renders through THE LIVE SPATIAL PATH (mode cells, no bake — sharp live paint)',
+    /var GRID_BASE = 480;/.test(read('lattice.js')) && /renderCells: renderCells,/.test(read('lattice.js')) &&
+    ooCells && ooCells.mode === 'cells' && ooCells.tiles === 0 && ooCells.rt === 0, JSON.stringify(ooCells));
+  {
+    const perAxis = 16384 / 480;
+    ok(`the world spans ${perAxis.toFixed(1)} big cells per axis (${Math.round(perAxis * perAxis)} total — a COUNTABLE number of cells)`, perAxis >= 34 && perAxis <= 34.2, String(perAxis));
+  }
+  ok('the spacing gate: ≥240px rides the live path, the sub-gate keeps the tiled machinery',
+    /var CELL_GATE_PX = 240;/.test(read('lattice.js')) &&
+    /GRID_BASE \* \(P\.gridSize \|\| 1\) >= CELL_GATE_PX/.test(read('lattice.js')));
+
+  // THE TILE MACHINERY through the escape hatch (the machinery still ships)
+  abEval('(function(){window.__doomalayLatticeTiled = true; return "hatch"})()');
   abEval('doomalay.setView(0,0,0.3)');
   await sleep(900);
   let oo = abJson("(function(){var s=window.DoomalayDebug||{};var o=s.oneObject||{};return JSON.stringify({pair:o.pair,jc:o.jointCells,draws:o.instDraws,fb:o.instFallbacks,farK:o.farK,rt:o.renderTiles,ladder:o.ladder})})()");
-  ok('the pair is [10,24] with jointCells 120 (lcm)', oo && JSON.stringify(oo.pair) === '[10,24]' && oo.jc === 120, JSON.stringify(oo && oo.pair));
-  const perAxis = 16384 / (120 * 48);
+  ok('the tile machinery LIVES through the hatch: the pair re-picks [4,6] at ×10 spacing with jointCells 12 (= 5,760px — the old [10,24]@48 period EXACTLY)',
+    oo && JSON.stringify(oo.pair) === '[4,6]' && oo.jc === 12, JSON.stringify(oo && oo.pair) + ' jc=' + (oo && oo.jc));
+  const perAxis = 16384 / (12 * 480);
   const tiles = perAxis * perAxis;
-  ok(`the whole world consists of ${tiles.toFixed(2)} tile periods ("like 8 give or take")`, tiles >= 7 && tiles <= 9, String(tiles));
-  ok('the per-instance paint is LIVE (instDraws > 0, zero fallbacks)', oo && oo.draws > 0 && oo.fb === 0, JSON.stringify(oo && { d: oo.draws, f: oo.fb }));
+  ok(`the whole world consists of ${tiles.toFixed(2)} grid periods ("like 8 give or take" — the law SURVIVES the ×10 cells)`, tiles >= 7 && tiles <= 9, String(tiles));
+  ok('the per-instance paint is LIVE through the hatch (instDraws > 0, zero fallbacks)', oo && oo.draws > 0 && oo.fb === 0, JSON.stringify(oo && { d: oo.draws, f: oo.fb }));
 
   // the rotation law (pure math): ALL 8 neighbors of any instance differ
   let adjBad = 0;
@@ -344,13 +372,14 @@ section('§3 THE EIGHT TILES (v1.62.3)');
   ok('the mirror: among same-rotation displacements, ~half still read different (the flip)',
     sameRot > 10 && sameRotMirrored / sameRot > 0.4 && sameRotMirrored / sameRot < 0.6,
     (100 * sameRotMirrored / sameRot).toFixed(1) + '% of ' + sameRot);
-  // the effective joint period with rotations: A's rotation repeats every
-  // 4 A-instances (40 cells ≡ 0 mod 4 at 4·10=40... the alignment needs 40 ≡ 0
-  // mod 4 ✓ 40 mod 4 = 0); B's every 4 B-instances (96 cells, 96 mod 4 = 0 ✓).
-  // The joint field repeats only where BOTH align AND the positions tile:
-  // Δ=480 cells (48 A-instances: 48 mod 4 = 0 ✓; 20 B-instances: 20 mod 4 = 0 ✓;
-  // 480 ≡ 0 mod 10 ✓ mod 24 ✓) = 23,040px — BEYOND the whole world (341 cells).
-  ok('the effective joint period with rotations (480 cells = 23,040px) is BEYOND the whole world (341 cells)', 480 > 16384 / 48, '480 vs ' + Math.round(16384 / 48));
+  // the effective joint period with rotations (v1.63.5 re-anchor, the
+  // [4,6] basis): A's rotation repeats every 4 A-instances (16 cells,
+  // 16 mod 4 = 0 ✓); B's every 4 B-instances (24 cells, 24 mod 4 = 0 ✓).
+  // The joint field repeats where BOTH align AND the positions tile:
+  // Δ = lcm(16, 24) = 48 cells = 23,040px — BEYOND the whole world
+  // (34.13 big cells): no two visible instances of the same lattice read
+  // identically. (The old [10,24] basis: Δ 480 cells — the same law.)
+  ok('the effective joint period with rotations (48 cells = 23,040px) is BEYOND the whole world (34.13 big cells)', 48 > 16384 / 480, '48 vs ' + (16384 / 480).toFixed(2));
 
   // zoom-out sweep: the ladder stable (no re-bakes), zero fallbacks
   const miss0 = oo && oo.ladder ? oo.ladder.misses : 0;
@@ -366,15 +395,20 @@ section('§3 THE EIGHT TILES (v1.62.3)');
   ok('ZERO sub-pixel fallbacks across the entire zoom-out sweep (the ceiling is the unreachable guard)', worstFb === 0, String(worstFb));
   ok('the ladder bytes stay under the 128MB cap', ooEnd && ooEnd.bytes !== null && ooEnd.bytes < 130, JSON.stringify(ooEnd && ooEnd.bytes) + 'MB');
 
-  // 0.125 byte-identical + the floor map view (the far-field re-pin)
+  // THE DEFAULT PATH re-takes the canvas (the hatch dies) — the 0.125 +
+  // floor re-pins ride THE LIVE SPATIAL PATH (the shipped truth).
+  abEval('(function(){delete window.__doomalayLatticeTiled; return "unhatched"})()');
+  // 0.125 + the floor (the v1.63.5 far-field re-pin)
   abEval('doomalay.setView(0,0,0.125)');
   await sleep(900);
-  const at125 = abJson("(function(){var s=window.DoomalayDebug||{};var o=s.oneObject||{};return JSON.stringify({farK:o.farK,d:s.dots,draws:o.instDraws})})()");
-  ok('at 0.125 the sea is FULL (farK 1, dots painted — byte-identical to today)', at125 && at125.farK === 1 && at125.d > 100, JSON.stringify(at125));
+  const at125 = abJson("(function(){var s=window.DoomalayDebug||{};var o=s.oneObject||{};return JSON.stringify({mode:o.mode,farK:o.farK,d:s.dots,draws:o.instDraws})})()");
+  ok('at 0.125 the sea is FULL through the live path (mode cells, farK 1, the visible cells painted live — ~78 at the 60px spacing)',
+    at125 && at125.mode === 'cells' && at125.farK === 1 && at125.d > 40, JSON.stringify(at125));
   abEval('doomalay.setView(0,0,0.001)');
   await sleep(900);
-  const atFloor = abJson("(function(){var s=window.DoomalayDebug||{};var o=s.oneObject||{};return JSON.stringify({farK:o.farK,rt:o.renderTiles,d:s.dots})})()");
-  ok('at the floor the sea is GONE (farK 0, renderTiles 0 — the map view)', atFloor && atFloor.farK === 0 && atFloor.rt === 0 && atFloor.d === 0, JSON.stringify(atFloor));
+  const atFloor = abJson("(function(){var s=window.DoomalayDebug||{};var o=s.oneObject||{};return JSON.stringify({mode:o.mode,farK:o.farK,rt:o.renderTiles,d:s.dots})})()");
+  ok('at the floor the COUNTABLE GRID IS THE MAP VIEW (mode cells, farK 1 — the ×10 cell law: the floor spacing 11.4px never reaches the 2.5px fade; the whole countable world paints live)',
+    atFloor && atFloor.mode === 'cells' && atFloor.farK === 1 && atFloor.rt === 0 && atFloor.d > 1000, JSON.stringify(atFloor));
 }
 
 // ══ §4 THE SEEN ONLY ════════════════════════════════════════════════

@@ -33,7 +33,20 @@
   var ROOT = (typeof window !== 'undefined') ? window : (typeof self !== 'undefined' ? self : globalThis);
 
   // ── constants (moved from app.js) ─────────────────────────────────
-  var GRID_BASE = 48;      // base grid spacing in px (at scale 1, gridSize 1)
+  // v1.63.5 THE CELL LAW (PLAN-V163 §6, the user's ask #6): 48 → 480 —
+  // each cell ×10. The 16,384 world now spans ~34 cells per axis (~1,166
+  // total) — a COUNTABLE number of cells over very few grid periods; the
+  // visible lattice rides renderCells (THE LIVE SPATIAL PATH — per-visible-
+  // cell lazy records, sharp at device resolution) instead of the
+  // periodic-tile bake: at ×10 spacing the tile budget collapses the bake
+  // raster to 0.28–0.4 (vs the old ~1.56) — the Rref = √(budget/(4·spacing²·
+  // units)) law cannot buy raster at ×10 cells under any sane heap.
+  var GRID_BASE = 480;      // base grid spacing in px (at scale 1, gridSize 1)
+  // v1.63.5: the cells/tiled gate — spacing ≥ 240px rides the live spatial
+  // path (the countable-cell world); smaller (a future sub-1 gridSize
+  // slider) keeps the byte-identical tiled machinery. The rigs' escape
+  // hatch: window.__doomalayLatticeTiled = true forces the tiled path.
+  var CELL_GATE_PX = 240;
 
   // ▀▀ v1.57.1 THE FAR-FIELD FADE (PLAN-V157 §1 — the map view) ▀▀▀▀▀▀▀▀▀▀▀
   // Below the spacing where the sea stops reading, it fades to nothing:
@@ -1471,7 +1484,7 @@
   }
 
   // ── (B) the modulation field ──────────────────────────────────────
-  var MOD_P_CELLS = 320;      // the noise period: 320 cells ≫ any screen
+  var MOD_P_CELLS = 32;      // v1.63.5: 32 big cells = 15,360px — the SAME pixel period as the old 320×48 law (≈ the 16k world)
   var MOD_DRIFT = 2.5;        // slow world drift (px/s at the field's rate)
   var modState = { key: '', canvas: null, pat: null, patCtx: null };
   function hexRGB(h) {
@@ -1677,10 +1690,17 @@
   function paintTwinklers(g2, W, H, cam, P) {
     var spacingNow = GRID_BASE * (P.gridSize || 1) * cam.scale;
     if (spacingNow < 10) return 0;                 // too dense to read at deep zoom-out
+    // v1.63.5 THE PITCH LAW (the big-cell conviction): the walk's
+    // granularity caps at 48px — twinklers are BETWEEN-position movers
+    // whose density is a property of the screen's 48px field, NOT of the
+    // lattice's cell count (the ×10 cell law thinned them ×10 live: 18
+    // candidates in the window, painted 0). pitch = spacingNow below 48px
+    // keeps the old deep-zoom-out behavior byte-identically.
+    var pitch = Math.min(spacingNow, 48);
     var pf = 1 + (P.amp || 0) * 0.4;               // mid-depth
     var bx = -(cam.ox * cam.scale * pf), by = -(cam.oy * cam.scale * pf);
-    var x0 = Math.floor(-bx / spacingNow) - 1, x1 = Math.ceil((W - bx) / spacingNow) + 1;
-    var y0 = Math.floor(-by / spacingNow) - 1, y1 = Math.ceil((H - by) / spacingNow) + 1;
+    var x0 = Math.floor(-bx / pitch) - 1, x1 = Math.ceil((W - bx) / pitch) + 1;
+    var y0 = Math.floor(-by / pitch) - 1, y1 = Math.ceil((H - by) / pitch) + 1;
     if ((x1 - x0) * (y1 - y0) > 16384) return 0;   // hard ceiling (huge viewports)
     var tint = (HEX_RE.test(P.t.dotColor || '')) ? P.t.dotColor : window.DoomTheme.FALLBACKS.dot;
     var nowSec = performance.now() / 1000;         // raw time — twinklers skip TEMPO
@@ -1690,8 +1710,8 @@
         if (hashCell(cx * 7 + 3, cy * 13 + 5) >= TWINK_DENSITY) continue;
         var jx2 = 0.35 + hashCell(cx + 11, cy + 17) * 0.3;
         var jy2 = 0.35 + hashCell(cx + 19, cy + 23) * 0.3;
-        var fx = (cx + jx2) * spacingNow + bx;
-        var fy = (cy + jy2) * spacingNow + by;
+        var fx = (cx + jx2) * pitch + bx;
+        var fy = (cy + jy2) * pitch + by;
         if (fx < -8 || fx > W + 8 || fy < -8 || fy > H + 8) continue;
         var spd = 0.8 + hashCell(cx + 31, cy + 37) * 2.8;    // some FAST blinkers
         var ph = hashCell(cx + 41, cy + 43) * 6.283;
@@ -1734,6 +1754,23 @@
   // ══ THE RENDER — the v0.97 dispatcher ══════════════════════════════
   function render(gctx, gctx2, W, H, cam, P) {
     if (ROOT.__doomalayLatticeLegacy) return renderLegacy(gctx, gctx2, W, H, cam, P);
+    // v1.63.5 THE BIG CELLS (PLAN-V163 §6): the countable-cell world
+    // (GRID_BASE·gridSize ≥ 240px) renders through THE LIVE SPATIAL PATH —
+    // per-visible-cell lazy records (a cache miss IS a cell load: "spatial
+    // loading can load one or few cells at a time"), batched quantized
+    // fills at device resolution (sharp by construction). The window's
+    // __doomalayLatticeTiled escape hatch forces the tiled machinery (the
+    // rigs' tile pins ride it); a throw falls back to the legacy walk.
+    if (!ROOT.__doomalayLatticeTiled && GRID_BASE * (P.gridSize || 1) >= CELL_GATE_PX) {
+      try {
+        return renderCells(gctx, gctx2, W, H, cam, P);
+      } catch (e) {
+        TL.legacyFails++;
+        TL.lastError = String(e && e.message || e) + ' @ ' + String(e && e.stack || '').split('\n')[1];
+        try { if (typeof console !== 'undefined' && TL.legacyFails < 3) console.warn('doomalay: cells path fell back to legacy:', e && e.message, e && e.stack); } catch (e2) {}
+        return renderLegacy(gctx, gctx2, W, H, cam, P);
+      }
+    }
     try {
       return renderTiled(gctx, gctx2, W, H, cam, P);
     } catch (e) {
@@ -1789,6 +1826,7 @@
     // (full at today's minimum spacing; the map view at the fit-all zoom).
     var farK = farFieldK(GRID_BASE * (P.gridSize || 1) * scale);
     TL.lastFarK = farK;   // v1.57.1: the state accessor's truth (both render paths)
+    TL.lastMode = 'tiles';   // v1.63.5: the rigs' mode instrument
     // v1.62.3: the per-frame instance instrument resets here (the stats
     // snapshot the frame's totals at the end of renderTiled).
     TL.instDraws = 0;
@@ -2101,7 +2139,26 @@
   //     scatterL, scatterD, sizeVarL, sizeVarD, rotVarL, rotVarD,
   //     biasL, biasD, animDots, animLines, amp (0..1), bgP (0.08..0.35)}
   // cam: {ox, oy, scale}
+  // ══ THE LEGACY WALK — pre-v0.97 (byte-identical at cells=false) ════
+  // v1.63.5 THE BIG CELLS (PLAN-V163 §6): THE LIVE SPATIAL PATH is this
+  // battle-tested walk (the v0723 contracts, kept alive as the fallback
+  // through every wave) with THREE cells-mode deltas, each keyed on the
+  // one boolean: (1) THE TRUE FAR-FIELD RAMP rides the bucket flushes
+  // (the legacy binary skip stays at cells=false — byte-identical);
+  // (2) animDots becomes THE A/B PARITY BREATH at flush (the tiled path's
+  // own shimmer — the per-dot pulse/orbit stays the legacy mode's);
+  // (3) the stats carry the oneObject instrument (mode:'cells') + the
+  // modulation field paints. HONEST NOTES: the walk's fingerprint embeds
+  // scale (the records bake scaledGrid-derived lengths — zoom re-derives
+  // the visible set once per level; ≤ a few hundred records at big cells,
+  // worker-side); the record colors ride the scale-free colFp (zoom-stable).
   function renderLegacy(gctx, gctx2, W, H, cam, P) {
+    return renderWalk(gctx, gctx2, W, H, cam, P, false);
+  }
+  function renderCells(gctx, gctx2, W, H, cam, P) {
+    return renderWalk(gctx, gctx2, W, H, cam, P, true);
+  }
+  function renderWalk(gctx, gctx2, W, H, cam, P, cells) {
     var t0 = performance.now();
     var offsetX = cam.ox, offsetY = cam.oy, scale = cam.scale;
     var t = P.t, specs = P.specs, st = P;
@@ -2114,8 +2171,13 @@
     // hide machinery (zero structural change); the RAMP range renders
     // unfaded here (the legacy path is the debug fallback — the tiled
     // path owns the true fade; documented honestly).
+    // v1.63.5: cells=true owns the TRUE ramp (the flush alphas multiply
+    // by farKLeg — the binary skip stays for both modes below 0.004).
     var farKLeg = farFieldK(GRID_BASE * (P.gridSize || 1) * scale);
     TL.lastFarK = farKLeg;   // v1.57.1: the legacy twin sets the accessor's truth too
+    TL.lastMode = cells ? 'cells' : 'legacy';   // v1.63.5: the rigs' mode instrument
+    var farMul = cells ? farKLeg : 1;
+    if (cells) { TL.instDraws = 0; TL.instFallbacks = 0; }   // stale tile counts die
     var hideLines = !!P.hideLines || farKLeg <= 0.004;
     var hideDots = !!P.hideDots || farKLeg <= 0.004;
     var scatterL = P.scatterL, scatterD = P.scatterD;
@@ -2164,6 +2226,10 @@
                  lineSpec2 ? cheapJSON(lineSpec2) : '', lineFallback2].join('|');
     if (colFp !== LC.colFp) { LC.colFp = colFp; LC.cgen++; lcClearColors(); }
     var animT = performance.now() / 1000;
+    // v1.63.5: the cells-mode breath — the tiled path's own A/B parity
+    // shimmer law (TEMPO-scaled, counter-phase groups), applied at flush.
+    var breathA = (cells && !!P.animDots) ? (0.62 + 0.38 * (0.5 + 0.5 * Math.sin(animT * TEMPO * 1.6))) : 1;
+    var breathB = (cells && !!P.animDots) ? (0.62 + 0.38 * (0.5 + 0.5 * Math.sin(animT * TEMPO * 1.6 + Math.PI))) : 1;
     var dbgDots = 0, dbgSegs = 0;
     // v0.85.1: the glow twin (the rig proves the per-dot derivation: how
     // many dots glowed this frame + the DISTINCT colors they used — a
@@ -2437,11 +2503,15 @@
      }
     }
     // v0.85.1: FLUSH THE SEGMENT BUCKETS
+    // v1.63.5: cells mode multiplies the flush alpha by the far-field ramp
+    // (the TRUE fade — the legacy mode keeps its byte-identical law:
+    // farMul is 1 there, so the condition and the math collapse to the old
+    // `if (bk.a < 1)` exactly).
     if (segBuckets.size && segBuckets.size <= 640) {
       segBuckets.forEach(function (bk) {
         var sc = bk.sc;
         sc.fillStyle = bk.s;
-        if (bk.a < 1) sc.globalAlpha = bk.a;
+        if (bk.a < 1 || farMul < 1) sc.globalAlpha = bk.a * farMul;
         sc.beginPath();
         var ops = bk.ops;
         for (var oi = 0; oi < ops.length; oi += 8) {
@@ -2452,14 +2522,14 @@
           sc.closePath();
         }
         sc.fill();
-        if (bk.a < 1) sc.globalAlpha = 1;
+        if (bk.a < 1 || farMul < 1) sc.globalAlpha = 1;
         dbgBatches++;
       });
     } else if (segBuckets.size) {
       segBuckets.forEach(function (bk) {
         var sc = bk.sc;
         sc.fillStyle = bk.s;
-        if (bk.a < 1) sc.globalAlpha = bk.a;
+        if (bk.a < 1 || farMul < 1) sc.globalAlpha = bk.a * farMul;
         var ops = bk.ops;
         for (var oi = 0; oi < ops.length; oi += 8) {
           sc.beginPath();
@@ -2470,7 +2540,7 @@
           sc.closePath();
           sc.fill();
         }
-        if (bk.a < 1) sc.globalAlpha = 1;
+        if (bk.a < 1 || farMul < 1) sc.globalAlpha = 1;
         dbgBatches++;
       });
     }
@@ -2521,7 +2591,10 @@
           var dc = (overDotsOn && jr > overThreshD) ? gctx2 : gctx;
           if (dc === gctx2) dbgOverDots++;
           var tox = 0, toy = 0, tal = 1;
-          if (animDots) {
+          // v1.63.5: cells mode BREATHES AT FLUSH — the tiled path's own A/B
+          // parity shimmer (the user's shipped aesthetic) instead of the
+          // legacy per-dot pulse/orbit (both law-abiding; one look per mode).
+          if (animDots && !cells) {
             var pulse = Math.sin(animT * DP.tsp + DP.tph);
             jr *= 1 + 0.4 * pulse;
             tal = 0.62 + 0.38 * (0.5 + 0.5 * pulse);
@@ -2571,9 +2644,13 @@
             if (tal < 1) dc.globalAlpha = 1;
           } else {
             var aQ = tal < 1 ? Math.round(tal * 100) / 100 : 1; // v0.89.7: 100 alpha levels (was 8 — the pulsing dots stepped through 8 visible brightness jumps per cycle: THE nauseating shimmer)
-            var dbk = (dc === gctx2 ? '2|' : '1|') + styleD + '|' + aQ;
+            // v1.63.5: cells mode keys the bucket by the world-cell PARITY
+            // (the breath group) — the shimmer rides the flush, one batched
+            // fill per (color × parity).
+            var grp = (cells && animDots) ? ((((dix + diy) & 1) === 1) ? 'B' : 'A') : '';
+            var dbk = (dc === gctx2 ? '2|' : '1|') + styleD + '|' + aQ + (grp ? '|' + grp : '');
             var dob = dotBuckets.get(dbk);
-            if (!dob) { dob = { dc: dc, s: styleD, a: aQ, ops: [] }; dotBuckets.set(dbk, dob); }
+            if (!dob) { dob = { dc: dc, s: styleD, a: aQ, p: grp, ops: [] }; dotBuckets.set(dbk, dob); }
             dob.ops.push(cx, cy, rrD);
           }
           dbgDots++;
@@ -2587,11 +2664,16 @@
      }
     }
     // v0.85.1: FLUSH THE DOT BUCKETS
+    // v1.63.5: cells mode rides the PARITY BREATH + the far-field ramp at
+    // flush (the group's alpha law from the tiled path — one batched fill
+    // per color×parity shimmers exactly like the shipped look). Legacy
+    // mode: farMul/breath are 1 — byte-identical.
     if (dotBuckets.size && dotBuckets.size <= 640) {
       dotBuckets.forEach(function (bk) {
         var dc = bk.dc;
         dc.fillStyle = bk.s;
-        if (bk.a < 1) dc.globalAlpha = bk.a;
+        var ba = bk.p === 'A' ? breathA : (bk.p === 'B' ? breathB : 1);
+        if (bk.a < 1 || ba < 1 || farMul < 1) dc.globalAlpha = bk.a * ba * farMul;
         dc.beginPath();
         var ops = bk.ops;
         for (var oi = 0; oi < ops.length; oi += 3) {
@@ -2600,7 +2682,7 @@
           dc.arc(ocx, ocy, orr, 0, Math.PI * 2);
         }
         dc.fill();
-        if (bk.a < 1) dc.globalAlpha = 1;
+        if (bk.a < 1 || ba < 1 || farMul < 1) dc.globalAlpha = 1;
         dbgBatches++;
       });
     } else if (dotBuckets.size) {
@@ -2608,17 +2690,27 @@
         var dc = bk.dc;
         dc.fillStyle = bk.s;
         var ops = bk.ops;
+        var ba = bk.p === 'A' ? breathA : (bk.p === 'B' ? breathB : 1);
         for (var oi = 0; oi < ops.length; oi += 3) {
           var ocx = ops[oi], ocy = ops[oi + 1], orr = ops[oi + 2];
-          if (bk.a < 1) dc.globalAlpha = bk.a;
+          if (bk.a < 1 || ba < 1 || farMul < 1) dc.globalAlpha = bk.a * ba * farMul;
           dc.beginPath();
           dc.moveTo(ocx + orr, ocy);
           dc.arc(ocx, ocy, orr, 0, Math.PI * 2);
           dc.fill();
         }
-        if (bk.a < 1) dc.globalAlpha = 1;
+        if (bk.a < 1 || ba < 1 || farMul < 1) dc.globalAlpha = 1;
         dbgBatches++;
       });
+    }
+
+    // v1.63.5: THE MODULATION FIELD rides the cells path too — the same
+    // soft-light field as the tiled path (its pixel period is preserved by
+    // MOD_P_CELLS = 32 big cells = the old 320×48 law), gated by the same
+    // far-field truth. It paints BEFORE the origin dot (over background +
+    // lattice — the tiled path's own order).
+    if (cells && farKLeg > 0.004) {
+      if (paintModulation(gctx, W, H, P, cam, animT * TEMPO)) dbgBatches++;
     }
 
     // ── the origin dot ────────────────────────────────────────────
@@ -2666,6 +2758,21 @@
       hits: LC.hits, misses: LC.misses,
       paintMs: Math.round((lcNow - t0) * 10) / 10
     };
+    if (cells) {
+      // v1.63.5: the cells-mode instrument — the renderTiled stats shape's
+      // oneObject twin (the worker's state merge + the rigs' contract):
+      // tiles:0 (no bake — sharp live paint), the far-field truth, the
+      // spatial record census (the live "loads"), and the mode marker.
+      stats.oneObject = {
+        tiles: 0, mega: 0, megaA: 0, megaB: 0, pairCells: 0, raster: 0,
+        heroes: 0, bakeGen: 0, tileMs: 0, bakeError: null,
+        farK: Math.round(farKLeg * 1000) / 1000,
+        instDraws: 0, instFallbacks: 0, jointCells: 0, jointPx: 0,
+        mode: 'cells',
+        cells: { spacingRef: GRID_BASE * (P.gridSize || 1),
+                 records: LC.dot.size + LC.vseg.size + LC.hseg.size }
+      };
+    }
     lastStats = stats;
     return stats;
   }
@@ -2675,6 +2782,7 @@
     ORIGIN_RADIUS: ORIGIN_RADIUS,
     render: render,
     renderLegacy: renderLegacy,     // v0.97: the A/B switch (also the fallback)
+    renderCells: renderCells,       // v1.63.5: the live spatial path (the big-cell world's own renderer — the rigs pin it)
     // v1.06.3: the live layer — the cheap frame repaints the over furniture
     // (lossless #c2) and the movers (comets + twinklers, 60fps); the full
     // frame re-paints the movers after its #c2 clear.
@@ -2741,6 +2849,9 @@
         zoomHold: Z_HOLD,   // v1.09.3: the still-hand state (the rig proof)
         legacyFails: TL.legacyFails,
         legacy: !!ROOT.__doomalayLatticeLegacy,
+        // v1.63.5: the mode instrument (the rigs pin the big-cell law —
+        // 'cells' | 'tiles' | 'legacy').
+        mode: TL.lastMode || null,
         lastError: TL.lastError || null,
         bakeError: TL.bakeError || null,
         // v1.06.1 THE ZOOM LADDER — the storm proof: hits = instant level

@@ -172,15 +172,19 @@ section('§1 THE TRUE BOUNDS (v1.57.1)');
   const vis = abJson("(function(){var p=doomalay.cameraProbe();var half=p.worldSize/2;var L=(-half-p.x)*p.scale,R=(half-p.x)*p.scale;return JSON.stringify({L:Math.round(L),R:Math.round(R),W:p.w,inL:L>=-2&&L<=p.w+2,inR:R>=-2&&R<=p.w+2})})()");
   ok('at the floor the WHOLE world spans the viewport (the edge lines are on screen)', vis && vis.inL && vis.inR, JSON.stringify(vis));
 
-  // the far-field: 0.125 is byte-identical (farK 1 + dots painted); the floor is the map view
+  // the far-field (v1.63.5 re-anchor): 0.125 renders the sea FULL through
+  // THE LIVE SPATIAL PATH (mode cells); the floor is the COUNTABLE GRID —
+  // the ×10 cell law (480px cells) puts the floor spacing at 11.4px, past
+  // the 6px full-on rung: the sea never fades at any reachable zoom (the
+  // user's countable-cells ask supersedes the sea-less map view).
   abEval("doomalay.setView(0,0,0.125)");
   await sleep(900);
-  const at125 = abJson("(function(){var s=window.DoomalayDebug||{};return JSON.stringify({farK:s.oneObject?s.oneObject.farK:null,dots:s.dots})})()");
-  ok('at 0.125 the sea is FULL (farK 1, dots painted — byte-identical to today)', at125 && at125.farK === 1 && at125.dots > 100, JSON.stringify(at125));
+  const at125 = abJson("(function(){var s=window.DoomalayDebug||{};var o=s.oneObject||{};return JSON.stringify({farK:o.farK,mode:o.mode,dots:s.dots})})()");
+  ok('at 0.125 the sea is FULL (mode cells, farK 1, the visible cells painted live)', at125 && at125.mode === 'cells' && at125.farK === 1 && at125.dots > 40, JSON.stringify(at125));
   abEval("doomalay.setView(0,0,0.001)");
   await sleep(900);
-  const atFloor = abJson("(function(){var s=window.DoomalayDebug||{};return JSON.stringify({farK:s.oneObject?s.oneObject.farK:null,dots:s.dots,rt:s.oneObject?s.oneObject.renderTiles:null})})()");
-  ok('at the floor the sea is GONE (farK 0, zero dot fills — the map view)', atFloor && atFloor.farK === 0 && atFloor.dots === 0, JSON.stringify(atFloor));
+  const atFloor = abJson("(function(){var s=window.DoomalayDebug||{};var o=s.oneObject||{};return JSON.stringify({farK:o.farK,mode:o.mode,dots:s.dots,rt:o.renderTiles})})()");
+  ok('at the floor the COUNTABLE GRID IS THE MAP VIEW (mode cells, farK 1, the whole world paints live — the big-cell law)', atFloor && atFloor.mode === 'cells' && atFloor.farK === 1 && atFloor.dots > 1000 && atFloor.rt === 0, JSON.stringify(atFloor));
 
   // the migration: 65536 (never touched) → 16384 once; a re-pick survives
   abEval("(function(){window.Settings.setState({worldSize:65536,worldSizeV157:undefined});return 'set'})()");

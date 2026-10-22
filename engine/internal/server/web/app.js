@@ -120,9 +120,9 @@
   const PAN_FRICTION = 0.88;
   const MAX_PAN_VELOCITY = 18;
 
-  const GRID_BASE = 48;    // lattice.js's twin (kept for any future
-                           // main-thread spacing math; the painter owns
-                           // the real one)
+  const GRID_BASE = 480;   // lattice.js's twin (v1.63.5 THE CELL LAW — ×10;
+                           // kept for any future main-thread spacing math;
+                           // the painter owns the real one)
 
   // v0.94.4 (D2): THE RESIZE WAVE — a resize burst (Android inset
   // animations fire one per frame) used to resize the canvas BITMAPS on
@@ -598,6 +598,9 @@
         entities: null,
         counts: (window.Atoms && window.Atoms.countsOf) ? window.Atoms.countsOf() : {},
         colors: atomColorsForWorker(),
+        // v1.63.5 THE HATCH RIDE: the escape hatch reaches the worker
+        // through the frame message (the worker owns its own global).
+        hatchTiled: !!window.__doomalayLatticeTiled,
         atomsOn: !!(window.Atoms && window.Atoms.active(world.entities) &&
                     !(window.World3D && window.World3D.atomsOwned()))   // v0.85.4: pixi owns the stars when active
       };

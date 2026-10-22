@@ -119,6 +119,14 @@ function paintFrame(m) {
   if (m.entities !== undefined && m.entities !== null) { E = m.entities; entsMsgs++; }
   var stats = null, atomStats = null;
   var paintedDots = 0;
+  // v1.63.5 THE HATCH MIRROR: the main window's __doomalayLatticeTiled
+  // escape hatch rides the frame message (the worker owns its own global —
+  // a window flip alone never reaches it; the rigs set the hatch BEFORE
+  // the frame that must render through it).
+  if (typeof m.hatchTiled === 'boolean') {
+    if (m.hatchTiled) globalThis.__doomalayLatticeTiled = true;
+    else delete globalThis.__doomalayLatticeTiled;
+  }
   if (m.atomsOnly) {
     // v0.84.1 THE ATOM-ONLY FRAME (worker-side twin): nothing else moved —
     // the grid and the icons are pixel-stable; repaint ONLY the star layer.

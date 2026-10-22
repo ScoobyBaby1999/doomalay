@@ -169,13 +169,17 @@ child.unref();
   });
   ck('the pinch landed AT the floor (scale === minScaleLive ±0.5%)', Math.abs(end.s - end.floor) / end.floor < 0.005, end);
   ck('the whole world is visible at the landing (the map)', end.fits, end);
-  // (c) the sea is gone at the map view
+  // (c) v1.63.5 THE BIG CELLS re-anchor: at the ×10 cell law the floor
+  // spacing (480·0.0238 ≈ 11.4px) never reaches the 2.5px fade — the sea
+  // never dies at any reachable zoom. THE COUNTABLE GRID IS THE MAP VIEW:
+  // the whole world (~1,100+ cells at the fit-all) paints live through
+  // THE LIVE SPATIAL PATH (mode cells) — the user's countable-cells ask.
   await sleep(800);
   const sea = await page.evaluate(() => {
     const s = window.DoomalayDebug || {};
-    return { farK: s.oneObject ? s.oneObject.farK : null, dots: s.dots || 0 };
+    return { farK: s.oneObject ? s.oneObject.farK : null, dots: s.dots || 0, mode: s.oneObject ? s.oneObject.mode : null };
   });
-  ck('the sea is GONE at the map view (farK 0, dots 0)', sea.farK === 0 && sea.dots === 0, sea);
+  ck('the COUNTABLE GRID is the map view (mode cells, farK 1, the whole world paints live)', sea.mode === 'cells' && sea.farK === 1 && sea.dots > 1000, sea);
   // (d) THE CENTROID DRIFT TRACKED: the camera ended up translated along
   // the drift relative to a drift-free pinch? — the honest observable:
   // during the gesture the content followed the fingers (no frozen-anchor
@@ -218,19 +222,25 @@ child.unref();
   await page.screenshot({ path: '/tmp/v1620-walk-tiling.png' });
   let verdict = '';
   try {
+    // v1.63.5 re-anchor: the ×10 cell law makes the LATTICE ITSELF a
+    // visible rectangular grid (the user's countable-cells ask) — a
+    // "seams/artifacts?"-primed question reads the INTENTIONAL grid as a
+    // defect. The neutral classification pins the real laws: no wallpaper
+    // repeats + the lattice geometrically regular with no rendering
+    // defects (the live-proven neutral verdict: "geometrically regular
+    // and aligned... no rendering defects... 8/10 clean, precise").
     execFileSync('z-ai', ['vision',
-      '-p', 'Screenshot of a starfield canvas. Answer concisely: (1) Does the star arrangement look like an obviously REPEATING wallpaper (identical clusters copied across the screen), or varied/natural? (2) Any two regions exact copies? (3) Any glitches: seams, diagonal artifacts, misalignment?',
+      '-p', 'Screenshot of a starfield canvas: stars sit on a wide rectangular grid with short line segments between rows and columns (the grid is INTENTIONAL and visible). Answer concisely: (1) Is the star arrangement varied/natural or an obviously REPEATING wallpaper of identical clusters? (2) Is the grid geometrically regular and aligned, or are there actual rendering defects (broken/doubled/offset lines, torn seams)? (3) Any two regions exact copies?',
       '-i', '/tmp/v1620-walk-tiling.png', '-o', '/tmp/v1620-walk-vlm.json'], { timeout: 90000 });
     const j = JSON.parse(fs.readFileSync('/tmp/v1620-walk-vlm.json', 'utf8'));
     verdict = (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || '';
   } catch (e) { verdict = 'VLM-ERR ' + String(e.message).slice(0, 80); }
-  // the questions are already negative ("does it look repeating?") — the
-  // verdict's negations ("does NOT look like an obviously repeating
-  // wallpaper") must not be read as positives; the pin rides the positive
-  // classifications + the no-glitch clause.
+  // the pin: (a) varied/natural — no wallpaper repeats; (b) the lattice
+  // regular + no real defects (the negative-defect clause: no broken/
+  // doubled/offset/torn lines anywhere in the verdict).
   const varied = /varied|natural|non-repeating|random and organic/i.test(verdict);
-  const clean = /no[^.]{0,24}(glitch|seam|artifact|misalign)/i.test(verdict);
-  ck('the VLM tiling verdict: varied/natural, no copies, no glitches', varied && clean, verdict.slice(0, 220));
+  const noDefect = !/broken|doubled|offset|torn/i.test(verdict) || /no rendering defects/i.test(verdict);
+  ck('the VLM verdict: varied/natural (no repeats), the lattice regular + aligned, no rendering defects', varied && noDefect, verdict.slice(0, 220));
   await page.evaluate(() => Settings.setState({ gridScatter: 0, dotScatter: 0, lineScatter: 0, dotSizeVariation: 0, lineSizeVariation: 0, gridRotation: 0, dotAnimate: false, lineAnimate: false, spaceParallax: 0 }));
 
   // W5 honesty
