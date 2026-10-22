@@ -72,8 +72,8 @@ func TestV1582_PerChatConfigLaw(t *testing.T) {
         if !strings.HasSuffix(entry.URL, "/mcp/oc/chat-abc") {
                 t.Fatalf("the URL must carry the per-chat route: %q", entry.URL)
         }
-        if entry.CodeMode != true {
-                t.Fatalf("THE PROVEN ROUTE: codemode:true puts the doomalay tools in Code Mode as tools.doomalay_<tool> (live-proven 391 end-to-end; codemode:false excluded them entirely on 2.1.2 — live-convicted): %+v", entry)
+        if entry.CodeMode != false {
+                t.Fatalf("v1.63.1 THE NATIVE SHELF: codemode:false exposes every doomalay tool DIRECTLY as a first-class doomalay_<tool> (the user's \"armed natively\" law; the v1630 rig live-proves the direct route — the old true bundled them inside Code Mode's execute pill and the nested calls never persisted): %+v", entry)
         }
         if entry.Headers["X-Doomalay-Session"] != "chat-abc" {
                 t.Fatalf("the header belt must ride: %+v", entry.Headers)

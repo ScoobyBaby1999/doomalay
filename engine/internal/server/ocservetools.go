@@ -72,13 +72,13 @@ func (s *Server) toolsBlockFor(sess *store.Session, serveMode, mcpBound bool) st
                 b.WriteString("• The doomalay app's tools are NOT connected on this device's opencode build — use your own tools; do not assume any other tool exists.]")
                 return b.String()
         }
-        b.WriteString("• The doomalay app's tools (connected through the \"doomalay\" MCP server — inside Code Mode they are tools.doomalay_<name>, e.g. tools.doomalay_calculator; call them exactly like every other Code Mode tool): ")
+        b.WriteString("• The doomalay app's tools (connected through the \"doomalay\" MCP server as FIRST-CLASS tools named doomalay_<name> — call them DIRECTLY by their full name, exactly like your own read/grep/shell; they are NOT inside Code Mode's execute, never call them through the Code Mode tools object): ")
         var names []string
         for _, d := range mcpbus.Defs() {
-                names = append(names, d.Name)
+                names = append(names, "doomalay_"+d.Name)
         }
         b.WriteString(strings.Join(names, ", "))
-        b.WriteString(". Artifacts created through them land in this chat's drawer automatically. The gated ones (workspace, hublib, skills, termux) teach their own honest state when their switch is off.\n")
+        b.WriteString(". Their pills read bare in the user's chat (calculator, web_search, …) — same tools, friendlier name. Artifacts created through them land in this chat's drawer automatically. The gated ones (workspace, hublib, skills, termux) teach their own honest state when their switch is off.\n")
         b.WriteString("Pick whichever tool fits the job — your native ones for files/shell/web, the doomalay ones for documents, archives, the journal, the other chatbots (fleet), the app's library (hublib/skills), calculations, and the device's Termux shell (termux).]")
         return b.String()
 }
@@ -93,6 +93,15 @@ func ocToolSummary(name, args string) string {
         // renders the tool's name as the body; "" answers that contract.
         if name == "" {
                 return ""
+        }
+        // v1.63.1 THE NATIVE SHELF: the doomalay family (BARE names after the
+        // prefix strip) rides mcpbus.DefaultSummary — the ONE truth the native
+        // path itself uses (the OOP law: zero twin drift; a new tool's operand
+        // derivations ship themselves). No opencode native name collides with
+        // the family (websearch/webfetch are the serve's spellings, ours carry
+        // the underscore).
+        if s := mcpbus.DefaultSummary(name, args); s != "" {
+                return s
         }
         var a map[string]any
         if args != "" {

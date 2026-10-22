@@ -65,6 +65,25 @@ type fakeServe struct {
         // law) + the reject switch (the graceful-degradation pin).
         moveBodies []map[string]any
         moveReject bool
+        // v1.63.1 THE NATIVE SHELF: the fake's per-session DIRECTORY row (the
+        // projector's own truth — GET /api/session/{id} answers it when set;
+        // an unset session omits the key = the pre-2.1 shape) + the move
+        // bookkeeping (a successful /move re-points it, like the real serve's
+        // location instance law).
+        sessionDirs map[string]string
+        // v1.63.2 THE LIVING WIRE: the first streamCuts /api/event connections
+        // deliver only the first streamCutAfter frames then CLOSE (the mid-turn
+        // connection death — network switch, serve reload); eventConns counts.
+        // stillRunningProbes: the durable message record answers "still
+        // running" (no idle marker) for the first N quiet-probes, then the
+        // idle marker lands (succeeded — or interrupted when set).
+        streamCuts         int
+        streamCutAfter     int
+        eventConns         int
+        ssePos             int // the live-broadcast position (the cut law's resume point)
+        stillRunningProbes int
+        probeCount         int
+        interrupted        bool
 }
 
 // v1592Msg appends a message record (oldest→newest) to a session.
@@ -95,10 +114,19 @@ func (f *fakeServe) handler(w http.ResponseWriter, r *http.Request) {
                 f.promptTexts = append(f.promptTexts, body["text"].(string))
                 // v1.59.2: the volatile-miss shape — the turn ends INSTANTLY (the
                 // durable record carries it) but the stream never does
-                if f.volatileMiss || f.volatileOK {
+                if f.volatileMiss || f.volatileOK || f.interrupted || f.stillRunningProbes > 0 {
                         var rec map[string]any
                         if f.volatileOK {
                                 f.v1592Msg(f.lastSess, map[string]any{"type": "assistant", "text": "the off-wire answer", "time": map[string]any{"created": time.Now().UnixMilli()}})
+                                rec = map[string]any{"type": "idle", "outcome": "succeeded", "time": map[string]any{"created": time.Now().UnixMilli()}}
+                        } else if f.interrupted {
+                                rec = map[string]any{"type": "idle", "outcome": "interrupted", "time": map[string]any{"created": time.Now().UnixMilli()}}
+                        } else if f.stillRunningProbes > 0 {
+                                // v1.63.2: the quiet-turn shape — the durable record
+                                // will carry the answer + idle once the probe ladder
+                                // drains (the record appends BELOW, after the ladder —
+                                // the stillRunning branch strips the idle until then)
+                                f.v1592Msg(f.lastSess, map[string]any{"type": "assistant", "text": "the quiet-turn answer", "time": map[string]any{"created": time.Now().UnixMilli()}})
                                 rec = map[string]any{"type": "idle", "outcome": "succeeded", "time": map[string]any{"created": time.Now().UnixMilli()}}
                         } else {
                                 rec = map[string]any{"type": "idle", "outcome": "failed", "time": map[string]any{"created": time.Now().UnixMilli()},
@@ -131,6 +159,23 @@ func (f *fakeServe) handler(w http.ResponseWriter, r *http.Request) {
                         // the durable message record (newest-first, ?limit honored)
                         sid := strings.TrimSuffix(id, "/message")
                         recs := f.messages[sid]
+                        // v1.63.2: the still-running probe ladder — the first
+                        // stillRunningProbes reads answer WITHOUT the idle marker
+                        // (the turn is alive, the pump must ping + keep waiting),
+                        // then the marker lands once.
+                        if f.stillRunningProbes > 0 {
+                                f.probeCount++
+                                if f.probeCount <= f.stillRunningProbes {
+                                        trimmed := recs
+                                        for i, r := range trimmed {
+                                                if t, _ := r["type"].(string); t == "idle" {
+                                                        trimmed = append(append([]map[string]any{}, trimmed[:i]...), trimmed[i+1:]...)
+                                                        break
+                                                }
+                                        }
+                                        recs = trimmed
+                                }
+                        }
                         out := make([]map[string]any, 0, len(recs))
                         for i := len(recs) - 1; i >= 0; i-- {
                                 out = append(out, recs[i])
@@ -145,7 +190,14 @@ func (f *fakeServe) handler(w http.ResponseWriter, r *http.Request) {
                         return
                 }
                 if f.sessions != nil && f.sessions[id] {
-                        io.WriteString(w, `{"data":{"id":"`+id+`"}}`)
+                        // v1.63.1: the directory row rides when the fake knows it
+                        // (the projector's truth); an unset session omits the key —
+                        // the pre-2.1 build shape (the caller moves unconditionally).
+                        if dir, ok := f.sessionDirs[id]; ok {
+                                io.WriteString(w, `{"data":{"id":"`+id+`","directory":"`+dir+`"}}`)
+                        } else {
+                                io.WriteString(w, `{"data":{"id":"`+id+`"}}`)
+                        }
                 } else {
                         w.WriteHeader(404)
                         io.WriteString(w, `{"_tag":"SessionNotFoundError","sessionID":"`+id+`","message":"Session not found: `+id+`"}`)
@@ -166,10 +218,53 @@ func (f *fakeServe) handler(w http.ResponseWriter, r *http.Request) {
                         w.WriteHeader(404)
                         return
                 }
+                // v1.63.1: the real serve re-points the session's directory (the
+                // destination's location instance takes over) — the fake keeps
+                // the same bookkeeping so the idempotence law can pin against it.
+                id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/session/"), "/move")
+                if d, ok := body["directory"].(string); ok {
+                        if f.sessionDirs == nil {
+                                f.sessionDirs = map[string]string{}
+                        }
+                        f.sessionDirs[id] = d
+                }
                 io.WriteString(w, `{}`)
         case r.URL.Path == "/api/event":
                 w.Header().Set("Content-Type", "text/event-stream")
-                if f.volatileMiss || f.volatileOK {
+                f.eventConns++
+                if f.streamCuts > 0 && f.eventConns <= f.streamCuts {
+                        // v1.63.2 THE LIVING WIRE: the connection dies MID-TURN —
+                        // only the frames up to the cut ride (the live-broadcast
+                        // position advances), then the handler returns (the socket
+                        // closes under the reader). A LATER connection resumes
+                        // from the cut point — the real serve's live shape (the
+                        // turn is still streaming; the post-reconnect frames
+                        // arrive on the fresh wire).
+                        end := f.streamCutAfter
+                        if end > len(f.sse) || end < f.ssePos {
+                                end = f.ssePos
+                        }
+                        frames := f.sse[f.ssePos:end]
+                        f.ssePos = end
+                        io.WriteString(w, strings.Join(frames, "\n\n")+"\n\n")
+                        if fl, okFlush := w.(http.Flusher); okFlush {
+                                fl.Flush()
+                        }
+                        return
+                }
+                if f.streamCuts > 0 && f.ssePos < len(f.sse) {
+                        // the resumed connection: the turn's remaining frames +
+                        // the terminal ride the fresh wire (the volatile bus
+                        // dropped nothing here — the frames were still streaming)
+                        frames := f.sse[f.ssePos:]
+                        f.ssePos = len(f.sse)
+                        io.WriteString(w, strings.Join(frames, "\n\n")+"\n\n")
+                        if fl, okFlush := w.(http.Flusher); okFlush {
+                                fl.Flush()
+                        }
+                        return
+                }
+                if f.volatileMiss || f.volatileOK || f.interrupted || f.stillRunningProbes > 0 {
                         // the terminal never lands on the wire (the 2.x volatile
                         // contract — the turn ended before this stream connected);
                         // the stream itself stays OPEN like the real serve — the

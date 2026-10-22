@@ -199,7 +199,7 @@ func (s *Server) ocServeChatDir(m *ocserve.Manager, chatID string) (string, bool
                 "url":      fmt.Sprintf("http://127.0.0.1:%d/mcp/oc/%s", port, safeChat),
                 "headers":  map[string]string{"X-Doomalay-Session": safeChat}, // the belt: headers RIDED live-proven
                 "oauth":    false,                                            // plain loopback HTTP — no OAuth probing
-                "codemode": true, // THE PROVEN ROUTE: 2.1.2 serves MCP tools through Code Mode as tools.doomalay_<tool> (live-proven end-to-end: the attach probe computed 17*23=391 through tools.doomalay.calculator). codemode:false excluded them from Code Mode entirely (live-convicted: "Unknown tool 'doomalay_calculator'" + the empty search) with the direct exposure unproven on this build — never ship the unproven arm when the proven one works. The nested doomalay.* statuses ride the live pill (v1.58.1's toolCalls progress law).
+                "codemode": false, // v1.63.1 THE NATIVE SHELF: codemode:true bundled every doomalay tool INSIDE Code Mode's single execute tool (tools.doomalay_<name> dotted calls — the schema's own default, "Expose this server's tools through Code Mode") — the user saw opencode's own execute pill and our tools armed NOWHERE natively, and the nested calls rode EPHEMERAL progress frames (the "bottom chunk of tools… doesn't save" half). codemode:false exposes every tool DIRECTLY to the model as a first-class doomalay_<tool> (the permission config's own doomalay_* allow-rules), every call a real session.tool.* frame → a persisted pill. The v1.60.4 conviction ("Unknown tool 'doomalay_calculator'" from inside execute) was the OLD {tools} block teaching Code Mode naming under the false arm — the block now teaches the direct grammar, and the v1630 rig live-proves the direct route end-to-end (the unproven-arm law honored: prove it or revert it).
                 "timeout":  map[string]int{"startup": 20000, "catalog": 20000, "execution": 300000},
         }
         cfg := map[string]any{
@@ -240,8 +240,7 @@ func (s *Server) ocServeChatDir(m *ocserve.Manager, chatID string) (string, bool
 // v1.60 THE WIDE SHELF: a FRESH session is created + MOVED into its own
 // per-chat config dir (the doomalay MCP binding) — the third return is the
 // BOUND state (the {tools} block speaks it honestly); an ADOPTED session
-// keeps the binding it was born with (the config dir persists on the serve
-// side with the session; the rewrite confirms the machinery still works).
+// is RE-HOMED into its per-chat dir by v1.63.1 THE NATIVE SHELF (below).
 func (s *Server) ocServeSessionID(m *ocserve.Manager, sess *store.Session) (string, bool, bool, error) {
                 s.ocServeSessMu.Lock()
         defer s.ocServeSessMu.Unlock()
@@ -258,14 +257,29 @@ func (s *Server) ocServeSessionID(m *ocserve.Manager, sess *store.Session) (stri
                 if s.ocServeBound == nil {
                         s.ocServeBound = map[string]bool{}
                 }
-                // v1.60 THE WIDE SHELF: the adopted session KEEPS the per-chat MCP
-                // binding it was born with (it was moved into its config dir at
-                // creation; the config persists with the serve). The (re)write confirms
-                // the machinery still serves this chat — a failure answers bound=false
-                // honestly (the tools block degrades, never the turn).
+                // v1.63.1 THE NATIVE SHELF — THE UNMOVED ADOPTEE: the device's own
+                // conviction was an adopted session whose serve-side directory was
+                // still the ROOT (born pre-v1.60, or a move that failed at birth) —
+                // the root config carries NO mcp block, so 30 running tools armed
+                // ZERO sessions natively. The adoption path now RE-HOMES the
+                // session: when the serve's own directory row differs from the
+                // per-chat dir (or the build won't speak it — move once, the map
+                // caches), MoveSession puts it where its config lives. The move is
+                // the live-proven attach vehicle (the destination's location
+                // instance re-resolves config + MCP — the 2.1.x per-location
+                // instance law). A failed move degrades to bound=false honestly
+                // (the tools block degrades, never the turn).
                 mcpBound := false
-                if _, ok := s.ocServeChatDir(m, sess.ID); ok {
+                if dir, ok := s.ocServeChatDir(m, sess.ID); ok {
                         mcpBound = true
+                        if cur, known := m.SessionDirectory(persisted); !known || cur != dir {
+                                if err := m.MoveSession(persisted, dir); err != nil {
+                                        mcpBound = false
+                                        log.Printf("ocserve: adoption re-home failed for serve session %s (%v) — riding unbound", persisted, err)
+                                } else {
+                                        log.Printf("ocserve: re-homed serve session %s into its per-chat dir (was %q)", persisted, cur)
+                                }
+                        }
                 }
                 s.ocServeSessions[sess.ID] = persisted
                 s.ocServeBound[sess.ID] = mcpBound
@@ -546,6 +560,21 @@ func (s *Server) ocServeStreamTurn(ctx context.Context, m *ocserve.Manager, sess
 // may shorten it).
 var ocServeSilenceProbe = 12 * time.Second
 
+// ocBareServeToolName — v1.63.1 THE NATIVE SHELF: the direct arm
+// (codemode:false) names every doomalay MCP tool doomalay_<name>; the
+// pill grammar speaks the BARE name (calculator | 17*23) so the pills
+// render byte-identically to native ones (the OOP reuse law — the PWA's
+// own toolPillLabelParts table keys on the bare names). The serve's own
+// tools (read/grep/shell/…) pass through untouched; no opencode native
+// name collides with the stripped set (websearch/webfetch are the
+// serve's spellings, web_search/web_fetch are ours).
+func ocBareServeToolName(name string) string {
+        if strings.HasPrefix(name, "doomalay_") {
+                return strings.TrimPrefix(name, "doomalay_")
+        }
+        return name
+}
+
 // ocServePump consumes the 2.x serve's SSE feed for one turn, mapping the
 // v2 event vocabulary onto the engine's. It returns recycled=true when
 // the turn hit OpenCode's free-tier wall (the recycle law's trigger).
@@ -573,8 +602,11 @@ var ocServeSilenceProbe = 12 * time.Second
 // trailing idle message); a turn that already ended off-wire synthesizes
 // the honest terminal (error + status, or the assistant text + idle) and
 // RETURNS.
+//
+// v1.63.1 THE NATIVE SHELF: tool names ride the pump BARE (ocBareServeToolName
+// strips the doomalay_ prefix — every pill reads like a native one).
 func (s *Server) ocServePump(ctx context.Context, m *ocserve.Manager, serveSess, sessionID, model string, out chan<- map[string]any, turnStartedAt int64) (bool, error) {
-        toolNames := map[string]string{} // tool call id → tool name (input.started)
+        toolNames := map[string]string{} // tool call id → tool name (input.started) — the BARE name (v1.63.1)
         usedEmitted := map[string]bool{}  // the pill law: use BEFORE result, exactly once
         var usage map[string]any
         finish := "stop"
@@ -609,7 +641,7 @@ func (s *Server) ocServePump(ctx context.Context, m *ocserve.Manager, serveSess,
                         out <- map[string]any{"type": "assistant_delta", "session_id": sessionID, "text": ev.Data.Delta}
                 case "session.tool.input.started":
                         if ev.Data.ID != "" {
-                                toolNames[ev.Data.ID] = ev.Data.Name
+                                toolNames[ev.Data.ID] = ocBareServeToolName(ev.Data.Name)
                         }
                 case "session.tool.input.ended":
                         // the pill's use event — with the serialized args the 2.x feed
@@ -623,7 +655,7 @@ func (s *Server) ocServePump(ctx context.Context, m *ocserve.Manager, serveSess,
                         // structured input marshaled as the args — never a missing pill.
                         if ev.Data.ID != "" {
                                 if ev.Data.Name != "" {
-                                        toolNames[ev.Data.ID] = ev.Data.Name
+                                        toolNames[ev.Data.ID] = ocBareServeToolName(ev.Data.Name)
                                 }
                                 if len(ev.Data.Input) > 0 {
                                         emitToolUse(ev.Data.ID, toolNames[ev.Data.ID], string(ev.Data.Input))
@@ -670,6 +702,14 @@ func (s *Server) ocServePump(ctx context.Context, m *ocserve.Manager, serveSess,
                         out <- map[string]any{"type": "tool_result", "session_id": sessionID,
                                 "name": toolNames[ev.Data.ID], "text": llm.ClampMarked(msg, ocObsBudget(model)),
                                 "tool_use_id": ev.Data.ID}
+                case "session.step.started":
+                        // v1.63.2 THE LIVING WIRE: a new model step is the honest
+                        // mid-turn signal — the turn moves (reasoning round, a tool
+                        // wave) even when its outputs are quiet. Rides the progress
+                        // machinery (ephemeral, never persisted) so the activity
+                        // line + the stall clock both move with the truth.
+                        out <- map[string]any{"type": "progress", "session_id": sessionID,
+                                "message": "OpenCode: " + strings.TrimPrefix(model, "opencode/") + " — a new step started…"}
                 case "session.step.ended":
                         if ev.Data.Finish != "" {
                                 finish = ev.Data.Finish
@@ -734,7 +774,20 @@ func (s *Server) ocServePump(ctx context.Context, m *ocserve.Manager, serveSess,
                         }
                         ended, failed, errType, errMsg, ansText := m.SessionIdleSince(serveSess, turnStartedAt)
                         if !ended {
-                                continue // still running — the quiet phase of a long turn
+                                // v1.63.2 THE LIVING WIRE — THE HONEST WAIT: the turn is
+                                // alive but quiet (a long reasoning phase, a slow tool) —
+                                // SAY SO every probe tick instead of letting the pill sit
+                                // static for minutes (the user's "no visual feedback of
+                                // accurate things going on to explain the wait"). Ephemeral
+                                // progress, never persisted; the elapsed count is the
+                                // durable record's own truth (the turn's start stamp).
+                                elapsed := int(time.Since(time.UnixMilli(turnStartedAt)).Seconds())
+                                if elapsed < 0 {
+                                        elapsed = 0
+                                }
+                                out <- map[string]any{"type": "progress", "session_id": sessionID,
+                                        "message": fmt.Sprintf("OpenCode: %s is still working… %ds in this turn", strings.TrimPrefix(model, "opencode/"), elapsed)}
+                                continue
                         }
                         pcancel()
                         <-eventsDone // the cancelled stream returns shortly

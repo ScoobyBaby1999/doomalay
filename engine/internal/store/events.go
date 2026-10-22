@@ -144,6 +144,128 @@ ORDER BY seq ASC`, sessionID, eventType)
         return out, rows.Err()
 }
 
+// ListEventsTailN answers the LAST n events in seq order plus whether
+// OLDER rows exist beyond the window (v1.63.3 THE UNLOST TAIL: the
+// bootstrap fetch caps at the tail — "the most recent chats are what's
+// important, older messages can stay dormant until scrolled to"). len<n
+// means the window reaches the session's head.
+func (db *DB) ListEventsTailN(sessionID string, n int) ([]*Event, bool, error) {
+        if n <= 0 {
+                return nil, false, nil
+        }
+        evs, err := db.ListEventsTail(sessionID, n)
+        if err != nil {
+                return nil, false, err
+        }
+        if len(evs) < n {
+                return evs, false, nil // the window reaches the head
+        }
+        var older int
+        if err := db.QueryRow(`SELECT COUNT(*) FROM chat_events WHERE session_id=? AND seq < ?`, sessionID, evs[0].Seq).Scan(&older); err != nil {
+                return evs, false, nil // honest default — the page walk answers the truth
+        }
+        return evs, older > 0, nil
+}
+
+// ListEventsBefore answers up to n events with seq < before, in seq order
+// (the OLDER-history page the backfill boundary fetches when the reader
+// scrolls up past the bootstrap window — v1.63.3), plus whether even
+// older rows exist.
+func (db *DB) ListEventsBefore(sessionID string, before, n int) ([]*Event, bool, error) {
+        if n <= 0 || before <= 1 {
+                return nil, false, nil
+        }
+        rows, err := db.Query(`
+SELECT id, session_id, seq, event_type, content, tool_use_id, created_at
+FROM chat_events
+WHERE session_id=? AND seq < ?
+ORDER BY seq DESC
+LIMIT ?`, sessionID, before, n)
+        if err != nil {
+                return nil, false, err
+        }
+        defer rows.Close()
+        var rev []*Event
+        for rows.Next() {
+                ev := &Event{}
+                if err := rows.Scan(&ev.ID, &ev.SessionID, &ev.Seq, &ev.EventType, &ev.Content, &ev.ToolUseID, &ev.CreatedAt); err != nil {
+                        return nil, false, err
+                }
+                rev = append(rev, ev)
+        }
+        if err := rows.Err(); err != nil {
+                return nil, false, err
+        }
+        // reverse → seq ASC
+        for i, j := 0, len(rev)-1; i < j; i, j = i+1, j-1 {
+                rev[i], rev[j] = rev[j], rev[i]
+        }
+        if len(rev) < n {
+                return rev, false, nil // reached the head
+        }
+        var older int
+        if err := db.QueryRow(`SELECT COUNT(*) FROM chat_events WHERE session_id=? AND seq < ?`, sessionID, rev[0].Seq).Scan(&older); err != nil {
+                return rev, false, nil
+        }
+        return rev, older > 0, nil
+}
+
+// SessionEventBytes answers the session's total content bytes (the
+// retention budget's measure — v1.63.3).
+func (db *DB) SessionEventBytes(sessionID string) int64 {
+        var total sql.NullInt64
+        _ = db.QueryRow(`SELECT SUM(LENGTH(content)) FROM chat_events WHERE session_id=?`, sessionID).Scan(&total)
+        if !total.Valid {
+                return 0
+        }
+        return total.Int64
+}
+
+// TrimSessionEventsOlderThan deletes this session's events with seq <
+// splitSeq (the retention trim's vehicle — v1.63.3: the OLDEST rows die
+// first, the newest window survives). Returns the deleted row count.
+func (db *DB) TrimSessionEventsOlderThan(sessionID string, splitSeq int) int64 {
+        if splitSeq <= 1 {
+                return 0
+        }
+        res, err := db.Exec(`DELETE FROM chat_events WHERE session_id=? AND seq < ?`, sessionID, splitSeq)
+        if err != nil {
+                return 0
+        }
+        n, _ := res.RowsAffected()
+        return n
+}
+
+// OldestEventSeq answers the session's smallest seq (0 = no rows) — the
+// trim's split-point walk reads lengths only, never content.
+func (db *DB) OldestEventSeq(sessionID string) int {
+        var seq sql.NullInt64
+        _ = db.QueryRow(`SELECT MIN(seq) FROM chat_events WHERE session_id=?`, sessionID).Scan(&seq)
+        if !seq.Valid {
+                return 0
+        }
+        return int(seq.Int64)
+}
+
+// SessionEventSeqLengths walks the session's (seq, bytes) pairs in seq
+// order (no content haul — the trim's budget arithmetic is lengths only).
+func (db *DB) SessionEventSeqLengths(sessionID string) ([][2]int, error) {
+        rows, err := db.Query(`SELECT seq, LENGTH(content) FROM chat_events WHERE session_id=? ORDER BY seq ASC`, sessionID)
+        if err != nil {
+                return nil, err
+        }
+        defer rows.Close()
+        var out [][2]int
+        for rows.Next() {
+                var seq, n int
+                if err := rows.Scan(&seq, &n); err != nil {
+                        return nil, err
+                }
+                out = append(out, [2]int{seq, n})
+        }
+        return out, rows.Err()
+}
+
 // EventToJSON serializes an Event for the PWA. Matches the wire format
 // the PWA's streamWorker expects.
 // v0.39: seq rides on replayed events — the resume handshake (&since=N)
@@ -280,23 +402,23 @@ WHERE session_id=? ORDER BY seq DESC LIMIT ?`, sessionID, tailLimit)
 // message + everything it triggered). Cheap on the (session_id, seq)
 // index; the roster never pays N round-trips.
 func (db *DB) CountUserTurnsPerSession() (map[string]int, error) {
-	rows, err := db.Query(`
+        rows, err := db.Query(`
 SELECT session_id, COUNT(*)
 FROM chat_events
 WHERE event_type='user'
 GROUP BY session_id`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := map[string]int{}
-	for rows.Next() {
-		var id string
-		var n int
-		if err := rows.Scan(&id, &n); err != nil {
-			return nil, err
-		}
-		out[id] = n
-	}
-	return out, rows.Err()
+        if err != nil {
+                return nil, err
+        }
+        defer rows.Close()
+        out := map[string]int{}
+        for rows.Next() {
+                var id string
+                var n int
+                if err := rows.Scan(&id, &n); err != nil {
+                        return nil, err
+                }
+                out[id] = n
+        }
+        return out, rows.Err()
 }
