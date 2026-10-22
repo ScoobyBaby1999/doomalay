@@ -726,6 +726,9 @@
                      // "extremely static" + the widened hero tsp spread)
   var TL = { fp: '', tiles: null, pendP: null, pendCam: null, bakeT: 0,
              gen: 0, cellRecords: 0, legacyFails: 0, lastFarK: 1,
+             // v1.62.3 THE EIGHT TILES: the per-instance instrument — the
+             // rigs' read-back (draws this frame + the sub-pixel fallbacks).
+             instDraws: 0, instFallbacks: 0,
              // v1.06.1 THE ZOOM LADDER: per-level tile sets, LRU + byte-capped.
              // A zoom into a SEEN level = instant pattern swap (zero bakes);
              // an unseen level bakes ASYNC at its canonical scale — never
@@ -752,7 +755,19 @@
   // period now; with animDots off both layers draw at alpha 1). Lines
   // interleave the same way: verticals by column parity, horizontals
   // by row parity.
-  var TL_PAIRS = [[10, 16], [8, 14], [6, 10], [4, 6]];  
+  // ▀▀ v1.62.3 THE EIGHT TILES (PLAN-V162 §3.3) ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+  // The first rung widens 10×16 → 10×24: the joint period lcm(10,24) = 120
+  // cells = 5,760px — at the fit-all view of the default 16,384 world the
+  // whole grid now consists of 16,384/5,760 = 2.84 × 2.84 ≈ 8 TILE PERIODS
+  // (the user's "the entire grid should consist of like 8 tiles give or
+  // take"), each 2.25× the AREA of the old 80-cell period (the honest
+  // x3-reconciliation: 3× LINEAR would leave ~2 tiles across the whole
+  // world — recorded in PLAN-V162 §2). The EVEN-parity layer still repeats
+  // every 10 cells, odd every 24 — the parity split (the breath's groups)
+  // is untouched; only the JOINT read widens. The lower rungs stay the
+  // low-memory fallbacks. THE ROTATIONS + the per-instance paint live in
+  // tlFillInstances (the wallpaper read's second kill).
+  var TL_PAIRS = [[10, 24], [8, 14], [6, 10], [4, 6]];  
   // v1.06.1: 96MB → 32MB — the budget sized ONE resident set at FULL device
   // raster; the ladder keeps several (LRU-capped at TL.LADDER_CAP), so each
   // set slims. Rref phone ≈ 1.56 (78% of pixel-perfect — dots/lines are
@@ -820,7 +835,13 @@
       var units = (slots / 2) * (MA * MA + MB * MB);
       var Rref = Math.sqrt(TL_BUDGET / (4 * spacingRef * spacingRef * units));
       chosen = TL_PAIRS[pi]; chosenR = Rref; chosenSlots = slots;
-      if (Rref >= 0.75) break;   // the biggest period we can afford readably
+      // v1.62.3: 0.75 → 0.70 — the widened first rung's worst case (full
+      // amp + full line+dot variation: units 6,760) lands at Rref 0.734;
+      // the 0.70 gate keeps [10,24] winning the walk in EVERY config (the
+      // 3%-raster softening vs the 0.75 gate is imperceptible next to the
+      // level ladder's own 0.89–1.12 stretch window; the alternative —
+      // raising TL_BUDGET — would tax every resident set's memory).
+      if (Rref >= 0.70) break;   // the biggest period we can afford readably
     }
     return { pair: chosen, Rref: Math.max(0.4, chosenR), slots: chosenSlots,
              cells: tlLcm(chosen[0], chosen[1]) };
@@ -1281,6 +1302,72 @@
     gc.restore();
   }
 
+  // tlFillInstances — v1.62.3 THE EIGHT TILES (PLAN-V162 §3.3): the
+  // dot sea's wallpaper read dies HERE. The one-object pattern fill
+  // repeated the SAME raster at every period — at the fit-all view the
+  // whole 16,384 world showed ~18 byte-identical 80-cell periods (the
+  // user's "the tiling is so noticeable"). THE PAINT now walks the
+  // VISIBLE instances of the layer's own period grid and draws each
+  // with its own rigid transform:
+  //   · ROTATION rot = (i + 2j) mod 4 → 0/90/180/270° — the Latin-
+  //     square law (Wang-tile de-tiling, PLAN-V162 §R3): ALL 8 neighbors
+  //     of any instance carry a DIFFERENT rotation ((i+j) mod 4 fails on
+  //     the anti-diagonal; (i+2j) mod 4 puts every neighbor ±1/±2/±3
+  //     off center — never equal).
+  //   · MIRROR flip = ((i+j) mod 2) === 1 — the checkerboard flip (the
+  //     "flip" of the user's "rotation / flip"): same-rotation instances
+  //     two steps apart still read different.
+  //   · The user's list "(180, 90, −90, −180)" carries a redundancy
+  //     (−180 ≡ 180) — the four DISTINCT rigid classes are 0/90/180/270,
+  //     recorded honestly (PLAN-V162 §2).
+  //   · The indices are the ABSOLUTE instance grid — world-anchored and
+  //     deterministic: pan/zoom never re-rolls a square; a world square
+  //     keeps its transform forever. ~4 bit-ops per instance (the user's
+  //     "negligible performance wise").
+  //   · Rotation is about each instance's CENTER (corners map to corners
+  //     — the square still tiles its neighbors seamlessly; only the
+  //     INTERNAL star arrangement rotates).
+  //   · THE CEILING: past 2,048 visible instances each is <~40px (a
+  //     sub-pixel rotation) — the plain pattern fill rides (tlFill),
+  //     honestly degraded — the twinkler-walk guard's own shape.
+  function tlFillInstances(gc, tile, bx, by, Tcss, alpha, W, H) {
+    if (alpha <= 0.004 || Tcss <= 0.5) return;
+    var i0 = Math.floor((0 - bx) / Tcss) - 1;
+    var i1 = Math.floor((W - bx) / Tcss) + 1;
+    var j0 = Math.floor((0 - by) / Tcss) - 1;
+    var j1 = Math.floor((H - by) / Tcss) + 1;
+    var inst = (i1 - i0 + 1) * (j1 - j0 + 1);
+    if (inst > 2048) {   // the sub-pixel regime — the honest fallback
+      var dprSnap = TL_DPR || 1;
+      var phx = ((bx % Tcss) + Tcss) % Tcss;
+      var phy = ((by % Tcss) + Tcss) % Tcss;
+      phx = Math.round(phx * dprSnap) / dprSnap;
+      phy = Math.round(phy * dprSnap) / dprSnap;
+      tlFill(gc, tile, phx, phy, Tcss, alpha, W, H);
+      TL.instFallbacks++;
+      return;
+    }
+    TL.instDraws += inst;
+    var half = Tcss / 2;
+    var TWO_PI_QUARTER = Math.PI / 2;
+    gc.save();
+    if (alpha < 1) gc.globalAlpha = alpha;
+    for (var j = j0; j <= j1; j++) {
+      var fy = by + j * Tcss + half;
+      for (var i = i0; i <= i1; i++) {
+        var rot = (i + 2 * j) & 3;
+        var flip = ((i + j) & 1) === 1;
+        gc.save();
+        gc.translate(bx + i * Tcss + half, fy);
+        if (rot) gc.rotate(rot * TWO_PI_QUARTER);
+        if (flip) gc.scale(-1, 1);
+        gc.drawImage(tile.canvas, -half, -half, Tcss, Tcss);
+        gc.restore();
+      }
+    }
+    gc.restore();
+  }
+
   // ══ v1.06.3 THE LIVE LAYER + THE MODULATION FIELD (PLAN-V107 §3) ═══
   // The user's ask: "slightly more dynamic, very few points/lines moving
   // fast, changes way more than now, tiling no longer perceivable."
@@ -1702,6 +1789,10 @@
     // (full at today's minimum spacing; the map view at the fit-all zoom).
     var farK = farFieldK(GRID_BASE * (P.gridSize || 1) * scale);
     TL.lastFarK = farK;   // v1.57.1: the state accessor's truth (both render paths)
+    // v1.62.3: the per-frame instance instrument resets here (the stats
+    // snapshot the frame's totals at the end of renderTiled).
+    TL.instDraws = 0;
+    TL.instFallbacks = 0;
     var segMode = effFracL > 0 || animLines;
     var overDotsOn = false;   // v1.10.2 THE HONEST SKY
     var overLinesOn = false;   // v1.10.2 THE HONEST SKY
@@ -1831,7 +1922,8 @@
     var T = (farK > 0.004) ? tlBakeTiles(P, cam, W, H) : null;
     var ps = (T && T.scaleQ) ? (scale / T.scaleQ) : 1;
     var spacingNow = GRID_BASE * (P.gridSize || 1) * scale;
-    var dprSnap = TL_DPR || 1;
+    // (v1.62.3: dprSnap RETIRED here — the per-instance path needs no
+    // phase snap; the sub-pixel fallback owns its own inside tlFillInstances.)
     // the BREATH: two checker-parity groups, counter-phase — the shimmer
     // that replaces 1,100 per-dot sin() evaluations
     var breathA = animDots ? (0.62 + 0.38 * (0.5 + 0.5 * Math.sin(animT * 1.6))) : 1;
@@ -1860,12 +1952,12 @@
       var zAdj = Math.pow(Math.max(scale, 0.05), (bpf - 1) * 0.6);
       Tcss *= zAdj;
       var bx = -(offsetX * scale * bpf), by = -(offsetY * scale * bpf);
-      var phx = ((bx % Tcss) + Tcss) % Tcss;
-      var phy = ((by % Tcss) + Tcss) % Tcss;
-      phx = Math.round(phx * dprSnap) / dprSnap;
-      phy = Math.round(phy * dprSnap) / dprSnap;
       var alpha = bt.kind === 'dotsA' ? breathA : (bt.kind === 'dotsB' ? breathB : 1);
-      tlFill(gc, bt.tile, phx, phy, Tcss, alpha * farK, W, H);   // v1.57.1: the far-field rides the fill
+      // v1.62.3 THE EIGHT TILES: the per-instance rotated/mirrored paint
+      // replaces the single pattern fill — tlFillInstances owns the phase,
+      // the rotation law, the mirror, and the sub-pixel fallback; the
+      // far-field rides the per-instance alpha exactly as it rode the fill.
+      tlFillInstances(gc, bt.tile, bx, by, Tcss, alpha * farK, W, H);
       dbg.batches++;
       var nxL = Math.ceil(W / Tcss) + 1, nyL = Math.ceil(H / Tcss) + 1;
       var cov = nxL * nyL * bt.tile.n;
@@ -1988,7 +2080,13 @@
                    pairCells: T ? T.cells : 0, raster: Math.round((T && T.R ? T.R : 1) * 100) / 100,
                    heroes: heroCount, bakeGen: T ? T.gen : 0, tileMs: Math.round((T && T.bakeMs) || 0),
                    bakeError: TL.bakeError || null,
-                   farK: Math.round(farK * 1000) / 1000 },   // v1.57.1: the far-field truth (the rig's contract)
+                   farK: Math.round(farK * 1000) / 1000,   // v1.57.1: the far-field truth (the rig's contract)
+                   // v1.62.3 THE EIGHT TILES: the instance instrument (the
+                   // rigs' census) — draws this frame + the sub-pixel
+                   // fallbacks + the joint period in cells/px at gridSize 1.
+                   instDraws: TL.instDraws, instFallbacks: TL.instFallbacks,
+                   jointCells: T ? T.cells : 0,
+                   jointPx: T ? Math.round(T.cells * GRID_BASE) : 0 },
       glow: { n: dbg.glow, colors: dbg.glowCols, sprites: LC.sprites.size },
       hits: LC.hits, misses: LC.misses,
       paintMs: Math.round((lcNow - t0) * 10) / 10
@@ -2631,6 +2729,12 @@
         tiles: TL.tiles ? TL.tiles.list.length : 0,
         mega: TL.tiles ? TL.tiles.M : 0,
         heroes: TL.tiles ? TL.tiles.heroes.length : 0,
+        // v1.62.3 THE EIGHT TILES: the instance instrument (the rigs'
+        // census — the last frame's draws + the fallbacks + the pair).
+        instDraws: TL.instDraws || 0,
+        instFallbacks: TL.instFallbacks || 0,
+        pair: TL.tiles ? [TL.tiles.MA, TL.tiles.MB] : null,
+        jointCells: TL.tiles ? TL.tiles.cells : 0,
         farK: Math.round((TL.lastFarK === undefined ? 1 : TL.lastFarK) * 1000) / 1000,   // v1.57.1: the far-field truth (fresh per render; 0 is REAL — no falsy-or)
         bakeGen: TL.gen,
         pending: !!TL.bakeT,

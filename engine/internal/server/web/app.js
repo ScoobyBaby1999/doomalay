@@ -1443,24 +1443,40 @@
   }
   // clampCamera — the viewport never leaves the world. screen =
   // (world − offset) × scale, so the viewport spans world-x
-  // [offsetX, offsetX + W/scale]. Both axes clamp independently (the
-  // plan's corner law); a viewport WIDER than the world (deep zoom-out
-  // on a small world) degenerates gracefully to centering.
+  // [offsetX, offsetX + W/scale].
+  // ▀▀ v1.62.1 THE CONTINUOUS CLAMP (PLAN-V162 §3.1) ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+  // The old law clamped the TOP-LEFT to ±(half − vw/2) — a range
+  // symmetric about ZERO that kept half a viewport of margin on the
+  // top/left while ALLOWING half a viewport of overrun past the
+  // bottom/right, and at the crossing (vw = WORLD_SIZE) it had collapsed
+  // to ±0 while the degenerate branch demanded −vw/2 = −half: an
+  // 8,192-world-unit, half-screen LURCH in ONE frame, twice per deep
+  // zoom-out on a phone (Y crosses at scale≈0.0515, X at the 0.0238
+  // fit-all floor) — the user's "the grid seems to go diagonally before
+  // it snaps back". THE FIX is the canonical contain law every reference
+  // library uses (xyflow getViewportForBounds / tldraw zoomToBounds /
+  // excalidraw centerScrollOn / pixi-viewport Clamp underflow-center —
+  // PLAN-V162 §R1): the viewport spans [offset, offset+vw] ⊆ [−half,
+  // +half] EXACTLY, so offset ∈ [−half, half − vw]; the degenerate
+  // branch (viewport ≥ world) centers at −vw/2. CONTINUITY at the
+  // crossing: the edge range [−half, half−vw] closes to the single
+  // point −half exactly where −vw/2 lands — provably the same value, no
+  // jump, in or out, on either axis. The finger still cannot leave the
+  // world (v1.42.3's law holds — now to the exact edge, no lopsided
+  // margin); a viewport wider than the world still centers gracefully.
   function clampCamera() {
     if (!WORLD_SIZE) return;
     var half = WORLD_SIZE / 2;
     var vw = W / scale, vh = H / scale;
     if (vw >= WORLD_SIZE) offsetX = -vw / 2;
     else {
-      var maxX = half - vw / 2;
-      if (offsetX < -maxX) offsetX = -maxX;
-      if (offsetX > maxX) offsetX = maxX;
+      if (offsetX < -half) offsetX = -half;
+      if (offsetX > half - vw) offsetX = half - vw;
     }
     if (vh >= WORLD_SIZE) offsetY = -vh / 2;
     else {
-      var maxY = half - vh / 2;
-      if (offsetY < -maxY) offsetY = -maxY;
-      if (offsetY > maxY) offsetY = maxY;
+      if (offsetY < -half) offsetY = -half;
+      if (offsetY > half - vh) offsetY = half - vh;
     }
   }
   // ▀▀ the edge affordance: a 2px theme-native line on each world
@@ -2157,13 +2173,30 @@
 
     if (inputState === 'PANNING') {
       // INVERTED: content follows the finger.
-      const ddx = -dx, ddy = -dy;
+      // ▀▀ v1.62.2 THE PROPORTIONAL STRIDE (PLAN-V162 §3.2) ▀▀▀▀▀▀▀▀▀▀▀
+      // The old code added RAW SCREEN PIXELS to a WORLD-UNIT offset —
+      // 1:1 only at scale 1. Zoomed out it crawled (at the 0.024 fit-all
+      // floor a 100px stride moved 2.4px of screen content; crossing the
+      // 16,384 world took ~10s of dragging: the user's "still moves as
+      // if he is zoomed in close"). THE FIX is the standard every map/
+      // canvas app uses (pixi Drag / Leaflet Map.Drag — PLAN-V162 §R4):
+      // the world delta is the screen delta / scale, so the content
+      // tracks the finger 1:1 at ANY zoom — the more zoomed out, the
+      // further the same stride carries the grid (the user's law). The
+      // ICON_DRAG twin at the next branch always did dx/scale; the pan
+      // now matches it.
+      const ddx = -dx / scale, ddy = -dy / scale;
       offsetX += ddx; offsetY += ddy;
-      clampCamera();   // v1.42.3: the finger's camera never leaves the world
+      clampCamera();   // v1.42.3 + v1.62.1: the finger's camera never leaves the world, continuously
       const dt = now - lastTime;
       if (dt > 0) {
-        velX = Math.max(-MAX_PAN_VELOCITY, Math.min(MAX_PAN_VELOCITY, (ddx / dt) * 16));
-        velY = Math.max(-MAX_PAN_VELOCITY, Math.min(MAX_PAN_VELOCITY, (ddy / dt) * 16));
+        // v1.62.2: the cap rides the SCREEN law (18px/16ms ≈ 1,125px/s
+        // of finger speed) at any zoom — /scale, so a deep-zoom fling
+        // crosses the whole world in a blink without ever exceeding the
+        // same on-screen speed feel.
+        const cap = MAX_PAN_VELOCITY / scale;
+        velX = Math.max(-cap, Math.min(cap, (ddx / dt) * 16));
+        velY = Math.max(-cap, Math.min(cap, (ddy / dt) * 16));
       }
       scheduleUpdate();   // v0.94.1: one render per frame, not per event
     } else if (inputState === 'ICON_DRAG' && draggedIcon) {
@@ -2286,7 +2319,8 @@
   let pinching = false;
   let pinchStartDist = 0, pinchStartScale = 1;
   let pinchStartOffsetX = 0, pinchStartOffsetY = 0;
-  let pinchCenter = { x: 0, y: 0 };
+  // (v1.62.1: pinchCenter RETIRED — the anchor rides the LIVE centroid
+  // per move; a start-frozen centroid dropped the drift's pan component.)
 
   // v1.09.3 THE STILL HAND — the zoom-gesture state the painter holds its
   // ladder bakes on (lattice.js setZoomHold). A pinch holds while the two
@@ -2367,10 +2401,6 @@
       pinchStartDist = touchDist(e.touches[0], e.touches[1]);
       pinchStartScale = scale;
       pinchStartOffsetX = offsetX; pinchStartOffsetY = offsetY;
-      pinchCenter = {
-        x: (e.touches[0].clientX + e.touches[1].clientX) / 2,
-        y: (e.touches[0].clientY + e.touches[1].clientY) / 2
-      };
     } else if (e.touches.length === 1 && !pinching) {
       e.preventDefault();
       inputStart(e.touches[0].clientX, e.touches[0].clientY);
@@ -2384,12 +2414,25 @@
       const d = touchDist(e.touches[0], e.touches[1]);
       const factor = d / pinchStartDist;
       const newScale = Math.max(minScale(), Math.min(MAX_SCALE, pinchStartScale * factor));
-      const worldX = pinchCenter.x / pinchStartScale + pinchStartOffsetX;
-      const worldY = pinchCenter.y / pinchStartScale + pinchStartOffsetY;
-      offsetX = worldX - pinchCenter.x / newScale;
-      offsetY = worldY - pinchCenter.y / newScale;
+      // ▀▀ v1.62.1 THE LIVE-CENTROID PINCH (PLAN-V162 §3.1) ▀▀▀▀▀▀▀▀▀▀
+      // The old code anchored the zoom at the centroid captured ONCE at
+      // gesture start and never followed its drift — a two-finger zoom
+      // where the hands also moved silently DROPPED the centroid's pan
+      // component (the content slipped under the fingers: the user's
+      // "the grid seems to move as well not just the camera"). THE FIX
+      // is pixi-viewport Pinch's own law (PLAN-V162 §R2): recompute the
+      // anchor at the LIVE centroid every move — the world point under
+      // the live centroid (given the START camera, so each event is
+      // idempotent) is landed at the live centroid under the NEW scale:
+      // zoom anchors exactly AND the centroid's drift pans 1:1.
+      const liveCx = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+      const liveCy = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+      const worldX = liveCx / pinchStartScale + pinchStartOffsetX;
+      const worldY = liveCy / pinchStartScale + pinchStartOffsetY;
+      offsetX = worldX - liveCx / newScale;
+      offsetY = worldY - liveCy / newScale;
       scale = newScale;
-      clampCamera();   // v1.42.3: the pinch's viewport span re-enters the world
+      clampCamera();   // v1.42.3 + v1.62.1: the pinch's viewport span re-enters the world, continuously
       scheduleUpdate();   // v0.94.1: pinch moves coalesce to one frame too
     } else if (e.touches.length === 1 && !pinching) {
       e.preventDefault();
