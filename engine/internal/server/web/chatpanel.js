@@ -5108,6 +5108,35 @@
         state.messages.push(nmsg);
         appendMessage(msgContainer, scrollEl, nmsg, bodyEl, state._icon, state);
       }
+    } else if (type === 'injected') {
+      // v1.64.2 THE LOUD INJECTION: a system-injected prompt — the user's
+      // law: "reuse the message box that appears when a model hiccups but
+      // add another state to it for when the system injects a prompt,
+      // displaying the prompt that we injected. Every Injected prompt
+      // should adhere to this. The system should never inject a prompt
+      // without making it clear for both the frontend and the chat
+      // transcript." The rows persist like notices (live + replayed);
+      // the replayed shape dumps {message, code} as JSON in ev.text —
+      // the same lift the notice branch rides. The row renders through
+      // the hiccup box's own machinery with the NEW injected state.
+      var isrc = ev;
+      if (typeof ev.text === 'string' && ev.text.charAt(0) === '{' && !ev.message) {
+        try {
+          var ip = JSON.parse(ev.text);
+          if (ip && ip.message) {
+            isrc = {};
+            for (var ik in ev) isrc[ik] = ev[ik];
+            for (var ipk in ip) { if (ip[ipk] !== undefined && ip[ipk] !== null) isrc[ipk] = ip[ipk]; }
+          }
+        } catch (e5) {}
+      }
+      var itext = String(isrc.message || isrc.text || '');
+      if (itext) {
+        var imsg = { role: 'injected', text: itext, code: 'injected', ts: evTsMs(ev) };
+        if (ev.i) imsg.ei = ev.i;
+        state.messages.push(imsg);
+        appendMessage(msgContainer, scrollEl, imsg, bodyEl, state._icon, state);
+      }
     } else if (type === 'retry') {
       // v1.61.4 THE RETRY PILL: the sentinel's lifecycle rows (armed →
       // probe → recovered) merge into ONE live pill per parked turn —
@@ -5741,6 +5770,16 @@
       var nCode = msg.code ? ' data-code="' + esc(String(msg.code)) + '"' : '';
       return '<div class="msg-bubble msg-notice" data-msg-role="notice"' + nCode + miAttr + '>' +
         '<div class="fmt fmt-plain">' + esc(msg.text) + '</div></div>';
+    } else if (msg.role === 'injected') {
+      // v1.64.2 THE LOUD INJECTION — the hiccup box's NEW STATE (the
+      // user's law: "reuse the message box that appears when a model
+      // hiccups but add another state to it for when the system injects
+      // a prompt, displaying the prompt that we injected"): the SAME
+      // .msg-bubble.msg-notice container with data-code="injected" (the
+      // accent tone + the ⌁ glyph, themed) + the explicit lead so the
+      // row can never masquerade as anything but the system's prompt.
+      return '<div class="msg-bubble msg-notice" data-msg-role="injected" data-code="injected"' + miAttr + '>' +
+        '<div class="fmt fmt-plain"><b>system injected:</b> ' + esc(msg.text) + '</div></div>';
     } else if (msg.role === 'retry') {
       // v1.61.4 THE RETRY PILL: the sentinel's live/complete face —
       // warn tone while probing with the countdown, ok tone when
@@ -6015,26 +6054,104 @@
     }
     return a;
   }
+  // v1.64.1 THE SPEAKING HEADER — ONE shared derivation for every
+  // command pill (the termux exec law widened to compounds + the opencode
+  // shell pill; the user's asks: the header = the command's own program,
+  // "dynamically derived similarly to how our termux exec tool is", and
+  // compound commands speak their first 2-3 programs — "CD & grep or
+  // mkdir & ls as the header and not just the first command. We can cap
+  // it at 2 or 3 commands"). Purely derived — no program lists, no
+  // dictionaries. Answers {title, rest, fullLine, compound} or null on
+  // an empty command:
+  //   · single command → the v1.26.1 law verbatim: the program token
+  //     (assignment prefixes skipped — grammar, not the program), body =
+  //     the remainder after it ('FOO=1 python -V' → 'python' / '-V').
+  //   · 2+ segments (bash compound grammar: && || ; | & — scanned
+  //     QUOTE-AWARE, outside ' " ` and $( ) subshells; a quoted pipe is
+  //     content, never a join) → the header = the first ≤3 program
+  //     tokens joined ' & ' ('cd & grep', 'mkdir & ls & cd'), a trailing
+  //     '…' when more segments follow, body = the FULL head line (no
+  //     single remainder can honestly carry a compound).
+  // The pill reads the command's FIRST non-empty line; the full command
+  // rides the expanded detail unchanged.
+  function commandTitleParts(cmd) {
+    var raw = String(cmd == null ? '' : cmd);
+    var lines = raw.split('\n');
+    var line = '';
+    for (var li = 0; li < lines.length; li++) {
+      if (lines[li].trim()) { line = lines[li].trim(); break; }
+    }
+    if (!line) return null;
+    var segs = [], cur = '';
+    var inD = false, inS = false, inB = false, esc = false, depth = 0;
+    for (var ci = 0; ci < line.length; ci++) {
+      var ch = line[ci];
+      if (esc) { cur += ch; esc = false; continue; }
+      if (ch === '\\' && !inS) { cur += ch; esc = true; continue; }
+      if (ch === '"' && !inS && !inB) { inD = !inD; cur += ch; continue; }
+      if (ch === "'" && !inD && !inB) { inS = !inS; cur += ch; continue; }
+      if (ch === '`' && !inD && !inS) { inB = !inB; cur += ch; continue; }
+      if (!inD && !inS && !inB) {
+        if (ch === '(') { depth++; cur += ch; continue; }
+        if (ch === ')') { if (depth > 0) depth--; cur += ch; continue; }
+        if (depth === 0) {
+          var two = line.substr(ci, 2);
+          if (two === '&&' || two === '||') { segs.push(cur); cur = ''; ci++; continue; }
+          if (ch === ';' || ch === '|' || ch === '&') { segs.push(cur); cur = ''; continue; }
+        }
+      }
+      cur += ch;
+    }
+    segs.push(cur);
+    segs = segs.map(function (s) { return s.trim(); }).filter(Boolean);
+    if (!segs.length) return null;
+    if (segs.length === 1) {
+      var pm = /(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(\S+)/.exec(line);
+      if (!pm) return null;
+      var t1 = pm[1].length > 28 ? pm[1].slice(0, 28) : pm[1];
+      return {
+        title: t1,
+        rest: line.slice(pm.index + pm[0].length).trim(),
+        fullLine: line,
+        compound: false
+      };
+    }
+    var toks = [], more = false;
+    for (var si = 0; si < segs.length; si++) {
+      var pm2 = /(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(\S+)/.exec(segs[si]);
+      if (!pm2 || !pm2[1]) continue;
+      if (toks.length < 3) toks.push(pm2[1].length > 16 ? pm2[1].slice(0, 16) : pm2[1]);
+      else more = true;
+    }
+    if (!toks.length) return null;
+    return {
+      title: toks.join(' & ') + (more ? ' …' : ''),
+      rest: '',
+      fullLine: line,
+      compound: true
+    };
+  }
   function toolPillLabelParts(msg) {
     var p = (msg && msg.payload) || {};
     var label = '', tail = '', title = '', body = '';
     var tx = termuxArgsOf(p);
     if (tx && tx.action === 'exec') {
       var cmd = String((tx.inner && tx.inner.command) || '').trim();
-      // v1.26.1 THE PROGRAM TOKEN (the user's law + one grammatical
-      // refinement): the title = the command's FIRST word — except a
-      // leading NAME=value word is a POSIX assignment prefixing the
-      // utility (grammar, not the program), so the first NON-assignment
-      // word is the program. Purely derived — no program lists, no
-      // dictionaries (the user's constraint). The one regex yields the
-      // program token AND its end offset: the body = the raw command
-      // remainder after it ('FOO=1 python -V' titles 'python', body
-      // '-V'). A garbage-huge token clamps at 28 chars so a mangled pill
-      // can never blow the chip.
-      var pm = /(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(\S+)/.exec(cmd);
-      title = pm ? pm[1] : '';
-      if (title.length > 28) title = title.slice(0, 28);
-      var rest = pm ? cmd.slice(pm.index + pm[0].length).trim() : '';
+      // v1.26.1 THE PROGRAM TOKEN + v1.64.1 THE COMPOUND LAW: the shared
+      // commandTitleParts derivation carries the pill's whole header now —
+      // a single command keeps the program-token law byte-identical (the
+      // title = the first NON-assignment word; the body = the raw command
+      // remainder after it — 'FOO=1 python -V' titles 'python', body '-V';
+      // a garbage-huge token clamps at 28 chars so a mangled pill can
+      // never blow the chip), and a compound command (cd src && grep -rn
+      // foo — && || ; | scanned quote-aware) titles its first ≤3 programs
+      // 'cd & grep' with the FULL head line as the body. The 'install'
+      // join stays a label-only nicety (the activity line), the sub-verb
+      // rides the body.
+      var cp = commandTitleParts(cmd);
+      title = cp ? cp.title : '';
+      var rest = cp ? cp.rest : '';
+      body = cp ? (cp.compound ? cp.fullLine : cp.rest) : '';
       label = title;
       if (label && /^install\b/i.test(rest)) label += ' install';
       tail = label === title ? rest : rest.replace(/^install\s+/i, '');
@@ -6042,7 +6159,6 @@
       // bash / ls / cal / python3…); the body = the command's remainder
       // after it; the 'install' join stays a label-only nicety (the
       // activity line), the sub-verb rides the body.
-      body = rest;
     } else if (tx && tx.action === 'pkg') {
       // v1.26.1: the name reads the manifest's own shape — the packages
       // ARRAY ("packages":["cowsay"], the form the device's pkg events
@@ -6160,6 +6276,29 @@
             }
             else if (act === 'file_delete') { title = 'delete'; var wA = xOf(ga.path); if (wA) body = wA; }
             else if (act) { title = String(act).slice(0, 12); var wB = xOf(ga.path || ga.ws || ga.query || ga.what); if (wB) body = String(wB).slice(0, 40); }
+          } else if (fam === 'shell') {
+            // v1.64.1 THE SPEAKING HEADER (the user's ask: the opencode
+            // shell pill's collapsed header shows a static 'shell' title
+            // followed by the command — "change the collapsed tool pill
+            // header from shell to grep or whatever the first word of the
+            // command is… dynamically derived similarly to how our termux
+            // exec tool is"). 'shell' is opencode's own native tool name —
+            // no app tool is named shell, so the family is unambiguous.
+            // The SAME shared commandTitleParts derivation the termux exec
+            // pill titles by (compound-aware: 'cd src && grep -rn foo'
+            // titles 'cd & grep', a single 'grep -rn foo' titles 'grep'
+            // with the remainder as the body — 1:1 with the native pill).
+            // A command that doesn't parse keeps the v1.24.5 fallback
+            // (title = the tool's own name, body = the engine-derived
+            // summary — never a blank pill).
+            var shParts = commandTitleParts(String(ga.command || ''));
+            if (shParts) {
+              title = shParts.title;
+              body = shParts.compound ? shParts.fullLine : shParts.rest;
+              label = title;
+              if (label && /^install\b/i.test(body)) label += ' install';
+              tail = '';
+            }
           }
         }
       }
@@ -7530,6 +7669,8 @@
       // v1.23.2 THE ONE PILL seams (scripts/v1232-one-pill-rig.cjs)
       termuxArgsOf: termuxArgsOf,
       toolPillLabelParts: toolPillLabelParts,
+      // v1.64.1 THE SPEAKING HEADER seam (scripts/v1640-loud-system-rig.mjs)
+      commandTitleParts: commandTitleParts,
       // v1.33.2 THE HONEST TAILS seams (scripts/v1350-ownership-rig.cjs)
       pathTail: pathTail,
       toolArgsOf: toolArgsOf,

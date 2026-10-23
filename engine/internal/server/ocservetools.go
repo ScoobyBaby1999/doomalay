@@ -79,7 +79,21 @@ func (s *Server) toolsBlockFor(sess *store.Session, serveMode, mcpBound bool) st
         }
         b.WriteString(strings.Join(names, ", "))
         b.WriteString(". Their pills read bare in the user's chat (calculator, web_search, …) — same tools, friendlier name. Artifacts created through them land in this chat's drawer automatically. The gated ones (workspace, hublib, skills, termux) teach their own honest state when their switch is off.\n")
-        b.WriteString("Pick whichever tool fits the job — your native ones for files/shell/web, the doomalay ones for documents, archives, the journal, the other chatbots (fleet), the app's library (hublib/skills), calculations, and the device's Termux shell (termux).]")
+        // v1.65.3 THE OPEN SHELF (the user's ask: "hublib and web_search
+        // don't work for opencode, hublib isn't exposed to opencode, and
+        // web_search doesn't work without a travily key, websearch ideally
+        // should work with simple google, duckduckgo, another opensource
+        // browser as it does with the other providers"): the pick line must
+        // route each JOB to the tool that actually works — WEB SEARCH rides
+        // the app's own KEYLESS engine (the same DuckDuckGo/Bing ladder
+        // every other provider rides; the model's own websearch tool needs
+        // a paid provider key this device does not have), the app's hub
+        // library is doomalay_hublib (browse/download templates, skills,
+        // personas, themes), and GitHub/repo work — code, issues, PRs,
+        // RELEASES, tags, workflows — rides doomalay_workspace. The names
+        // ride the ARMED SHELF's first-class spelling (doomalay_<name>,
+        // called DIRECTLY — the v1.64.0 law above).
+b.WriteString("Pick whichever tool fits the job: for files and the shell use your native read/write/edit/grep/shell; for WEB SEARCH always use doomalay_web_search first — it is the app's own keyless engine (DuckDuckGo/Bing, the same search every other provider rides; your own websearch tool needs a paid provider key this device does not have); for GitHub and repos — code, issues, PRs, releases, tags, workflows — use doomalay_workspace; for the app's hub library (templates, skills, scripts, docs, personas, themes) use doomalay_hublib; for documents, archives, the journal, the other chatbots (fleet) and calculations use the matching doomalay tools; for the device's Termux shell use doomalay_termux.]")
         return b.String()
 }
 

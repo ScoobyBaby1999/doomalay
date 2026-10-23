@@ -401,6 +401,9 @@ func runPlainTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- error, r
                 msgs = append(msgs,
                         Message{Role: "assistant", Content: streamed},
                         Message{Role: "user", Content: SeamNudgeText})
+                // v1.64.2 THE LOUD INJECTION: the direct-path seam nudge
+                // renders too (the injected row — never a silent injection).
+                EmitInjected(ch, SeamNudgeText)
                 seamReq.Messages = msgs
                 final, err = netSuspendedLoopPlain(ctx, ch, seamReq)
         }

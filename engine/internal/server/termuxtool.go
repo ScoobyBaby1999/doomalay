@@ -180,7 +180,7 @@ func (s *Server) runTermuxActionCore(ctx context.Context, sessionID, argJSON str
 	args, pn, ok := llm.ParseToolArgs(argJSON)
 	notes = append(notes, pn...)
 	if !ok {
-		return "OBSERVATION:\nerror: arguments must be a JSON object — the JSON is malformed beyond mechanical repair (truncated or broken syntax). " + llm.RetrySameCallDirective, notes
+		return "OBSERVATION:\nerror: arguments must be a JSON object — the JSON is malformed beyond mechanical repair (truncated or broken syntax). " + llm.RetryDirectiveFor("termux", argJSON), notes
 	}
 	if args == nil {
 		args = map[string]any{}
@@ -205,7 +205,7 @@ func (s *Server) runTermuxActionCore(ctx context.Context, sessionID, argJSON str
 			// speaks, and it speaks the anti-simplification order.
 			m, mn, mok := llm.ParseToolArgs(nested)
 			if !mok {
-				return "OBSERVATION:\nerror: args must be a JSON object of the action's arguments (e.g. {\"path\":\"notes.txt\"}) — the nested JSON is malformed beyond mechanical repair. " + llm.RetrySameCallDirective, notes
+				return "OBSERVATION:\nerror: args must be a JSON object of the action's arguments (e.g. {\"path\":\"notes.txt\"}) — the nested JSON is malformed beyond mechanical repair. " + llm.RetryDirectiveFor("termux", nested), notes
 			}
 			notes = append(notes, mn...)
 			for k, v := range m {
@@ -305,7 +305,7 @@ func (s *Server) runTermuxActionCore(ctx context.Context, sessionID, argJSON str
 		// v1.61.1: the unknown-action verdict teaches the fix and
 		// FORBIDS the simplification spiral (the live kenny log
 		// showed the free model "simplifying" after every fumble).
-		out = "OBSERVATION:\nerror: unknown termux action \"" + action + "\" — the action name must be one of the listed verbs, spelled exactly. " + llm.RetrySameCallDirective + "\n" + termuxHelpText(roots)
+		out = "OBSERVATION:\nerror: unknown termux action \"" + action + "\" — the action name must be one of the listed verbs, spelled exactly. " + llm.RetryDirectiveFor("termux", argJSON) + "\n" + termuxHelpText(roots)
 	}
 	return out, notes
 }

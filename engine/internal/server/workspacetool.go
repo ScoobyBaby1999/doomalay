@@ -83,7 +83,7 @@ func (s *Server) runWorkspaceActionCore(ctx context.Context, sessionID, argJSON 
 	args, pn, ok := llm.ParseToolArgs(argJSON)
 	notes = append(notes, pn...)
 	if !ok {
-		return "OBSERVATION:\nerror: arguments must be a JSON object — the JSON is malformed beyond mechanical repair. " + llm.RetrySameCallDirective, notes
+		return "OBSERVATION:\nerror: arguments must be a JSON object — the JSON is malformed beyond mechanical repair. " + llm.RetryDirectiveFor("workspace", argJSON), notes
 	}
 	if args == nil {
 		args = map[string]any{}
@@ -260,6 +260,18 @@ func (s *Server) wsLastReadGet(sessionID string) (wsLastReadEntry, bool) {
 // here — one source of truth for the full repo hand). `bound` carries
 // the resolvable workspaces (session-bound for ACTION turns; the single
 // path-id row for the REST twin).
+// wsVerbatimArgs — v1.64.2 THE VERBATIM LAW's workspace face: the parsed
+// args map re-marshaled as the model's own call (the raw wire string is
+// not in scope inside the verb runner; the parsed map IS the call's
+// content — deterministic, programmatic, exactly what the model sent).
+func wsVerbatimArgs(args map[string]any) string {
+        b, err := json.Marshal(args)
+        if err != nil || len(b) == 0 {
+                return ""
+        }
+        return string(b)
+}
+
 func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace, args map[string]any) string {
 	get := func(k string) string {
 		v, _ := args[k].(string)
@@ -365,7 +377,7 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
 		ws := toolWS                                 // v1.19.2: resolved once above (bound rows + the public fallback)
 		path := forge.NormalizeTreePath(get("path")) // v0.82.4: "./f.go" → "f.go"
 		if path == "" {
-			return "OBSERVATION:\nerror: read needs {\"ws\":…, \"path\":\"the/file\"} — range: head:80 | tail:40 | lines:10-60" + " " + llm.RetrySameCallDirective
+			return "OBSERVATION:\nerror: read needs {\"ws\":…, \"path\":\"the/file\"} — range: head:80 | tail:40 | lines:10-60" + " " + llm.RetryDirectiveFor("workspace "+action, wsVerbatimArgs(args))
 		}
 		fc, err := s.wsClient(ws).File(ctx, path, refOrWS(get("ref"), ws), get("range"), s.wsToken(ws))
 		if err != nil {
@@ -388,7 +400,7 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
 		ws := toolWS // v1.19.2: resolved once above (bound rows + the public fallback)
 		q := get("query")
 		if q == "" {
-			return "OBSERVATION:\nerror: grep needs {\"ws\":…, \"query\":\"text\"}" + " " + llm.RetrySameCallDirective
+			return "OBSERVATION:\nerror: grep needs {\"ws\":…, \"query\":\"text\"}" + " " + llm.RetryDirectiveFor("workspace "+action, wsVerbatimArgs(args))
 		}
 		// v1.56.0 THE SOPHISTICATED GREP: the full option set rides
 		// the verb (regex by default, globs, context lines, case,
@@ -439,7 +451,7 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
 		}
 		path := strings.Trim(get("path"), "/")
 		if path == "" {
-			return "OBSERVATION:\nerror: put needs {\"ws\":…, \"path\":\"file\", \"content\":\"…\", \"message\":\"commit msg\", \"branch\":\"…\"}" + " " + llm.RetrySameCallDirective
+			return "OBSERVATION:\nerror: put needs {\"ws\":…, \"path\":\"file\", \"content\":\"…\", \"message\":\"commit msg\", \"branch\":\"…\"}" + " " + llm.RetryDirectiveFor("workspace "+action, wsVerbatimArgs(args))
 		}
 		if strings.Contains(path, "..") {
 			return "OBSERVATION:\nerror: path traversal refused"
@@ -503,7 +515,7 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
 		}
 		path := strings.Trim(get("path"), "/")
 		if path == "" || strings.Contains(path, "..") {
-			return "OBSERVATION:\nerror: patch needs {\"ws\":…, \"path\":\"file\", \"edits\":[{\"old\":\"…\",\"new\":\"…\"}], \"message\":\"…\", \"branch\":\"…\", \"dry_run\":true?}" + " " + llm.RetrySameCallDirective
+			return "OBSERVATION:\nerror: patch needs {\"ws\":…, \"path\":\"file\", \"edits\":[{\"old\":\"…\",\"new\":\"…\"}], \"message\":\"…\", \"branch\":\"…\", \"dry_run\":true?}" + " " + llm.RetryDirectiveFor("workspace "+action, wsVerbatimArgs(args))
 		}
 		specs, obs := wsParseEdits(args)
 		if obs != "" {
@@ -577,7 +589,7 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
 		}
 		message := get("message")
 		if message == "" {
-			return "OBSERVATION:\nerror: commit needs {\"message\":\"…\"} — one honest message for the whole changeset" + " " + llm.RetrySameCallDirective
+			return "OBSERVATION:\nerror: commit needs {\"message\":\"…\"} — one honest message for the whole changeset" + " " + llm.RetryDirectiveFor("workspace "+action, wsVerbatimArgs(args))
 		}
 		rawFiles, ok := args["files"].([]any)
 		if !ok || len(rawFiles) == 0 {
@@ -770,7 +782,7 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
 		}
 		head := get("head")
 		if head == "" {
-			return "OBSERVATION:\nerror: pr needs {\"ws\":…, \"head\":\"branch\" (owner:branch for a fork), \"base\":\"branch\", \"title\":\"…\", \"body\":\"…\"}" + " " + llm.RetrySameCallDirective
+			return "OBSERVATION:\nerror: pr needs {\"ws\":…, \"head\":\"branch\" (owner:branch for a fork), \"base\":\"branch\", \"title\":\"…\", \"body\":\"…\"}" + " " + llm.RetryDirectiveFor("workspace "+action, wsVerbatimArgs(args))
 		}
 		base := get("base")
 		if base == "" {
@@ -802,7 +814,7 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
 			name = get("branch")
 		}
 		if name == "" {
-			return "OBSERVATION:\nerror: branch needs {\"ws\":…, \"name\":\"new-branch\", \"from\":\"main\"|\"\"}" + " " + llm.RetrySameCallDirective
+			return "OBSERVATION:\nerror: branch needs {\"ws\":…, \"name\":\"new-branch\", \"from\":\"main\"|\"\"}" + " " + llm.RetryDirectiveFor("workspace "+action, wsVerbatimArgs(args))
 		}
 		url, err := s.wsClient(ws).CreateBranch(ctx, name, get("from"), s.wsToken(ws))
 		if err != nil {
@@ -817,7 +829,7 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
 		}
 		title := get("title")
 		if title == "" {
-			return "OBSERVATION:\nerror: issue_create needs {\"ws\":…, \"title\":\"…\", \"body\":\"…\", \"labels\":[\"bug\"]}" + " " + llm.RetrySameCallDirective
+			return "OBSERVATION:\nerror: issue_create needs {\"ws\":…, \"title\":\"…\", \"body\":\"…\", \"labels\":[\"bug\"]}" + " " + llm.RetryDirectiveFor("workspace "+action, wsVerbatimArgs(args))
 		}
 		var labels []string
 		if raw, ok := args["labels"].([]any); ok {
@@ -842,7 +854,7 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
 			n = wsArgInt(args, "issue", 0)
 		}
 		if n == 0 {
-			return "OBSERVATION:\nerror: issue_comment needs {\"ws\":…, \"number\":123, \"body\":\"…\"}" + " " + llm.RetrySameCallDirective
+			return "OBSERVATION:\nerror: issue_comment needs {\"ws\":…, \"number\":123, \"body\":\"…\"}" + " " + llm.RetryDirectiveFor("workspace "+action, wsVerbatimArgs(args))
 		}
 		url, err := s.wsClient(ws).IssueComment(ctx, n, get("body"), s.wsToken(ws))
 		if err != nil {
@@ -859,7 +871,7 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
 			n = wsArgInt(args, "issue", 0)
 		}
 		if n == 0 {
-			return "OBSERVATION:\nerror: issue_close needs {\"ws\":…, \"number\":123} (issue_open reopens)" + " " + llm.RetrySameCallDirective
+			return "OBSERVATION:\nerror: issue_close needs {\"ws\":…, \"number\":123} (issue_open reopens)" + " " + llm.RetryDirectiveFor("workspace "+action, wsVerbatimArgs(args))
 		}
 		state := "closed"
 		if action == "issue_open" {
@@ -880,7 +892,7 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
 			n = wsArgInt(args, "pr", 0)
 		}
 		if n == 0 {
-			return "OBSERVATION:\nerror: pr_diff needs {\"ws\":…, \"number\":12} — the raw unified diff of the pull request (read the changes, review them, then pr_review submits your verdict)" + " " + llm.RetrySameCallDirective
+			return "OBSERVATION:\nerror: pr_diff needs {\"ws\":…, \"number\":12} — the raw unified diff of the pull request (read the changes, review them, then pr_review submits your verdict)" + " " + llm.RetryDirectiveFor("workspace "+action, wsVerbatimArgs(args))
 		}
 		diff, err := s.wsClient(ws).PRDiff(ctx, n, s.wsToken(ws))
 		if err != nil {
@@ -901,7 +913,7 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
 			n = wsArgInt(args, "pr", 0)
 		}
 		if n == 0 {
-			return "OBSERVATION:\nerror: pr_comment needs {\"ws\":…, \"number\":12, \"body\":\"…\"}" + " " + llm.RetrySameCallDirective
+			return "OBSERVATION:\nerror: pr_comment needs {\"ws\":…, \"number\":12, \"body\":\"…\"}" + " " + llm.RetryDirectiveFor("workspace "+action, wsVerbatimArgs(args))
 		}
 		url, err := s.wsClient(ws).IssueComment(ctx, n, get("body"), s.wsToken(ws))
 		if err != nil {
@@ -918,7 +930,7 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
 			n = wsArgInt(args, "pr", 0)
 		}
 		if n == 0 {
-			return "OBSERVATION:\nerror: pr_review needs {\"ws\":…, \"number\":12, \"body\":\"your review\", \"event\":\"approve\"|\"request_changes\"|\"comment\"}" + " " + llm.RetrySameCallDirective
+			return "OBSERVATION:\nerror: pr_review needs {\"ws\":…, \"number\":12, \"body\":\"your review\", \"event\":\"approve\"|\"request_changes\"|\"comment\"}" + " " + llm.RetryDirectiveFor("workspace "+action, wsVerbatimArgs(args))
 		}
 		event := get("event")
 		if event == "" {
@@ -939,7 +951,7 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
 			n = wsArgInt(args, "pr", 0)
 		}
 		if n == 0 {
-			return "OBSERVATION:\nerror: pr_merge needs {\"ws\":…, \"number\":12, \"method\":\"merge\"|\"squash\"|\"rebase\", \"title\":\"…\", \"message\":\"…\"}" + " " + llm.RetrySameCallDirective
+			return "OBSERVATION:\nerror: pr_merge needs {\"ws\":…, \"number\":12, \"method\":\"merge\"|\"squash\"|\"rebase\", \"title\":\"…\", \"message\":\"…\"}" + " " + llm.RetryDirectiveFor("workspace "+action, wsVerbatimArgs(args))
 		}
 		method := get("method")
 		if method == "" {
@@ -957,7 +969,7 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
 		}
 		title := get("title")
 		if title == "" {
-			return "OBSERVATION:\nerror: discussion_post needs {\"ws\":…, \"title\":\"…\", \"body\":\"…\", \"category\":\"Q&A\"|\"\"}" + " " + llm.RetrySameCallDirective
+			return "OBSERVATION:\nerror: discussion_post needs {\"ws\":…, \"title\":\"…\", \"body\":\"…\", \"category\":\"Q&A\"|\"\"}" + " " + llm.RetryDirectiveFor("workspace "+action, wsVerbatimArgs(args))
 		}
 		out, err := s.wsClient(ws).DiscussionPost(ctx, title, get("body"), get("category"), s.wsToken(ws))
 		if err != nil {
@@ -971,7 +983,7 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
 		}
 		workflow := get("workflow")
 		if workflow == "" {
-			return "OBSERVATION:\nerror: workflow_dispatch needs {\"ws\":…, \"workflow\":\"ci.yml\", \"ref\":\"main\"|\"\", \"inputs\":{\"key\":\"value\"}}" + " " + llm.RetrySameCallDirective
+			return "OBSERVATION:\nerror: workflow_dispatch needs {\"ws\":…, \"workflow\":\"ci.yml\", \"ref\":\"main\"|\"\", \"inputs\":{\"key\":\"value\"}}" + " " + llm.RetryDirectiveFor("workspace "+action, wsVerbatimArgs(args))
 		}
 		ref := get("ref")
 		if ref == "" {
@@ -997,7 +1009,7 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
 		}
 		path := strings.Trim(get("path"), "/")
 		if path == "" {
-			return "OBSERVATION:\nerror: file_delete needs {\"ws\":…, \"path\":\"the/file\", \"branch\":\"…\"|\"\", \"message\":\"…\"|\"\"}" + " " + llm.RetrySameCallDirective
+			return "OBSERVATION:\nerror: file_delete needs {\"ws\":…, \"path\":\"the/file\", \"branch\":\"…\"|\"\", \"message\":\"…\"|\"\"}" + " " + llm.RetryDirectiveFor("workspace "+action, wsVerbatimArgs(args))
 		}
 		if strings.Contains(path, "..") {
 			return "OBSERVATION:\nerror: path traversal refused"
@@ -1038,7 +1050,7 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
 		tag := get("tag")
 		sha := get("sha")
 		if tag == "" || sha == "" {
-			return "OBSERVATION:\nerror: tag_create needs {\"ws\":…, \"tag\":\"v1.2.0\", \"sha\":\"<commit sha>\", \"message\":\"annotation\"|\"\"} — the sha comes from view commits (or the branch head)" + " " + llm.RetrySameCallDirective
+			return "OBSERVATION:\nerror: tag_create needs {\"ws\":…, \"tag\":\"v1.2.0\", \"sha\":\"<commit sha>\", \"message\":\"annotation\"|\"\"} — the sha comes from view commits (or the branch head)" + " " + llm.RetryDirectiveFor("workspace "+action, wsVerbatimArgs(args))
 		}
 		ref, err := s.wsClient(ws).CreateTag(ctx, tag, sha, get("message"), s.wsToken(ws))
 		if err != nil {
@@ -1056,7 +1068,7 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
 		}
 		tag := get("tag")
 		if tag == "" {
-			return "OBSERVATION:\nerror: release_create needs {\"ws\":…, \"tag\":\"v1.2.0\", \"name\":\"…\"|\"\", \"body\":\"notes\"|\"\", \"target\":\"commitish\"|\"\"}" + " " + llm.RetrySameCallDirective
+			return "OBSERVATION:\nerror: release_create needs {\"ws\":…, \"tag\":\"v1.2.0\", \"name\":\"…\"|\"\", \"body\":\"notes\"|\"\", \"target\":\"commitish\"|\"\"}" + " " + llm.RetryDirectiveFor("workspace "+action, wsVerbatimArgs(args))
 		}
 		url, err := s.wsClient(ws).CreateRelease(ctx, tag, get("name"), get("body"), get("target"), s.wsToken(ws))
 		if err != nil {
@@ -1080,7 +1092,7 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
 		}
 		name := get("name")
 		if name == "" {
-			return "OBSERVATION:\nerror: create needs {\"kind\":\"github\", \"name\":\"repo-name\", \"description\":\"…\", \"license\":\"mit\"|\"\", \"gitignore\":\"…\"|\"\", \"private\":false} — or for HF: {\"kind\":\"hf\", \"hf_type\":\"space|dataset|model|bucket\", \"sdk\":\"static\", …}" + " " + llm.RetrySameCallDirective
+			return "OBSERVATION:\nerror: create needs {\"kind\":\"github\", \"name\":\"repo-name\", \"description\":\"…\", \"license\":\"mit\"|\"\", \"gitignore\":\"…\"|\"\", \"private\":false} — or for HF: {\"kind\":\"hf\", \"hf_type\":\"space|dataset|model|bucket\", \"sdk\":\"static\", …}" + " " + llm.RetryDirectiveFor("workspace "+action, wsVerbatimArgs(args))
 		}
 		ws, err := s.createWorkspaceRepoTyped(ctx, kind, name, get("description"), get("license"), get("gitignore"), get("hf_type"), get("sdk"), wsArgBool(args, "private"))
 		if err != nil {

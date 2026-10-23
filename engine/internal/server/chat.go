@@ -1211,8 +1211,8 @@ func (s *Server) lastInflightUserText(sessionID string) string {
 func continueTailIsAssistant(events []*store.Event) bool {
         for i := len(events) - 1; i >= 0; i-- {
                 switch events[i].EventType {
-                case "error", "status", "hide", "notice", "title":
-                        continue // bookkeeping rows never own the tail
+                case "error", "status", "hide", "notice", "injected", "title":
+                        continue // bookkeeping rows never own the tail (v1.64.2: injected rows are the PROMPT'S COPY, not a turn)
                 case "assistant", "assistant_delta", "tool_use", "tool_result", "thinking":
                         return true
                 default:
@@ -2374,6 +2374,11 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, pipe *chatPipe, sess
                 // only for the cut shape (the history ends mid-assistant).
                 if cont.nudge != "" {
                         history = append(history, llm.Message{Role: "user", Content: cont.nudge})
+                        // v1.64.2 THE LOUD INJECTION: the continue nudge is a
+                        // system-injected prompt — persist + forward the row (the
+                        // hiccup box's injected state renders it; the transcript
+                        // keeps it). Never a silent injection.
+                        s.emitInjectedRow(pipe, sessionID, cont.nudge)
                 }
         } else {
                 history = trimInFlightUser(history, userText)
@@ -2677,6 +2682,17 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, pipe *chatPipe, sess
                         // alone renders as an ordinary notice).
                         if chunk.Type == "notice" {
                                 ev["code"] = "tool-hiccup"
+                                ev["message"] = chunk.Text
+                        }
+                        // v1.64.2 THE LOUD INJECTION: a system-injected
+                        // prompt arrives as its OWN event type; the wire
+                        // shape mirrors notice's (message + the injected
+                        // code) so the PWA renders it through the hiccup
+                        // box's machinery with the NEW injected state —
+                        // never a silent injection (frontend + transcript
+                        // both see exactly what the model was told).
+                        if chunk.Type == "injected" {
+                                ev["code"] = "injected"
                                 ev["message"] = chunk.Text
                         }
                         if chunk.Sources != nil {
@@ -3037,6 +3053,25 @@ func (s *Server) forwardEvents(ctx context.Context, pipe *chatPipe, sessionID st
                         } else if b, err := json.Marshal(nEv); err == nil {
                                 content = string(b)
                         }
+                case "injected":
+                        // v1.64.2 THE LOUD INJECTION: the system-injected
+                        // prompt rows persist {message, code:"injected"} —
+                        // byte-identical to the notice law so the replay
+                        // lift reads them back.
+                        iEv := map[string]any{}
+                        for _, k := range []string{"message", "code"} {
+                                if v, ok := ev[k]; ok && v != nil {
+                                        iEv[k] = v
+                                }
+                        }
+                        if t, ok := ev["text"].(string); ok && t != "" {
+                                iEv["message"] = t
+                        }
+                        if len(iEv) == 0 {
+                                content = ""
+                        } else if b, err := json.Marshal(iEv); err == nil {
+                                content = string(b)
+                        }
                 case "error":
                         // v0.13: error events carry "message" (human text) +
                         // "error" (code) — persist the human-readable one.
@@ -3240,6 +3275,19 @@ func (s *Server) emit(pipe *chatPipe, sessionID, evType, content, toolUseID stri
                 } else {
                         out["message"] = content
                 }
+        case "injected":
+                // v1.64.2 THE LOUD INJECTION: injected rows persist {message,
+                // code:"injected"} — the same lift-onto-the-frame law the
+                // notice rows ride, so the PWA's replay + live paths read
+                // ev.message and the hiccup box renders the injected state.
+                var iobj map[string]any
+                if json.Unmarshal([]byte(content), &iobj) == nil && len(iobj) > 0 {
+                        for k, v := range iobj {
+                                out[k] = v
+                        }
+                } else {
+                        out["message"] = content
+                }
         case "error":
                 // v0.14: error content is usually a JSON object
                 // {"error":"code","message":"human text"} — parse it so the
@@ -3304,6 +3352,18 @@ func (s *Server) emit(pipe *chatPipe, sessionID, evType, content, toolUseID stri
 func (s *Server) emitNotice(pipe *chatPipe, sessionID, message, code string) {
         payload, _ := json.Marshal(map[string]string{"message": message, "code": code})
         s.emit(pipe, sessionID, "notice", string(payload), "")
+}
+
+// emitInjectedRow (v1.64.2 THE LOUD INJECTION) — persist + forward ONE
+// system-injected prompt row (the server-side sites — the continue nudge —
+// speak through here; the llm-internal sites ride the ChatChunk). The
+// event type + the code mirror the notice law; the PWA renders it
+// through the hiccup box's machinery with the NEW injected state — the
+// user sees exactly what the model was told, the transcript keeps it,
+// the exports carry it. Never a silent injection.
+func (s *Server) emitInjectedRow(pipe *chatPipe, sessionID, prompt string) {
+        payload, _ := json.Marshal(map[string]string{"message": prompt, "code": "injected"})
+        s.emit(pipe, sessionID, "injected", string(payload), "")
 }
 
 // persistNoticeOnly — the no-pipe twin (session-create time notices: the

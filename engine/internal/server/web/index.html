@@ -2308,6 +2308,26 @@
     content: '⚠ '; opacity: 1;
   }
 
+  /* v1.64.2 THE LOUD INJECTION — the hiccup box's NEW STATE (the user's
+     law: "reuse the message box that appears when a model hiccups but add
+     another state to it for when the system injects a prompt, displaying
+     the prompt that we injected"): a system-injected prompt rides the
+     same .msg-bubble.msg-notice container with the ACCENT tone + the ⌁
+     glyph — the user sees exactly what the model was told. Theme tokens
+     only (--accent / --accent-rgb); nothing hardcoded. */
+  .msg-notice[data-code="injected"] {
+    color: var(--accent);
+    background: rgba(var(--accent-rgb), 0.1);
+    border-color: rgba(var(--accent-rgb), 0.32);
+  }
+  .msg-notice[data-code="injected"]::before {
+    content: '⌁ '; opacity: 1; font-weight: 600;
+  }
+  .msg-notice[data-code="injected"] .fmt-plain b {
+    font-weight: 600;
+    -webkit-user-select: none; user-select: none;
+  }
+
   /* ── v0.37 MESSAGE PRESENCE — rows, time chips, day dividers ──
      User/assistant bubbles ride inside a .msg-row (flex column) so the
      time chip can sit UNDER the bubble — outside it, because the Formatter

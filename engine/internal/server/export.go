@@ -106,11 +106,40 @@ func foldEvents(events []*store.Event) []foldedRow {
                         if line, _ := renderRetryLine(ev); line != "" {
                                 rows = append(rows, foldedRow{Seq: ev.Seq, Type: "retry", Text: line, At: ev.CreatedAt})
                         }
+                        case "injected":
+                        // v1.64.2 THE LOUD INJECTION: the system-injected prompt
+                        // rows ride the export too — the user's law: "the system
+                        // should never inject a prompt without making it clear
+                        // for both the frontend and the chat transcript".
+                        // THE ACCUMULATOR BREAK (the live rig's conviction): an
+                        // injected prompt is a USER-SIDE row — it ends the
+                        // assistant's reply run exactly like a tool row does;
+                        // the next delta OPENS A NEW assistant row. Without
+                        // this, the delta case's rows[len(rows)-1] overwrite
+                        // CLOBBERED the injected row the moment the next
+                        // assistant_delta landed (the fold ate the injection).
+                        curAssistant, curThinking = nil, nil
+                        if msg := injectedMessage(ev.Content); msg != "" {
+                                rows = append(rows, foldedRow{Seq: ev.Seq, Type: "injected", Text: msg, At: ev.CreatedAt})
+                        }
                         case "status":
                         rows = append(rows, foldedRow{Seq: ev.Seq, Type: "status", Text: ev.Content, At: ev.CreatedAt, Hidden: true})
                 }
         }
         return rows
+}
+
+// injectedMessage lifts the {message, code:"injected"} payload out of one
+// persisted injected row ("" on a garbage row — skipped).
+func injectedMessage(content string) string {
+        var ij struct {
+                Message string `json:"message"`
+                Code    string `json:"code"`
+        }
+        if json.Unmarshal([]byte(content), &ij) != nil || ij.Message == "" {
+                return ""
+        }
+        return ij.Message
 }
 
 // renderRetryLine renders one sentinel lifecycle row's export text.
@@ -306,6 +335,10 @@ func (s *Server) handleSessionExport(w http.ResponseWriter, r *http.Request) {
                                 // v1.61.4 THE RETRY PILL: the sentinel's lifecycle
                                 // rides the export (the probes are the turn's truth).
                                 fmt.Fprintf(&b, "> ↻ %s\n\n", row.Text)
+                                                case "injected":
+                                // v1.64.2 THE LOUD INJECTION: every system-injected
+                                // prompt rides the transcript verbatim.
+                                fmt.Fprintf(&b, "> ⌁ system injected: %s\n\n", row.Text)
                         }
                 }
                 w.Write([]byte(b.String()))
@@ -364,6 +397,8 @@ func (s *Server) handleSessionExport(w http.ResponseWriter, r *http.Request) {
                                 fmt.Fprintf(&b, "[error] %s\n\n", row.Text)
                         case "retry":
                                 fmt.Fprintf(&b, "[retry] %s\n\n", row.Text)
+                                                case "injected":
+                                fmt.Fprintf(&b, "[system injected] %s\n\n", row.Text)
                         }
                 }
                 w.Write([]byte(b.String()))
@@ -416,6 +451,8 @@ func (s *Server) handleSessionExport(w http.ResponseWriter, r *http.Request) {
                                 fmt.Fprintf(&b, "<div class=\"e\">⚠️ <b>error:</b> <pre>%s</pre></div>\n", htmlEsc(row.Text))
                         case "retry":
                                 fmt.Fprintf(&b, "<div class=\"e\">↻ <b>auto-retry:</b> <pre>%s</pre></div>\n", htmlEsc(row.Text))
+                                                case "injected":
+                                fmt.Fprintf(&b, "<div class=\"t\">⌁ <b>system injected:</b> <pre>%s</pre></div>\n", htmlEsc(row.Text))
                         }
                 }
                 w.Write([]byte(b.String()))
