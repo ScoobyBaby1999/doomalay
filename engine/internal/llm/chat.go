@@ -235,6 +235,21 @@ type openAIChunk struct {
                         ReasoningTokens int64 `json:"reasoning_tokens"`
                 } `json:"completion_tokens_details,omitempty"`
         } `json:"usage,omitempty"`
+        // v1.67.3 THE LOUD 429: OpenRouter (and OpenAI-compat hosts) kill a
+        // 200-accepted request MID-STREAM with a bare error frame —
+        // data: {"error":{"code":429,"message":…}} — documented for their
+        // free models' upstream rate limits. The old reader parsed it as a
+        // choice-less chunk and DROPPED it silently; the stream then ended
+        // "clean" and the turn died as an empty shell. The frame is now a
+        // first-class verdict: 429/rate-limit arms the retry sentinel.
+        Error *openAIStreamError `json:"error,omitempty"`
+}
+
+// openAIStreamError is the mid-stream error frame's payload
+// (v1.67.3): code + message (+ the metadata some hosts add).
+type openAIStreamError struct {
+        Code    any    `json:"code"`
+        Message string `json:"message"`
 }
 
 // openAIToolCallDelta is one streamed tool-call fragment.
@@ -1460,6 +1475,42 @@ return nil, nil, errHTTPAlreadyEmitted // v1.52.1: the caller must see the FAILU
                 var chunk openAIChunk
                 if err := json.Unmarshal([]byte(data), &chunk); err != nil {
                         continue
+                }
+                // v1.67.3 THE LOUD 429 — THE MID-STREAM ERROR FRAME: a
+                // data:{"error":{...}} frame after HTTP 200 (OpenRouter's
+                // documented free-model kill shape — upstream 429s land
+                // here, not on the POST's status) used to parse as a
+                // choice-less chunk and DIE silently: the stream ended
+                // "clean", the turn fell through to the empty-reply shell,
+                // and the user saw an interrupt with no sentinel, no pill,
+                // nothing. The frame is now the honest verdict it is: a
+                // 429/rate-limit frame arms the retry sentinel (the class
+                // rides the wrap; the turn parks + the pill shows + the
+                // auto-continue owns the recovery); every other frame
+                // surfaces as the honest stream error.
+                if chunk.Error != nil && chunk.Error.Message != "" {
+                        frame := *chunk.Error
+                        codeStr := ""
+                        switch v := frame.Code.(type) {
+                        case float64:
+                                codeStr = strconv.Itoa(int(v))
+                        case string:
+                                codeStr = v
+                        }
+                        obs.EmitS(ctx, obs.ErrorEv, "where", "sse_error_frame", "model", req.Model,
+                                "provider", req.Provider, "code", codeStr, "message", frame.Message)
+                        raw := fmt.Sprintf("%s (mid-stream error from %s)", frame.Message, providerLabel(req.Provider))
+                        if codeStr != "" {
+                                raw = fmt.Sprintf("%s: %s (mid-stream error from %s)", codeStr, frame.Message, providerLabel(req.Provider))
+                        }
+                        if codeStr == "429" || strings.Contains(strings.ToLower(frame.Message), "rate limit") ||
+                                strings.Contains(strings.ToLower(frame.Message), "too many requests") {
+                                // the sentinel class: the turn parks, the pill
+                                // shows, the timer probes, the auto-continue
+                                // resumes — never a silent interrupt again.
+                                return usage, calls, wrapRetryable(fmt.Errorf("%s", raw), "429", req.Provider, 0)
+                        }
+                        return usage, calls, fmt.Errorf("stream: %s", raw)
                 }
                 for _, choice := range chunk.Choices {
                         if choice.FinishReason == "length" {
