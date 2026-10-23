@@ -328,6 +328,22 @@ var defs = []Def{
 			str("prompt", "The question to ask the other models.", true),
 			prop("models", "Optional provider/model ids to consult.", PropArray, false),
 		}},
+	// ── v1.73.2 THE JOB LAYER (PLAN-V173 §v1.73.2): the lane trio ──
+	// Always-on (GateNone) — the model's handle on its own background
+	// lanes. These NEVER wrap in the grace window (self-reference).
+	{Name: "job_status",
+		Desc: "Check one background job (a tool call that outlived its grace window and moved to its own lane instead of blocking the chat). Returns RUNNING (with the honest elapsed) or the terminal result (completed/failed/cancelled). You do NOT need to poll — completions land in the chat automatically — but this checks on demand.",
+		Props: []PropDef{
+			str("id", "The job id from the JOB_STARTED ticket (j_…).", true),
+		}},
+	{Name: "job_kill",
+		Desc: "Stop one background job. The stop is best-effort: it kills the lane's context (work that honors cancellation aborts), but work already in flight may still finish quietly — you will not hear from it again. A cancelled job stays cancelled.",
+		Props: []PropDef{
+			str("id", "The job id from the JOB_STARTED ticket (j_…).", true),
+		}},
+	{Name: "job_list",
+		Desc:  "List this chat's background jobs — every lane, working or terminal, newest first (the ids for job_status/job_kill).",
+		Props: []PropDef{}},
 }
 
 // Defs returns the registry (read-only by convention).

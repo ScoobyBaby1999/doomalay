@@ -40,9 +40,13 @@ from typing import Any, Callable
 TOOL_NAMES = ["djournal"]
 
 STATE_FILE = "entries.jsonl"   # append-only log: one JSON entry per line
-MAX_OUT = 6000                 # dt_spec rule 9: model-facing replies stay bounded
-_TEXT_SNIP = 700               # per-entry text cap in `read` (long entries live in the file)
-_LINE_SNIP = 160               # per-line cap in `search` context output
+# v1.56.0 THE WHOLE TOOL: the reply cap RISES to 64,000 (the engine
+# port's value — the two sides must agree byte-for-byte) and the per-entry
+# / per-line snips are GONE (the entry rides whole; the file holds the
+# truth and the note says where).
+MAX_OUT = 64000                # model-facing replies stay bounded — generously
+_TEXT_SNIP = 0                 # 0 = the entry rides WHOLE (no per-entry cap)
+_LINE_SNIP = 0                 # 0 = the context line rides WHOLE
 _TIMELINE_CAP = 60             # `moods` shows ≤ ~2 months; older → trim + note
 
 # ── the mood scale ──────────────────────────────────────────────────────────
@@ -431,7 +435,7 @@ def _fmt_entry(e: dict) -> str:
     parts.append(f"mood {_mood_str(e.get('mood'))} · energy {en} · "
                  f"{e.get('word_count', len(str(e.get('text', '')).split()))} words")
     text = str(e.get("text", ""))
-    if len(text) > _TEXT_SNIP:
+    if _TEXT_SNIP and len(text) > _TEXT_SNIP:
         text = text[:_TEXT_SNIP] + " …(snipped — full text in entries.jsonl)"
     parts.append(text)
     if e.get("tags"):
@@ -487,9 +491,9 @@ def _text_context(text: str, ql: str, ctx: int = 1) -> list[str]:
     for i in hit_idx:
         for j in range(max(0, i - ctx), min(len(lines), i + ctx + 1)):
             if j not in shown:
-                shown[j] = (">> " if j == i else "   ") + lines[j].strip()[:_LINE_SNIP]
+                shown[j] = (">> " if j == i else "   ") + (lines[j].strip() if not _LINE_SNIP else lines[j].strip()[:_LINE_SNIP])
     if not shown:                                # single-line text fallback
-        return [">> " + text[:_LINE_SNIP]]
+        return [">> " + (text if not _LINE_SNIP else text[:_LINE_SNIP])]
     return [shown[j] for j in sorted(shown)]
 
 

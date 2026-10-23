@@ -5157,6 +5157,37 @@
         state.messages.push(imsg);
         appendMessage(msgContainer, scrollEl, imsg, bodyEl, state._icon, state);
       }
+    } else if (type === 'job') {
+      // v1.73.2/v1.73.3 THE JOB LAYER + THE AFTER-THE-FACT UI (PLAN-V173):
+      // a background lane settled (a tool call that outlived its grace
+      // window and moved to its own lane instead of blocking the chat) —
+      // the completion row lands HERE, whenever it lands (the user's law:
+      // "The UI be dealt with after the fact, tool calls that take a long
+      // time can re-render once complete"). Live events carry the payload
+      // top-level (id/tool/state/duration_ms/text — the emit lift); the
+      // replayed shape dumps the same JSON in ev.text. The row renders on
+      // its own themed state: ✓ completed (ok tone) · ✗ failed (error
+      // tone) · ⊘ cancelled (dim) + the honest duration chip.
+      var jsrc = ev;
+      if (typeof ev.text === 'string' && ev.text.charAt(0) === '{' && !ev.state) {
+        try {
+          var jp = JSON.parse(ev.text);
+          if (jp && jp.id && jp.tool) {
+            jsrc = {};
+            for (var jk in ev) jsrc[jk] = ev[jk];
+            for (var jpk in jp) { if (jp[jpk] !== undefined && jp[jpk] !== null) jsrc[jpk] = jp[jpk]; }
+          }
+        } catch (e6) {}
+      }
+      if (jsrc.id && jsrc.tool) {
+        bumpActivity(state);
+        var jmsg = { role: 'job', id: String(jsrc.id), tool: String(jsrc.tool),
+          state: String(jsrc.state || 'completed'), dur: Number(jsrc.duration_ms || 0),
+          text: String(jsrc.text || ''), ts: evTsMs(ev) };
+        if (ev.i) jmsg.ei = ev.i;
+        state.messages.push(jmsg);
+        appendMessage(msgContainer, scrollEl, jmsg, bodyEl, state._icon, state);
+      }
     } else if (type === 'retry') {
       // v1.61.4 THE RETRY PILL: the sentinel's lifecycle rows (armed →
       // probe → recovered) merge into ONE live pill per parked turn —
@@ -5755,6 +5786,24 @@
     }, 1000);
   }
 
+  // v1.73.3 THE HONEST CLOCK (PLAN-V173 §v1.73.3): the duration formatter
+  // shared by the per-pill duration chip + the job rows — "812ms" under a
+  // second, "12.4s" under a minute, "2m 03s" past it.
+  function fmtDurationMs(ms) {
+    if (!ms || ms <= 0) return '';
+    if (ms < 1000) return Math.round(ms) + 'ms';
+    if (ms < 60000) return (ms / 1000).toFixed(1) + 's';
+    var m = Math.floor(ms / 60000);
+    var s = Math.round((ms % 60000) / 1000);
+    if (s === 60) { m++; s = 0; }
+    return m + 'm ' + (s < 10 ? '0' + s : s) + 's';
+  }
+  // v1.73.3 THE SLOW TONE (PLAN-V173 §v1.73.3): a tool that took ≥ the
+  // slow threshold renders on the warn accent ("indicating they took
+  // time" — the user's exact ask). Default 30s; window.DOOMALAY_SLOW_TOOL_MS
+  // overrides (the engine can stamp it into the page when the env is set).
+  var SLOW_TOOL_MS = (typeof window !== 'undefined' && Number(window.DOOMALAY_SLOW_TOOL_MS) > 0) ? Number(window.DOOMALAY_SLOW_TOOL_MS) : 30000;
+
   function messageHTML(msg, mi) {
     mi = (mi === undefined || mi === null) ? -1 : mi;
     var miAttr = ' data-mi="' + mi + '"';
@@ -5810,6 +5859,27 @@
       // row can never masquerade as anything but the system's prompt.
       return '<div class="msg-bubble msg-notice" data-msg-role="injected" data-code="injected"' + miAttr + '>' +
         '<div class="fmt fmt-plain"><b>system injected:</b> ' + esc(msg.text) + '</div></div>';
+    } else if (msg.role === 'job') {
+      // v1.73.3 THE AFTER-THE-FACT ROW (PLAN-V173 §v1.73.3): the background
+      // lane's completion — the glyph by state (✓ ok tone · ✗ error tone ·
+      // ⊘ dim), the tool, THE HONEST DURATION chip, and the collapsible
+      // result (a details row, collapsed by default — long fetches stay
+      // glanceable). Theme tokens only.
+      var jState = msg.state || 'completed';
+      var jGlyph = jState === 'failed' ? '✗' : (jState === 'cancelled' ? '⊘' : '✓');
+      var jVerb = jState === 'failed' ? 'failed' : (jState === 'cancelled' ? 'was stopped' : 'finished');
+      var jHead = esc(msg.tool) + ' ' + jVerb + ' · ' + fmtDurationMs(msg.dur);
+      var jBody = '';
+      if (msg.text && jState !== 'cancelled') {
+        var jt = String(msg.text);
+        if (jt.length > 4000) jt = jt.slice(0, 4000) + '…';
+        jBody = '<details class="msg-job-body"><summary>result</summary><pre class="msg-job-pre">' + esc(jt) + '</pre></details>';
+      }
+      return '<div class="msg-bubble msg-job" data-msg-role="job" data-job-state="' + esc(jState) + '"' + miAttr + '>' +
+        '<div class="msg-job-head"><span class="msg-job-glyph">' + jGlyph + '</span>' +
+          '<span class="msg-job-title">' + jHead + '</span>' +
+          '<span class="msg-job-dur">' + fmtDurationMs(msg.dur) + '</span></div>' +
+        jBody + '</div>';
     } else if (msg.role === 'retry') {
       // v1.61.4 THE RETRY PILL: the sentinel's live/complete face —
       // warn tone while probing with the countdown, ok tone when
@@ -5843,6 +5913,13 @@
       var expanded = hasDetail && (msg.expanded !== undefined ? !!msg.expanded : uiPref(currentCtx && currentCtx.state, 'pillsOpen', false));
       var cls = msg.progress ? 'tool-pill tool-pill-progress' :
         ((merged || msg.result) ? 'tool-pill tool-pill-result' : 'tool-pill tool-pill-use');
+      // v1.73.3 THE HONEST CLOCK: the completed pill's own duration (the
+      // merged vessel reads the result payload; the standalone result its
+      // own) — the chip renders beside the chevron, and ≥ SLOW_TOOL_MS the
+      // whole pill wears the slow tone (data-slow — the warn accent).
+      var durSrc = (msg.resPayload && msg.resPayload.duration_ms) || (payload && payload.duration_ms) || 0;
+      var pillDur = (merged || msg.result) ? fmtDurationMs(durSrc) : '';
+      var slowAttr = (pillDur && durSrc >= SLOW_TOOL_MS) ? ' data-slow="1"' : '';
       var head =
         '<div class="tool-pill-head">' +
           '<span class="tool-pill-ico">' + ((merged || msg.result) ? '↳' : (msg.progress ? '·' : '⌕')) + '</span>' +
@@ -5860,6 +5937,7 @@
               : '') +
             (pending ? ' <span class="tool-pill-live" aria-hidden="true"></span>' : '') +
           '</span>' +
+          (pillDur ? '<span class="tool-pill-dur" title="time this tool call took">' + esc(pillDur) + '</span>' : '') +
           (hasDetail ? '<span class="tool-pill-chev">' + (expanded ? '▾' : '▸') + '</span>' : '') +
           // v1.19.4 THE FULL VIEW: the redirect control (the same ↗
           // affordance the panel's external-open uses) opens the
@@ -5870,7 +5948,7 @@
       if (expanded) {
         detail = '<div class="tool-pill-detail">' + toolDetailHTML(msg) + '</div>';
       }
-      return '<div class="' + cls + '" data-msg-role="tool" data-mi="' + mi + '" data-expanded="' + (expanded ? '1' : '') + '">' +
+      return '<div class="' + cls + '" data-msg-role="tool" data-mi="' + mi + '" data-expanded="' + (expanded ? '1' : '') + '"' + slowAttr + '>' +
         head + detail + '</div>';
     } else if (msg.role === 'artifact') {
       // v0.22: a file tool saved a binary — render the same card the

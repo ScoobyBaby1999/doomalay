@@ -63,8 +63,8 @@ func TestV1134_MCPExternpointListsTools(t *testing.T) {
 		t.Fatalf("tools/list missing result: %v", out)
 	}
 	tools, _ := res["tools"].([]any)
-	if len(tools) != 31 {
-		t.Fatalf("want the 31-tool registry served externally (29 base + djournal + fleet, v1.47), got %d", len(tools))
+	if len(tools) != 34 {
+		t.Fatalf("want the 34-tool registry served externally (29 base + djournal + fleet, v1.47 + the job trio, v1.73), got %d", len(tools))
 	}
 }
 

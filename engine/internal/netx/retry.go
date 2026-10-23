@@ -39,7 +39,19 @@ import (
 //	unexpected EOF / refused / temporary / HTTP 5xx / 502 / 503 /
 //	network / went silent / no data / tls: bad record MAC / handshake
 //	failure / no such host / no address / lookup / dns / SERVFAIL
-var transientRe = regexp.MustCompile(`(?i)timeout|context deadline|connection reset|broken pipe|unexpected EOF|^EOF$|: EOF( |$)|refused|temporary|HTTP 5[0-9][0-9]|503|502|network|went silent|no data|bad record mac|tls:|record mac|handshake failure|no such host|no address|lookup|dns|server misbehaving|SERVFAIL|connection abort`)
+//
+// v1.73.1 THE NET ARM (PLAN-V173 §v1.73.1): the Node/undici forms joined
+// the set — the oc-bridge's failure classifier now reads the serve's own
+// error shapes (a net interrupt through the serve path used to land as a
+// bare oc_bridge_error with NO retry_class, so the chat never joined the
+// continuation timer — the user's report: "our timer handler doesn't pick
+// up network interrupts"). The serve (opencode 2.x, Node) surfaces undici's
+// forms: "fetch failed" (undici's generic network-level TypeError — HTTP
+// statuses resolve normally, so it IS the net class), "socket hang up", and
+// the errno codes (ECONNRESET, ETIMEDOUT, ENOTFOUND, EAI_AGAIN —
+// ECONNREFUSED already matched via "refused"). ONE truth: the turn-level
+// pause ladder and the bridge classifier learn the same set together.
+var transientRe = regexp.MustCompile(`(?i)timeout|context deadline|connection reset|broken pipe|unexpected EOF|^EOF$|: EOF( |$)|refused|temporary|HTTP 5[0-9][0-9]|503|502|network|went silent|no data|bad record mac|tls:|record mac|handshake failure|no such host|no address|lookup|dns|server misbehaving|SERVFAIL|connection abort|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|socket hang up|fetch failed`)
 
 // IsTransient reports whether err is a transient network class (the
 // retry-worth set: it comes back on its own — carrier NAT rebinds,

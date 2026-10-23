@@ -18,6 +18,7 @@ package server
 import (
         "context"
         "encoding/json"
+        "errors"
         "fmt"
         "log"
         "os"
@@ -26,6 +27,8 @@ import (
         "time"
 
         "github.com/ScoobyBaby1999/doomalay/engine/internal/llm"
+        "github.com/ScoobyBaby1999/doomalay/engine/internal/jobmgr"
+        "github.com/ScoobyBaby1999/doomalay/engine/internal/netx"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/ocserve"
         "github.com/ScoobyBaby1999/doomalay/engine/internal/store"
 )
@@ -554,6 +557,20 @@ func (s *Server) ocServeStreamTurn(ctx context.Context, m *ocserve.Manager, sess
                 if fresh {
                         text = s.ocServeOpeningText(sess, userText, mcpBound)
                 }
+                // v1.73.2 THE JOB LAYER — THE SERVE-PATH DELIVERY (PLAN-V173
+                // §v1.73.2): the settled background lanes ride the next turn's
+                // opening (fresh OR adopted — the ring drains once, here). The
+                // serve protocol is pull-only (the model's own job_status), but
+                // the ticket's promise is push: "the completion lands in this
+                // chat automatically" — THIS is the landing on the serve path.
+                // The user already saw the "job" rows (the event sink fired the
+                // moment each lane settled); this block is the MODEL's copy.
+                if settled := jobmgr.Default().DrainSettled(sessionID); len(settled) > 0 {
+                        block := jobmgr.SettledBlock(settled, 3000)
+                        text = "[[Background job result(s) — delivered automatically:\n" + block + "\n]]\n\n" + text
+                        out <- map[string]any{"type": "progress", "session_id": sessionID,
+                                "message": fmt.Sprintf("%d background job result(s) delivered to this turn", len(settled))}
+                }
                 // v1.58.2 THE DYNAMIC PROGRESS LINES: the static "turn in
                 // flight" copy is DEAD — the pill now moves with the turn's own
                 // truth (connecting → the model thinking → the tool lines ride
@@ -719,6 +736,12 @@ func ocBareServeToolName(name string) string {
 func (s *Server) ocServePump(ctx context.Context, m *ocserve.Manager, serveSess, sessionID, model string, out chan<- map[string]any, turnStartedAt int64) (bool, error) {
         toolNames := map[string]string{} // tool call id → tool name (input.started) — the BARE name (v1.63.1)
         usedEmitted := map[string]bool{} // the pill law: use BEFORE result, exactly once
+        // v1.73.3 THE HONEST CLOCK (PLAN-V173 §v1.73.3): the serve's own tool
+        // calls get the per-call clock — the use row's first-seen time is the
+        // start (the serve's event frames carry no per-tool timestamps; the
+        // wall clock between the pill's use row and its result IS the honest
+        // duration the user asked to see).
+        toolStarts := map[string]int64{}
         // v1.67.2 THE UNLOST MID-TURN: the result ledger — every call ID whose
         // tool_result already rode (live OR recovered). The reconcile diff
         // (the probe loop below) reads it; the stall ceiling's honest pill
@@ -735,6 +758,7 @@ func (s *Server) ocServePump(ctx context.Context, m *ocserve.Manager, serveSess,
                         return
                 }
                 usedEmitted[callID] = true
+                toolStarts[callID] = time.Now().UnixMilli() // v1.73.3: the call's visible start
                 if args == "" {
                         args = "{}"
                 }
@@ -808,9 +832,13 @@ func (s *Server) ocServePump(ctx context.Context, m *ocserve.Manager, serveSess,
                         res := llm.ClampMarked(strings.Join(texts, "\n"), ocObsBudget(model))
                         res = ocResultText(res, ev.Data.Metadata.Truncated != nil && *ev.Data.Metadata.Truncated)
                         resultsEmitted[ev.Data.ID] = true // v1.67.2: the ledger
-                        out <- map[string]any{"type": "tool_result", "session_id": sessionID,
+                        successEv := map[string]any{"type": "tool_result", "session_id": sessionID,
                                 "name": toolNames[ev.Data.ID], "text": res,
                                 "tool_use_id": ev.Data.ID}
+                        if st, ok := toolStarts[ev.Data.ID]; ok { // v1.73.3: the honest clock
+                                successEv["duration_ms"] = time.Now().UnixMilli() - st
+                        }
+                        out <- successEv
                 case "session.tool.failed":
                         emitToolUse(ev.Data.ID, toolNames[ev.Data.ID], "")
                         msg := ev.Data.Text
@@ -820,9 +848,13 @@ func (s *Server) ocServePump(ctx context.Context, m *ocserve.Manager, serveSess,
                         // v1.58.1: the failure text rides the same unbounded law (an
                         // honest long error is never amputated at 6000 chars).
                         resultsEmitted[ev.Data.ID] = true // v1.67.2: the ledger
-                        out <- map[string]any{"type": "tool_result", "session_id": sessionID,
+                        failedEv := map[string]any{"type": "tool_result", "session_id": sessionID,
                                 "name": toolNames[ev.Data.ID], "text": llm.ClampMarked(msg, ocObsBudget(model)),
                                 "tool_use_id": ev.Data.ID}
+                        if st, ok := toolStarts[ev.Data.ID]; ok { // v1.73.3: the honest clock
+                                failedEv["duration_ms"] = time.Now().UnixMilli() - st
+                        }
+                        out <- failedEv
                 case "session.step.started":
                         // v1.64.2 THE LIVING WIRE: a new model step is the honest
                         // mid-turn signal — the turn moves (reasoning round, a tool
@@ -1228,19 +1260,41 @@ func ocServeFailEvents(sessionID, errType, errMsg string, status int) []map[stri
                         retryClass = "429"
                 }
         }
+        // v1.73.1 THE NET ARM (PLAN-V173 §v1.73.1): the timer handler must pick
+        // up NETWORK interrupts through the serve path too — the user's report:
+        // "our timer handler doesn't pick up network interrupts and add the chat
+        // to the continuation timer with a visual queue or hint". The old
+        // classifier knew ONLY the 429 class, so a net interrupt through the
+        // serve (the phone's egress dies mid-turn; the serve's provider call
+        // answers ECONNRESET / timeout / DNS / undici's "fetch failed") landed
+        // as a bare oc_bridge_error with NO retry_class — the chat never joined
+        // a timer, no pill, no auto-continue. ONE truth with the turn-level
+        // ladder: netx.IsTransient (the live-convicted set + the Node/undici
+        // forms this wave taught it) plus the gateway statuses 502/503/504.
+        // Auth/stall/interrupted never arm (their own laws: the v1.71.2 recycle
+        // owns the stall; a stop is a stop; auth is auth).
+        if retryClass == "" && kind != "oc_bridge_auth" && kind != "oc_stalled" && kind != "interrupted" {
+                if status == 502 || status == 503 || status == 504 || netx.IsTransient(errors.New(msg)) {
+                        retryClass = "net"
+                }
+        }
         errEv := map[string]any{"type": "error", "session_id": sessionID, "error": kind, "message": msg}
         if retryClass != "" {
                 errEv["retry_class"] = retryClass
                 errEv["retry_provider"] = "opencode"
         }
-        // v1.67.3 THE LOUD 429: the arm rides with a PROGRESS LINE FIRST —
-        // the opencode 429's long wait is never "uninsightful" (the user's
-        // report): the wait names the auto-retry timer before the error +
-        // the sentinel's pill land below it.
+        // v1.67.3 THE LOUD 429 + v1.73.1 THE NET ARM: the arm rides with a
+        // PROGRESS LINE FIRST — the long wait is never "uninsightful" (the
+        // user's report): the wait names the auto-retry timer and its signal
+        // before the error + the sentinel's pill land below it.
         var events []map[string]any
         if retryClass != "" {
+                armLine := "OpenCode: rate-limited — the auto-retry timer is armed (it probes every few minutes and resumes the conversation the moment the limit clears)"
+                if retryClass == "net" {
+                        armLine = "OpenCode: network interrupted — the auto-retry timer is armed (it probes and resumes this conversation the moment the network answers; no tap needed)"
+                }
                 events = append(events, map[string]any{"type": "progress", "session_id": sessionID,
-                        "message": "OpenCode: rate-limited — the auto-retry timer is armed (it probes every few minutes and resumes the conversation the moment the limit clears)"})
+                        "message": armLine})
         }
         events = append(events,
                 errEv,

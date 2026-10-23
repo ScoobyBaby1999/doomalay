@@ -246,6 +246,11 @@ func DefaultSummary(name, argJSON string) string {
 		return first("name", "id", "from")
 	case "placeholder_set":
 		return first("key", "value")
+	// v1.73.2 THE JOB LAYER: the lane trio's pills.
+	case "job_status", "job_kill":
+		return get("id")
+	case "job_list":
+		return "the background lanes"
 	}
 	return ""
 }

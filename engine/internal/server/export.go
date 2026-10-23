@@ -18,25 +18,25 @@ package server
 // the URL to the system browser, which pulls it from the local engine.
 
 import (
-	"encoding/csv"
-	"encoding/json"
-	"fmt"
-	"net/http"
-	"strconv"
-	"strings"
-	"time"
+        "encoding/csv"
+        "encoding/json"
+        "fmt"
+        "net/http"
+        "strconv"
+        "strings"
+        "time"
 
-	"github.com/ScoobyBaby1999/doomalay/engine/internal/store"
+        "github.com/ScoobyBaby1999/doomalay/engine/internal/store"
 )
 
 // foldedRow is one display row after folding the raw event stream.
 type foldedRow struct {
-	Seq    int
-	Type   string // user | assistant | thinking | tool | sources | error
-	Text   string
-	At     float64
-	Srcs   []map[string]string // sources rows only
-	Hidden bool                // status rows: kept in json, hidden in csv/md
+        Seq    int
+        Type   string // user | assistant | thinking | tool | sources | error
+        Text   string
+        At     float64
+        Srcs   []map[string]string // sources rows only
+        Hidden bool                // status rows: kept in json, hidden in csv/md
 }
 
 // foldEvents folds the raw event log into display rows (v0.16).
@@ -44,178 +44,221 @@ type foldedRow struct {
 // full-reply "assistant" event (emitted at turn end) is deduped against
 // the assembled deltas; consecutive thinking events merge.
 func foldEvents(events []*store.Event) []foldedRow {
-	var rows []foldedRow
-	var curAssistant *foldedRow
-	var curThinking *foldedRow
-	assembled := ""
+        var rows []foldedRow
+        var curAssistant *foldedRow
+        var curThinking *foldedRow
+        assembled := ""
 
-	for _, ev := range events {
-		switch ev.EventType {
-		case "user":
-			curAssistant, curThinking = nil, nil
-			rows = append(rows, foldedRow{Seq: ev.Seq, Type: "user", Text: ev.Content, At: ev.CreatedAt})
-		case "assistant_delta":
-			curThinking = nil
-			if curAssistant == nil {
-				curAssistant = &foldedRow{Seq: ev.Seq, Type: "assistant", At: ev.CreatedAt}
-				rows = append(rows, *curAssistant)
-			}
-			curAssistant.Text += ev.Content
-			rows[len(rows)-1] = *curAssistant
-			assembled += ev.Content
-		case "assistant":
-			// Full reply at turn end — skip when the deltas already
-			// assembled it (live turn); add when it's replay-only.
-			if ev.Content != "" && !strings.Contains(assembled, ev.Content) {
-				curAssistant = nil
-				rows = append(rows, foldedRow{Seq: ev.Seq, Type: "assistant", Text: ev.Content, At: ev.CreatedAt})
-			}
-		case "thinking":
-			curAssistant = nil
-			if curThinking == nil {
-				curThinking = &foldedRow{Seq: ev.Seq, Type: "thinking", At: ev.CreatedAt}
-				rows = append(rows, *curThinking)
-			}
-			curThinking.Text += ev.Content
-			rows[len(rows)-1] = *curThinking
-		case "tool_use", "tool_result":
-			curAssistant, curThinking = nil, nil
-			rows = append(rows, foldedRow{Seq: ev.Seq, Type: "tool", Text: ev.Content, At: ev.CreatedAt})
-		case "sources":
-			var srcs []map[string]string
-			var parsed []struct {
-				Title   string `json:"title"`
-				URL     string `json:"url"`
-				Snippet string `json:"snippet"`
-			}
-			if json.Unmarshal([]byte(ev.Content), &parsed) == nil {
-				for _, p := range parsed {
-					srcs = append(srcs, map[string]string{"title": p.Title, "url": p.URL, "snippet": p.Snippet})
-				}
-			} else {
-				srcs = append(srcs, map[string]string{"title": ev.Content})
-			}
-			rows = append(rows, foldedRow{Seq: ev.Seq, Type: "sources", Srcs: srcs, At: ev.CreatedAt})
-		case "error":
-			rows = append(rows, foldedRow{Seq: ev.Seq, Type: "error", Text: ev.Content, At: ev.CreatedAt})
-		case "retry":
-			// v1.61.4 THE RETRY PILL: the sentinel's lifecycle
-			// rows ride the export WHOLE — every probe a line
-			// (the plan's law: the export shows the probes
-			// forever; the user reads exports as ground truth).
-			if line, _ := renderRetryLine(ev); line != "" {
-				rows = append(rows, foldedRow{Seq: ev.Seq, Type: "retry", Text: line, At: ev.CreatedAt})
-			}
-		case "injected":
-			// v1.65.2 THE LOUD INJECTION: the system-injected prompt
-			// rows ride the export too — the user's law: "the system
-			// should never inject a prompt without making it clear
-			// for both the frontend and the chat transcript".
-			// THE ACCUMULATOR BREAK (the live rig's conviction): an
-			// injected prompt is a USER-SIDE row — it ends the
-			// assistant's reply run exactly like a tool row does;
-			// the next delta OPENS A NEW assistant row. Without
-			// this, the delta case's rows[len(rows)-1] overwrite
-			// CLOBBERED the injected row the moment the next
-			// assistant_delta landed (the fold ate the injection).
-			curAssistant, curThinking = nil, nil
-			if msg := injectedMessage(ev.Content); msg != "" {
-				rows = append(rows, foldedRow{Seq: ev.Seq, Type: "injected", Text: msg, At: ev.CreatedAt})
-			}
-		case "status":
-			rows = append(rows, foldedRow{Seq: ev.Seq, Type: "status", Text: ev.Content, At: ev.CreatedAt, Hidden: true})
-		}
+        for _, ev := range events {
+                switch ev.EventType {
+                case "user":
+                        curAssistant, curThinking = nil, nil
+                        rows = append(rows, foldedRow{Seq: ev.Seq, Type: "user", Text: ev.Content, At: ev.CreatedAt})
+                case "assistant_delta":
+                        curThinking = nil
+                        if curAssistant == nil {
+                                curAssistant = &foldedRow{Seq: ev.Seq, Type: "assistant", At: ev.CreatedAt}
+                                rows = append(rows, *curAssistant)
+                        }
+                        curAssistant.Text += ev.Content
+                        rows[len(rows)-1] = *curAssistant
+                        assembled += ev.Content
+                case "assistant":
+                        // Full reply at turn end — skip when the deltas already
+                        // assembled it (live turn); add when it's replay-only.
+                        if ev.Content != "" && !strings.Contains(assembled, ev.Content) {
+                                curAssistant = nil
+                                rows = append(rows, foldedRow{Seq: ev.Seq, Type: "assistant", Text: ev.Content, At: ev.CreatedAt})
+                        }
+                case "thinking":
+                        curAssistant = nil
+                        if curThinking == nil {
+                                curThinking = &foldedRow{Seq: ev.Seq, Type: "thinking", At: ev.CreatedAt}
+                                rows = append(rows, *curThinking)
+                        }
+                        curThinking.Text += ev.Content
+                        rows[len(rows)-1] = *curThinking
+                case "tool_use", "tool_result":
+                        curAssistant, curThinking = nil, nil
+                        rows = append(rows, foldedRow{Seq: ev.Seq, Type: "tool", Text: ev.Content, At: ev.CreatedAt})
+                case "sources":
+                        var srcs []map[string]string
+                        var parsed []struct {
+                                Title   string `json:"title"`
+                                URL     string `json:"url"`
+                                Snippet string `json:"snippet"`
+                        }
+                        if json.Unmarshal([]byte(ev.Content), &parsed) == nil {
+                                for _, p := range parsed {
+                                        srcs = append(srcs, map[string]string{"title": p.Title, "url": p.URL, "snippet": p.Snippet})
+                                }
+                        } else {
+                                srcs = append(srcs, map[string]string{"title": ev.Content})
+                        }
+                        rows = append(rows, foldedRow{Seq: ev.Seq, Type: "sources", Srcs: srcs, At: ev.CreatedAt})
+                case "error":
+                        rows = append(rows, foldedRow{Seq: ev.Seq, Type: "error", Text: ev.Content, At: ev.CreatedAt})
+                case "retry":
+                        // v1.61.4 THE RETRY PILL: the sentinel's lifecycle
+                        // rows ride the export WHOLE — every probe a line
+                        // (the plan's law: the export shows the probes
+                        // forever; the user reads exports as ground truth).
+                        if line, _ := renderRetryLine(ev); line != "" {
+                                rows = append(rows, foldedRow{Seq: ev.Seq, Type: "retry", Text: line, At: ev.CreatedAt})
+                        }
+                case "injected":
+                        // v1.65.2 THE LOUD INJECTION: the system-injected prompt
+                        // rows ride the export too — the user's law: "the system
+                        // should never inject a prompt without making it clear
+                        // for both the frontend and the chat transcript".
+                        // THE ACCUMULATOR BREAK (the live rig's conviction): an
+                        // injected prompt is a USER-SIDE row — it ends the
+                        // assistant's reply run exactly like a tool row does;
+                        // the next delta OPENS A NEW assistant row. Without
+                        // this, the delta case's rows[len(rows)-1] overwrite
+                        // CLOBBERED the injected row the moment the next
+                        // assistant_delta landed (the fold ate the injection).
+                        curAssistant, curThinking = nil, nil
+                        if msg := injectedMessage(ev.Content); msg != "" {
+                                rows = append(rows, foldedRow{Seq: ev.Seq, Type: "injected", Text: msg, At: ev.CreatedAt})
+                        }
+                case "job":
+                        // v1.73.2 THE JOB LAYER: the background lane's
+                        // after-the-fact completion row rides the export —
+                        // the glyph + the tool + the honest duration + the
+                        // clamped result (the user reads exports as ground
+                        // truth; a lane that finished after the turn's end
+                        // must still be in the transcript).
+                        if line := jobLine(ev.Content); line != "" {
+                                rows = append(rows, foldedRow{Seq: ev.Seq, Type: "job", Text: line, At: ev.CreatedAt})
+                        }
+                case "status":
+                        rows = append(rows, foldedRow{Seq: ev.Seq, Type: "status", Text: ev.Content, At: ev.CreatedAt, Hidden: true})
+                }
+        }
+        return rows
+}
+
+// jobLine lifts the {id, tool, state, duration_ms, text} payload out of
+// one persisted job row and renders the readable completion line (the
+// glyph + the tool + the honest duration + the clamped result; "" on a
+// garbage row — skipped). v1.73.2 THE JOB LAYER.
+func jobLine(content string) string {
+	var j struct {
+		ID         string `json:"id"`
+		Tool       string `json:"tool"`
+		State      string `json:"state"`
+		DurationMS int64  `json:"duration_ms"`
+		Text       string `json:"text"`
 	}
-	return rows
+	if json.Unmarshal([]byte(content), &j) != nil || j.Tool == "" {
+		return ""
+	}
+	verb, glyph := "finished", "✓"
+	switch j.State {
+	case "failed":
+		verb, glyph = "FAILED", "✗"
+	case "cancelled":
+		verb, glyph = "was stopped", "⊘"
+	}
+	head := fmt.Sprintf("%s background job %s (%s) %s after %.1fs", glyph, j.ID, j.Tool, verb, float64(j.DurationMS)/1000)
+	if j.State == "cancelled" || strings.TrimSpace(j.Text) == "" {
+		return head
+	}
+	txt := strings.TrimSpace(j.Text)
+	if r := []rune(txt); len(r) > 600 {
+		txt = string(r[:600]) + "…"
+	}
+	return head + ": " + txt
 }
 
 // injectedMessage lifts the {message, code:"injected"} payload out of one
 // persisted injected row ("" on a garbage row — skipped).
 func injectedMessage(content string) string {
-	var ij struct {
-		Message string `json:"message"`
-		Code    string `json:"code"`
-	}
-	if json.Unmarshal([]byte(content), &ij) != nil || ij.Message == "" {
-		return ""
-	}
-	return ij.Message
+        var ij struct {
+                Message string `json:"message"`
+                Code    string `json:"code"`
+        }
+        if json.Unmarshal([]byte(content), &ij) != nil || ij.Message == "" {
+                return ""
+        }
+        return ij.Message
 }
 
 // renderRetryLine renders one sentinel lifecycle row's export text.
 // isRecovered=true closes the park's row. Empty text = a garbage row
 // (skipped).
 func renderRetryLine(ev *store.Event) (string, bool) {
-	var rj struct {
-		Phase    string `json:"phase"`
-		Class    string `json:"class"`
-		Provider string `json:"provider"`
-		Attempts int    `json:"attempts"`
-		Note     string `json:"note"`
-	}
-	if json.Unmarshal([]byte(ev.Content), &rj) != nil || rj.Phase == "" {
-		return "", false
-	}
-	label := rj.Class
-	switch label {
-	case "429":
-		label = "rate limit"
-	case "5xx":
-		label = "server overload"
-	case "net":
-		label = "network"
-	}
-	if rj.Provider != "" {
-		label += " (" + rj.Provider + ")"
-	}
-	switch rj.Phase {
-	case "recovered":
-		elapsed := rj.Note
-		if elapsed == "" {
-			elapsed = "elapsed"
-		}
-		return fmt.Sprintf("auto-retry recovered — %s — continued after %d %s — %s", label, rj.Attempts, plural(rj.Attempts, "retry", "retries"), elapsed), true
-	case "probe":
-		return fmt.Sprintf("auto-retry: %s — probe %d failed — next probe scheduled", label, rj.Attempts), false
-	case "busy":
-		return fmt.Sprintf("auto-retry armed — %s — waiting for the running turn", label), false
-	default:
-		return fmt.Sprintf("auto-retry armed — %s — first probe scheduled", label), false
-	}
+        var rj struct {
+                Phase    string `json:"phase"`
+                Class    string `json:"class"`
+                Provider string `json:"provider"`
+                Attempts int    `json:"attempts"`
+                Note     string `json:"note"`
+        }
+        if json.Unmarshal([]byte(ev.Content), &rj) != nil || rj.Phase == "" {
+                return "", false
+        }
+        label := rj.Class
+        switch label {
+        case "429":
+                label = "rate limit"
+        case "5xx":
+                label = "server overload"
+        case "net":
+                label = "network"
+        }
+        if rj.Provider != "" {
+                label += " (" + rj.Provider + ")"
+        }
+        switch rj.Phase {
+        case "recovered":
+                elapsed := rj.Note
+                if elapsed == "" {
+                        elapsed = "elapsed"
+                }
+                return fmt.Sprintf("auto-retry recovered — %s — continued after %d %s — %s", label, rj.Attempts, plural(rj.Attempts, "retry", "retries"), elapsed), true
+        case "probe":
+                return fmt.Sprintf("auto-retry: %s — probe %d failed — next probe scheduled", label, rj.Attempts), false
+        case "busy":
+                return fmt.Sprintf("auto-retry armed — %s — waiting for the running turn", label), false
+        default:
+                return fmt.Sprintf("auto-retry armed — %s — first probe scheduled", label), false
+        }
 }
 
 func plural(n int, one, many string) string {
-	if n == 1 {
-		return one
-	}
-	return many
+        if n == 1 {
+                return one
+        }
+        return many
 }
 
 func isoTime(unix float64) string {
-	if unix <= 0 {
-		return ""
-	}
-	return time.Unix(int64(unix), 0).UTC().Format(time.RFC3339)
+        if unix <= 0 {
+                return ""
+        }
+        return time.Unix(int64(unix), 0).UTC().Format(time.RFC3339)
 }
 
 func slugTitle(s *store.Session) string {
-	t := strings.ToLower(strings.TrimSpace(s.Title))
-	var b strings.Builder
-	for _, r := range t {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
-			b.WriteRune(r)
-		} else if b.Len() > 0 && !strings.HasSuffix(b.String(), "-") {
-			b.WriteRune('-')
-		}
-	}
-	out := strings.Trim(b.String(), "-")
-	if len(out) > 40 {
-		out = out[:40]
-	}
-	if out == "" {
-		out = "chat"
-	}
-	return out
+        t := strings.ToLower(strings.TrimSpace(s.Title))
+        var b strings.Builder
+        for _, r := range t {
+                if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+                        b.WriteRune(r)
+                } else if b.Len() > 0 && !strings.HasSuffix(b.String(), "-") {
+                        b.WriteRune('-')
+                }
+        }
+        out := strings.Trim(b.String(), "-")
+        if len(out) > 40 {
+                out = out[:40]
+        }
+        if out == "" {
+                out = "chat"
+        }
+        return out
 }
 
 // handleSessionExport is GET /api/sessions/{id}/export.{fmt}.
@@ -227,238 +270,245 @@ func slugTitle(s *store.Session) string {
 // events to the same boundary (everything with seq >= the cutoff row's
 // seq) instead of emitting orphans.
 func (s *Server) handleSessionExport(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	format := strings.TrimPrefix(r.URL.Path, "/api/sessions/"+id+"/export.")
-	format = strings.ToLower(strings.TrimPrefix(format, "."))
+        id := r.PathValue("id")
+        format := strings.TrimPrefix(r.URL.Path, "/api/sessions/"+id+"/export.")
+        format = strings.ToLower(strings.TrimPrefix(format, "."))
 
-	sess, err := s.db.GetSession(id)
-	if err != nil || sess == nil {
-		writeError(w, 404, "session not found")
-		return
-	}
-	events, err := s.db.ListEvents(id, 0)
-	if err != nil {
-		writeError(w, 500, "events: "+err.Error())
-		return
-	}
+        sess, err := s.db.GetSession(id)
+        if err != nil || sess == nil {
+                writeError(w, 404, "session not found")
+                return
+        }
+        events, err := s.db.ListEvents(id, 0)
+        if err != nil {
+                writeError(w, 500, "events: "+err.Error())
+                return
+        }
 
-	rows := foldEvents(events)
-	latest := 0
-	if l := r.URL.Query().Get("latest"); l != "" {
-		if n, err := strconv.Atoi(l); err == nil && n > 0 {
-			latest = n
-		}
-	}
-	if latest > 0 {
-		visible := 0
-		cutoff := -1
-		for i := len(rows) - 1; i >= 0; i-- {
-			if rows[i].Hidden {
-				continue
-			}
-			visible++
-			if visible == latest {
-				cutoff = rows[i].Seq
-				break
-			}
-		}
-		if cutoff > 0 {
-			kept := rows[:0]
-			for _, row := range rows {
-				if row.Seq >= cutoff {
-					kept = append(kept, row)
-				}
-			}
-			rows = kept
-			trimmed := events[:0]
-			for _, ev := range events {
-				if ev.Seq >= cutoff {
-					trimmed = append(trimmed, ev)
-				}
-			}
-			events = trimmed
-		}
-	}
+        rows := foldEvents(events)
+        latest := 0
+        if l := r.URL.Query().Get("latest"); l != "" {
+                if n, err := strconv.Atoi(l); err == nil && n > 0 {
+                        latest = n
+                }
+        }
+        if latest > 0 {
+                visible := 0
+                cutoff := -1
+                for i := len(rows) - 1; i >= 0; i-- {
+                        if rows[i].Hidden {
+                                continue
+                        }
+                        visible++
+                        if visible == latest {
+                                cutoff = rows[i].Seq
+                                break
+                        }
+                }
+                if cutoff > 0 {
+                        kept := rows[:0]
+                        for _, row := range rows {
+                                if row.Seq >= cutoff {
+                                        kept = append(kept, row)
+                                }
+                        }
+                        rows = kept
+                        trimmed := events[:0]
+                        for _, ev := range events {
+                                if ev.Seq >= cutoff {
+                                        trimmed = append(trimmed, ev)
+                                }
+                        }
+                        events = trimmed
+                }
+        }
 
-	name := fmt.Sprintf("doomalay-%s-%s", slugTitle(sess), id[:min(8, len(id))])
+        name := fmt.Sprintf("doomalay-%s-%s", slugTitle(sess), id[:min(8, len(id))])
 
-	switch format {
-	case "csv":
-		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
-		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name+".csv"))
-		ww := csv.NewWriter(w)
-		ww.Write([]string{"seq", "time_utc", "type", "text"})
-		for _, row := range foldEvents(events) {
-			if row.Hidden {
-				continue
-			}
-			text := row.Text
-			if row.Type == "sources" {
-				var parts []string
-				for _, sc := range row.Srcs {
-					parts = append(parts, fmt.Sprintf("[%s](%s)", sc["title"], sc["url"]))
-				}
-				text = strings.Join(parts, " ")
-			}
-			ww.Write([]string{fmt.Sprintf("%d", row.Seq), isoTime(row.At), row.Type, text})
-		}
-		ww.Flush()
-	case "md":
-		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
-		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name+".md"))
-		var b strings.Builder
-		fmt.Fprintf(&b, "# %s\n\n", sess.Title)
-		b.WriteString(exportMetaLines(sess, events, "md"))
-		fmt.Fprintf(&b, "- **Messages (folded):** see below\n\n---\n\n")
-		for _, row := range foldEvents(events) {
-			if row.Hidden {
-				continue
-			}
-			switch row.Type {
-			case "user":
-				fmt.Fprintf(&b, "**You:**\n\n%s\n\n", row.Text)
-			case "assistant":
-				fmt.Fprintf(&b, "**Assistant:**\n\n%s\n\n", row.Text)
-			case "thinking":
-				fmt.Fprintf(&b, "<details>\n<summary>thinking</summary>\n\n%s\n\n</details>\n\n", row.Text)
-			case "tool":
-				fmt.Fprintf(&b, "> ⚙ %s\n\n", strings.TrimSpace(row.Text))
-			case "sources":
-				b.WriteString("**Sources:**\n\n")
-				for i, sc := range row.Srcs {
-					fmt.Fprintf(&b, "%d. [%s](%s)\n", i+1, sc["title"], sc["url"])
-				}
-				b.WriteString("\n")
-			case "error":
-				fmt.Fprintf(&b, "⚠️ **error:** %s\n\n", row.Text)
-			case "retry":
-				// v1.61.4 THE RETRY PILL: the sentinel's lifecycle
-				// rides the export (the probes are the turn's truth).
-				fmt.Fprintf(&b, "> ↻ %s\n\n", row.Text)
-			case "injected":
-				// v1.65.2 THE LOUD INJECTION: every system-injected
-				// prompt rides the transcript verbatim.
-				fmt.Fprintf(&b, "> ⌁ system injected: %s\n\n", row.Text)
-			}
-		}
-		w.Write([]byte(b.String()))
-	case "json":
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name+".json"))
-		if events == nil {
-			events = []*store.Event{} // a nil slice marshals as null — keep [] shape
-		}
-		out := struct {
-			Session *store.Session `json:"session"`
-			Events  []*store.Event `json:"events"`
-		}{Session: sess, Events: events}
-		enc := json.NewEncoder(w)
-		enc.SetIndent("", "  ")
-		enc.SetEscapeHTML(false)
-		enc.Encode(out)
-	case "txt":
-		// v0.82.5: engine-side plain text — the client-side Blob-URL
-		// download never worked in the Android WebView (only engine URLs
-		// with Content-Disposition reach the DownloadListener). Same full
-		// info as the md: metadata header + every folded row.
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name+".txt"))
-		var b strings.Builder
-		fmt.Fprintf(&b, "%s — transcript\n\n", sess.Title)
-		for _, l := range strings.Split(strings.TrimPrefix(exportMetaLines(sess, events, "txt"), "\n"), "\n") {
-			if strings.TrimSpace(l) != "" {
-				b.WriteString(l + "\n")
-			}
-		}
-		b.WriteString("\n" + strings.Repeat("-", 60) + "\n\n")
-		for _, row := range foldEvents(events) {
-			if row.Hidden {
-				continue
-			}
-			switch row.Type {
-			case "user":
-				fmt.Fprintf(&b, "You:\n%s\n\n", row.Text)
-			case "assistant":
-				fmt.Fprintf(&b, "Assistant:\n%s\n\n", row.Text)
-			case "thinking":
-				fmt.Fprintf(&b, "[thinking]\n%s\n\n", row.Text)
-			case "tool":
-				fmt.Fprintf(&b, "[tool] %s\n\n", strings.TrimSpace(row.Text))
-			case "sources":
-				b.WriteString("Sources:\n")
-				for i, sc := range row.Srcs {
-					fmt.Fprintf(&b, "%d. %s — %s\n", i+1, sc["title"], sc["url"])
-					if sc["snippet"] != "" {
-						fmt.Fprintf(&b, "   %s\n", sc["snippet"])
-					}
-				}
-				b.WriteString("\n")
-			case "error":
-				fmt.Fprintf(&b, "[error] %s\n\n", row.Text)
-			case "retry":
-				fmt.Fprintf(&b, "[retry] %s\n\n", row.Text)
-			case "injected":
-				fmt.Fprintf(&b, "[system injected] %s\n\n", row.Text)
-			}
-		}
-		w.Write([]byte(b.String()))
-	case "html":
-		// v0.82.5: engine-side HTML — the full transcript (same info as
-		// md/txt) as a self-contained styled page, escaped.
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name+".html"))
-		var b strings.Builder
-		fmt.Fprintf(&b, "<!doctype html>\n<meta charset=\"utf-8\">\n<title>%s — transcript</title>\n", htmlEsc(sess.Title))
-		b.WriteString("<style>body{font-family:system-ui;max-width:760px;margin:24px auto;padding:0 16px;line-height:1.55;color:#111}" +
-			"pre{white-space:pre-wrap;word-wrap:break-word}" +
-			".u,.a,.t,.th,.e{border:1px solid #ddd;border-radius:10px;padding:12px 16px;margin:10px 0}" +
-			".u{background:#f4f6f8}.a{background:#f4faf6}.t{background:#f8f4fa;font-size:.92em}" +
-			".th{background:#faf8f4;font-size:.92em;color:#555}.e{background:#fdf4f4}" +
-			".meta{font-size:.92em;color:#444;border:1px solid #ddd;border-radius:10px;padding:12px 16px;margin-bottom:18px}" +
-			".meta b{color:#111}</style>\n")
-		fmt.Fprintf(&b, "<h1>%s — transcript</h1>\n", htmlEsc(sess.Title))
-		b.WriteString("<div class=\"meta\">")
-		for _, l := range strings.Split(strings.TrimPrefix(exportMetaLines(sess, events, "txt"), "\n"), "\n") {
-			if strings.TrimSpace(l) != "" {
-				b.WriteString("<div>" + htmlEsc(l) + "</div>")
-			}
-		}
-		b.WriteString("</div>\n")
-		for _, row := range foldEvents(events) {
-			if row.Hidden {
-				continue
-			}
-			switch row.Type {
-			case "user":
-				fmt.Fprintf(&b, "<div class=\"u\"><b>You:</b><pre>%s</pre></div>\n", htmlEsc(row.Text))
-			case "assistant":
-				fmt.Fprintf(&b, "<div class=\"a\"><b>Assistant:</b><pre>%s</pre></div>\n", htmlEsc(row.Text))
-			case "thinking":
-				fmt.Fprintf(&b, "<div class=\"th\"><b>thinking</b><pre>%s</pre></div>\n", htmlEsc(row.Text))
-			case "tool":
-				fmt.Fprintf(&b, "<div class=\"t\">⚙ <pre>%s</pre></div>\n", htmlEsc(strings.TrimSpace(row.Text)))
-			case "sources":
-				b.WriteString("<div class=\"t\"><b>Sources</b><ol>")
-				for _, sc := range row.Srcs {
-					fmt.Fprintf(&b, "<li><a href=\"%s\">%s</a>", htmlEsc(sc["url"]), htmlEsc(sc["title"]))
-					if sc["snippet"] != "" {
-						fmt.Fprintf(&b, " — <span>%s</span>", htmlEsc(sc["snippet"]))
-					}
-					b.WriteString("</li>")
-				}
-				b.WriteString("</ol></div>\n")
-			case "error":
-				fmt.Fprintf(&b, "<div class=\"e\">⚠️ <b>error:</b> <pre>%s</pre></div>\n", htmlEsc(row.Text))
-			case "retry":
-				fmt.Fprintf(&b, "<div class=\"e\">↻ <b>auto-retry:</b> <pre>%s</pre></div>\n", htmlEsc(row.Text))
-			case "injected":
-				fmt.Fprintf(&b, "<div class=\"t\">⌁ <b>system injected:</b> <pre>%s</pre></div>\n", htmlEsc(row.Text))
-			}
-		}
-		w.Write([]byte(b.String()))
-	default:
-		writeError(w, 400, "format must be csv, md, json, txt or html")
-	}
+        switch format {
+        case "csv":
+                w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+                w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name+".csv"))
+                ww := csv.NewWriter(w)
+                ww.Write([]string{"seq", "time_utc", "type", "text"})
+                for _, row := range foldEvents(events) {
+                        if row.Hidden {
+                                continue
+                        }
+                        text := row.Text
+                        if row.Type == "sources" {
+                                var parts []string
+                                for _, sc := range row.Srcs {
+                                        parts = append(parts, fmt.Sprintf("[%s](%s)", sc["title"], sc["url"]))
+                                }
+                                text = strings.Join(parts, " ")
+                        }
+                        ww.Write([]string{fmt.Sprintf("%d", row.Seq), isoTime(row.At), row.Type, text})
+                }
+                ww.Flush()
+        case "md":
+                w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+                w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name+".md"))
+                var b strings.Builder
+                fmt.Fprintf(&b, "# %s\n\n", sess.Title)
+                b.WriteString(exportMetaLines(sess, events, "md"))
+                fmt.Fprintf(&b, "- **Messages (folded):** see below\n\n---\n\n")
+                for _, row := range foldEvents(events) {
+                        if row.Hidden {
+                                continue
+                        }
+                        switch row.Type {
+                        case "user":
+                                fmt.Fprintf(&b, "**You:**\n\n%s\n\n", row.Text)
+                        case "assistant":
+                                fmt.Fprintf(&b, "**Assistant:**\n\n%s\n\n", row.Text)
+                        case "thinking":
+                                fmt.Fprintf(&b, "<details>\n<summary>thinking</summary>\n\n%s\n\n</details>\n\n", row.Text)
+                        case "tool":
+                                fmt.Fprintf(&b, "> ⚙ %s\n\n", strings.TrimSpace(row.Text))
+                        case "sources":
+                                b.WriteString("**Sources:**\n\n")
+                                for i, sc := range row.Srcs {
+                                        fmt.Fprintf(&b, "%d. [%s](%s)\n", i+1, sc["title"], sc["url"])
+                                }
+                                b.WriteString("\n")
+                        case "error":
+                                fmt.Fprintf(&b, "⚠️ **error:** %s\n\n", row.Text)
+                        case "retry":
+                                // v1.61.4 THE RETRY PILL: the sentinel's lifecycle
+                                // rides the export (the probes are the turn's truth).
+                                fmt.Fprintf(&b, "> ↻ %s\n\n", row.Text)
+                        case "injected":
+                                // v1.65.2 THE LOUD INJECTION: every system-injected
+                                // prompt rides the transcript verbatim.
+                                fmt.Fprintf(&b, "> ⌁ system injected: %s\n\n", row.Text)
+                case "job":
+                                // v1.73.2 THE JOB LAYER: the lane's completion line.
+                                fmt.Fprintf(&b, "> ⏱ %s\n\n", row.Text)
+                        }
+                }
+                w.Write([]byte(b.String()))
+        case "json":
+                w.Header().Set("Content-Type", "application/json")
+                w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name+".json"))
+                if events == nil {
+                        events = []*store.Event{} // a nil slice marshals as null — keep [] shape
+                }
+                out := struct {
+                        Session *store.Session `json:"session"`
+                        Events  []*store.Event `json:"events"`
+                }{Session: sess, Events: events}
+                enc := json.NewEncoder(w)
+                enc.SetIndent("", "  ")
+                enc.SetEscapeHTML(false)
+                enc.Encode(out)
+        case "txt":
+                // v0.82.5: engine-side plain text — the client-side Blob-URL
+                // download never worked in the Android WebView (only engine URLs
+                // with Content-Disposition reach the DownloadListener). Same full
+                // info as the md: metadata header + every folded row.
+                w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+                w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name+".txt"))
+                var b strings.Builder
+                fmt.Fprintf(&b, "%s — transcript\n\n", sess.Title)
+                for _, l := range strings.Split(strings.TrimPrefix(exportMetaLines(sess, events, "txt"), "\n"), "\n") {
+                        if strings.TrimSpace(l) != "" {
+                                b.WriteString(l + "\n")
+                        }
+                }
+                b.WriteString("\n" + strings.Repeat("-", 60) + "\n\n")
+                for _, row := range foldEvents(events) {
+                        if row.Hidden {
+                                continue
+                        }
+                        switch row.Type {
+                        case "user":
+                                fmt.Fprintf(&b, "You:\n%s\n\n", row.Text)
+                        case "assistant":
+                                fmt.Fprintf(&b, "Assistant:\n%s\n\n", row.Text)
+                        case "thinking":
+                                fmt.Fprintf(&b, "[thinking]\n%s\n\n", row.Text)
+                        case "tool":
+                                fmt.Fprintf(&b, "[tool] %s\n\n", strings.TrimSpace(row.Text))
+                        case "sources":
+                                b.WriteString("Sources:\n")
+                                for i, sc := range row.Srcs {
+                                        fmt.Fprintf(&b, "%d. %s — %s\n", i+1, sc["title"], sc["url"])
+                                        if sc["snippet"] != "" {
+                                                fmt.Fprintf(&b, "   %s\n", sc["snippet"])
+                                        }
+                                }
+                                b.WriteString("\n")
+                        case "error":
+                                fmt.Fprintf(&b, "[error] %s\n\n", row.Text)
+                        case "retry":
+                                fmt.Fprintf(&b, "[retry] %s\n\n", row.Text)
+                        case "injected":
+                                fmt.Fprintf(&b, "[system injected] %s\n\n", row.Text)
+                case "job":
+                                fmt.Fprintf(&b, "[background job] %s\n\n", row.Text)
+                        }
+                }
+                w.Write([]byte(b.String()))
+        case "html":
+                // v0.82.5: engine-side HTML — the full transcript (same info as
+                // md/txt) as a self-contained styled page, escaped.
+                w.Header().Set("Content-Type", "text/html; charset=utf-8")
+                w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name+".html"))
+                var b strings.Builder
+                fmt.Fprintf(&b, "<!doctype html>\n<meta charset=\"utf-8\">\n<title>%s — transcript</title>\n", htmlEsc(sess.Title))
+                b.WriteString("<style>body{font-family:system-ui;max-width:760px;margin:24px auto;padding:0 16px;line-height:1.55;color:#111}" +
+                        "pre{white-space:pre-wrap;word-wrap:break-word}" +
+                        ".u,.a,.t,.th,.e{border:1px solid #ddd;border-radius:10px;padding:12px 16px;margin:10px 0}" +
+                        ".u{background:#f4f6f8}.a{background:#f4faf6}.t{background:#f8f4fa;font-size:.92em}" +
+                        ".th{background:#faf8f4;font-size:.92em;color:#555}.e{background:#fdf4f4}" +
+                        ".meta{font-size:.92em;color:#444;border:1px solid #ddd;border-radius:10px;padding:12px 16px;margin-bottom:18px}" +
+                        ".meta b{color:#111}</style>\n")
+                fmt.Fprintf(&b, "<h1>%s — transcript</h1>\n", htmlEsc(sess.Title))
+                b.WriteString("<div class=\"meta\">")
+                for _, l := range strings.Split(strings.TrimPrefix(exportMetaLines(sess, events, "txt"), "\n"), "\n") {
+                        if strings.TrimSpace(l) != "" {
+                                b.WriteString("<div>" + htmlEsc(l) + "</div>")
+                        }
+                }
+                b.WriteString("</div>\n")
+                for _, row := range foldEvents(events) {
+                        if row.Hidden {
+                                continue
+                        }
+                        switch row.Type {
+                        case "user":
+                                fmt.Fprintf(&b, "<div class=\"u\"><b>You:</b><pre>%s</pre></div>\n", htmlEsc(row.Text))
+                        case "assistant":
+                                fmt.Fprintf(&b, "<div class=\"a\"><b>Assistant:</b><pre>%s</pre></div>\n", htmlEsc(row.Text))
+                        case "thinking":
+                                fmt.Fprintf(&b, "<div class=\"th\"><b>thinking</b><pre>%s</pre></div>\n", htmlEsc(row.Text))
+                        case "tool":
+                                fmt.Fprintf(&b, "<div class=\"t\">⚙ <pre>%s</pre></div>\n", htmlEsc(strings.TrimSpace(row.Text)))
+                        case "sources":
+                                b.WriteString("<div class=\"t\"><b>Sources</b><ol>")
+                                for _, sc := range row.Srcs {
+                                        fmt.Fprintf(&b, "<li><a href=\"%s\">%s</a>", htmlEsc(sc["url"]), htmlEsc(sc["title"]))
+                                        if sc["snippet"] != "" {
+                                                fmt.Fprintf(&b, " — <span>%s</span>", htmlEsc(sc["snippet"]))
+                                        }
+                                        b.WriteString("</li>")
+                                }
+                                b.WriteString("</ol></div>\n")
+                        case "error":
+                                fmt.Fprintf(&b, "<div class=\"e\">⚠️ <b>error:</b> <pre>%s</pre></div>\n", htmlEsc(row.Text))
+                        case "retry":
+                                fmt.Fprintf(&b, "<div class=\"e\">↻ <b>auto-retry:</b> <pre>%s</pre></div>\n", htmlEsc(row.Text))
+                        case "injected":
+                                fmt.Fprintf(&b, "<div class=\"t\">⌁ <b>system injected:</b> <pre>%s</pre></div>\n", htmlEsc(row.Text))
+                case "job":
+                                fmt.Fprintf(&b, "<div class=\"t\">⏱ <b>background job:</b> <pre>%s</pre></div>\n", htmlEsc(row.Text))
+                        }
+                }
+                w.Write([]byte(b.String()))
+        default:
+                writeError(w, 400, "format must be csv, md, json, txt or html")
+        }
 }
 
 // exportMetaLines (v0.82.5 THE EXPORT TRUTH — "make sure all export chat
@@ -467,156 +517,156 @@ func (s *Server) handleSessionExport(w http.ResponseWriter, r *http.Request) {
 // plain. Usage totals fold from the status events; workspaces from the
 // same bound list the session context renders.
 func exportMetaLines(sess *store.Session, events []*store.Event, style string) string {
-	bold := func(k, v string) string {
-		if style == "md" {
-			return "- **" + k + ":** " + v
-		}
-		return k + ": " + v
-	}
-	var lines []string
-	lines = append(lines, bold("Chat type", orDash(sess.Sandbox)))
-	lines = append(lines, bold("Provider", orDash(sess.Provider)))
-	lines = append(lines, bold("Model", orDash(sess.Model)))
-	if sess.Effort != "" {
-		lines = append(lines, bold("Effort", sess.Effort))
-	}
-	lines = append(lines, bold("Memory window", fmt.Sprintf("%d messages", or40(sess.SlidingWindow))))
-	if sess.MaxContext > 0 {
-		lines = append(lines, bold("Max context", fmt.Sprintf("%d tokens", sess.MaxContext)))
-	}
-	lines = append(lines, bold("Web search", onOff(sess.WebSearch)))
-	lines = append(lines, bold("Deep research", onOff(sess.DeepResearch)))
-	if sess.Mode != "" {
-		lines = append(lines, bold("Mode", sess.Mode))
-	}
-	if sess.JudgeCount > 0 {
-		j := fmt.Sprintf("%d", sess.JudgeCount)
-		if sess.JudgeTemplate != "" {
-			j += " (" + sess.JudgeTemplate + ")"
-		}
-		lines = append(lines, bold("Judges", j))
-	}
-	if tpl := templateNameOf825(sess.TemplateID); tpl != "" {
-		lines = append(lines, bold("Active template", tpl))
-	}
-	if p := activePersonasOf825(sess); p != "" {
-		lines = append(lines, bold("Personas", p))
-	}
-	if sess.CompactSeq > 0 {
-		lines = append(lines, bold("Compacted", fmt.Sprintf("older turns (seq ≤ %d) summarized", sess.CompactSeq)))
-	}
-	// usage totals from the status events (the same fold the session
-	// context performs)
-	var in, out int64
-	turns := 0
-	for _, ev := range events {
-		if ev.EventType != "status" || ev.Content == "" {
-			continue
-		}
-		var st struct {
-			Usage *struct {
-				InputTokens  int64 `json:"input_tokens"`
-				OutputTokens int64 `json:"output_tokens"`
-			} `json:"usage"`
-		}
-		if json.Unmarshal([]byte(ev.Content), &st) != nil || st.Usage == nil {
-			continue
-		}
-		in += st.Usage.InputTokens
-		out += st.Usage.OutputTokens
-		turns++
-	}
-	if turns > 0 {
-		lines = append(lines, bold("Usage", fmt.Sprintf("%d turns · %s tokens in / %s tokens out", turns, commaI64(in), commaI64(out))))
-	}
-	// message counts from the folded rows
-	rows := foldEvents(events)
-	var users, assists, tools int
-	for _, r := range rows {
-		switch r.Type {
-		case "user":
-			users++
-		case "assistant":
-			assists++
-		case "tool":
-			tools++
-		}
-	}
-	lines = append(lines, bold("Counts", fmt.Sprintf("%d user · %d assistant · %d tool events", users, assists, tools)))
-	lines = append(lines, bold("Started", isoTime(sess.CreatedAt)))
-	if sess.UpdatedAt > 0 {
-		lines = append(lines, bold("Updated", isoTime(sess.UpdatedAt)))
-	}
-	buf := "\n"
-	for _, l := range lines {
-		buf += l + "\n"
-	}
-	return buf
+        bold := func(k, v string) string {
+                if style == "md" {
+                        return "- **" + k + ":** " + v
+                }
+                return k + ": " + v
+        }
+        var lines []string
+        lines = append(lines, bold("Chat type", orDash(sess.Sandbox)))
+        lines = append(lines, bold("Provider", orDash(sess.Provider)))
+        lines = append(lines, bold("Model", orDash(sess.Model)))
+        if sess.Effort != "" {
+                lines = append(lines, bold("Effort", sess.Effort))
+        }
+        lines = append(lines, bold("Memory window", fmt.Sprintf("%d messages", or40(sess.SlidingWindow))))
+        if sess.MaxContext > 0 {
+                lines = append(lines, bold("Max context", fmt.Sprintf("%d tokens", sess.MaxContext)))
+        }
+        lines = append(lines, bold("Web search", onOff(sess.WebSearch)))
+        lines = append(lines, bold("Deep research", onOff(sess.DeepResearch)))
+        if sess.Mode != "" {
+                lines = append(lines, bold("Mode", sess.Mode))
+        }
+        if sess.JudgeCount > 0 {
+                j := fmt.Sprintf("%d", sess.JudgeCount)
+                if sess.JudgeTemplate != "" {
+                        j += " (" + sess.JudgeTemplate + ")"
+                }
+                lines = append(lines, bold("Judges", j))
+        }
+        if tpl := templateNameOf825(sess.TemplateID); tpl != "" {
+                lines = append(lines, bold("Active template", tpl))
+        }
+        if p := activePersonasOf825(sess); p != "" {
+                lines = append(lines, bold("Personas", p))
+        }
+        if sess.CompactSeq > 0 {
+                lines = append(lines, bold("Compacted", fmt.Sprintf("older turns (seq ≤ %d) summarized", sess.CompactSeq)))
+        }
+        // usage totals from the status events (the same fold the session
+        // context performs)
+        var in, out int64
+        turns := 0
+        for _, ev := range events {
+                if ev.EventType != "status" || ev.Content == "" {
+                        continue
+                }
+                var st struct {
+                        Usage *struct {
+                                InputTokens  int64 `json:"input_tokens"`
+                                OutputTokens int64 `json:"output_tokens"`
+                        } `json:"usage"`
+                }
+                if json.Unmarshal([]byte(ev.Content), &st) != nil || st.Usage == nil {
+                        continue
+                }
+                in += st.Usage.InputTokens
+                out += st.Usage.OutputTokens
+                turns++
+        }
+        if turns > 0 {
+                lines = append(lines, bold("Usage", fmt.Sprintf("%d turns · %s tokens in / %s tokens out", turns, commaI64(in), commaI64(out))))
+        }
+        // message counts from the folded rows
+        rows := foldEvents(events)
+        var users, assists, tools int
+        for _, r := range rows {
+                switch r.Type {
+                case "user":
+                        users++
+                case "assistant":
+                        assists++
+                case "tool":
+                        tools++
+                }
+        }
+        lines = append(lines, bold("Counts", fmt.Sprintf("%d user · %d assistant · %d tool events", users, assists, tools)))
+        lines = append(lines, bold("Started", isoTime(sess.CreatedAt)))
+        if sess.UpdatedAt > 0 {
+                lines = append(lines, bold("Updated", isoTime(sess.UpdatedAt)))
+        }
+        buf := "\n"
+        for _, l := range lines {
+                buf += l + "\n"
+        }
+        return buf
 }
 
 func onOff(b bool) string {
-	if b {
-		return "on"
-	}
-	return "off"
+        if b {
+                return "on"
+        }
+        return "off"
 }
 
 func templateNameOf825(raw string) string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return ""
-	}
-	var tpl struct {
-		Name string `json:"name"`
-	}
-	if json.Unmarshal([]byte(raw), &tpl) == nil && tpl.Name != "" {
-		return tpl.Name
-	}
-	return raw
+        raw = strings.TrimSpace(raw)
+        if raw == "" {
+                return ""
+        }
+        var tpl struct {
+                Name string `json:"name"`
+        }
+        if json.Unmarshal([]byte(raw), &tpl) == nil && tpl.Name != "" {
+                return tpl.Name
+        }
+        return raw
 }
 
 func activePersonasOf825(sess *store.Session) string {
-	raw := strings.TrimSpace(sess.Personas)
-	if raw == "" {
-		if p := strings.TrimSpace(sess.Persona); p != "" {
-			return "(single custom persona)"
-		}
-		return ""
-	}
-	var specs []struct {
-		Name string `json:"name"`
-		Mode string `json:"mode"`
-	}
-	if json.Unmarshal([]byte(raw), &specs) != nil {
-		return ""
-	}
-	var names []string
-	for _, sp := range specs {
-		n := sp.Name
-		if sp.Mode == "always" {
-			n += " (always)"
-		}
-		names = append(names, n)
-	}
-	return strings.Join(names, ", ")
+        raw := strings.TrimSpace(sess.Personas)
+        if raw == "" {
+                if p := strings.TrimSpace(sess.Persona); p != "" {
+                        return "(single custom persona)"
+                }
+                return ""
+        }
+        var specs []struct {
+                Name string `json:"name"`
+                Mode string `json:"mode"`
+        }
+        if json.Unmarshal([]byte(raw), &specs) != nil {
+                return ""
+        }
+        var names []string
+        for _, sp := range specs {
+                n := sp.Name
+                if sp.Mode == "always" {
+                        n += " (always)"
+                }
+                names = append(names, n)
+        }
+        return strings.Join(names, ", ")
 }
 
 // htmlEsc escapes the five HTML-significant runes.
 func htmlEsc(s string) string {
-	r := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", "\"", "&quot;", "'", "&#39;")
-	return r.Replace(s)
+        r := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", "\"", "&quot;", "'", "&#39;")
+        return r.Replace(s)
 }
 
 func orDash(s string) string {
-	if strings.TrimSpace(s) == "" {
-		return "—"
-	}
-	return s
+        if strings.TrimSpace(s) == "" {
+                return "—"
+        }
+        return s
 }
 
 func or40(n int) int {
-	if n <= 0 {
-		return 40
-	}
-	return n
+        if n <= 0 {
+                return 40
+        }
+        return n
 }

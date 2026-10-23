@@ -127,8 +127,8 @@ func TestListToolsServesAll29(t *testing.T) {
         if err != nil {
                 t.Fatalf("ListTools: %v", err)
         }
-        if len(tools) != 31 {
-                t.Fatalf("want 31 tools (29 base + djournal + fleet, v1.47), got %d", len(tools))
+        if len(tools) != 34 {
+                t.Fatalf("want 34 tools (29 base + djournal + fleet, v1.47 + the job trio, v1.73), got %d", len(tools))
         }
         for _, tool := range tools {
                 if tool.Name == "" || tool.Description == "" {
@@ -239,12 +239,15 @@ func TestSpecsGating(t *testing.T) {
         // v1.70.1 THE TRUTHFUL MANIFEST: template_list/template_show moved
         // behind the Template gate (they refused whenever the pill was off,
         // yet the manifest advertised them) — the always-on set shrank 22→20.
-        if len(none) != 20 {
-                t.Fatalf("want 20 always-on specs (31 - 11 gated), got %d", len(none))
+        // v1.73.2 THE JOB LAYER: the job trio (job_status/job_kill/job_list)
+        // is always-on by design (the model's handle on its own lanes — they
+        // never grace-wrap, never gate) — 20→23.
+        if len(none) != 23 {
+                t.Fatalf("want 23 always-on specs (34 - 11 gated), got %d", len(none))
         }
         all := b.Specs(Gates{Hublib: true, Skills: true, Persona: true, Workspace: true, Termux: true, Delegate: true, Template: true})
-        if len(all) != 31 {
-                t.Fatalf("want 31 specs with all gates, got %d", len(all))
+        if len(all) != 34 {
+                t.Fatalf("want 34 specs with all gates, got %d", len(all))
         }
         // spot-check the OpenAI wire shape against the proven one
         var found bool
@@ -519,15 +522,15 @@ func TestChain100ExternalTools(t *testing.T) {
         if got := b.ExternalTools(); got != 100 {
                 t.Fatalf("want 100 attached tools, got %d", got)
         }
-        // the manifest crosses the 100+ horizon: 20 always-on internal
+        // the manifest crosses the 100+ horizon: 23 always-on internal
         // (v1.70.1 THE TRUTHFUL MANIFEST: the template pair moved behind
-        // its gate) + 100 chained
+        // its gate; v1.73.2: + the job trio) + 100 chained
         specs := b.Specs(Gates{})
-        if len(specs) != 120 {
-                t.Fatalf("want 120 specs (20 always-on internal + 100 chained), got %d", len(specs))
+        if len(specs) != 123 {
+                t.Fatalf("want 123 specs (23 always-on internal + 100 chained), got %d", len(specs))
         }
         // every external spec has a real JSON Schema
-        for _, s := range specs[20:] {
+        for _, s := range specs[23:] {
                 fn, _ := s["function"].(map[string]any)
                 if fn == nil || !strings.HasPrefix(fn["name"].(string), "scale_tool_") {
                         t.Fatalf("external spec shape wrong: %v", s)
@@ -560,8 +563,8 @@ func TestChain100ExternalTools(t *testing.T) {
         if err != nil {
                 t.Fatalf("ListTools: %v", err)
         }
-        if len(tools) != 131 {
-                t.Fatalf("protocol tools/list should serve 131 (31 internal + 100 chained), got %d", len(tools))
+        if len(tools) != 134 {
+                t.Fatalf("protocol tools/list should serve 134 (34 internal + 100 chained), got %d", len(tools))
         }
 }
 

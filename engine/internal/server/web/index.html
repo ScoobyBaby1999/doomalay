@@ -2294,6 +2294,52 @@
   @-webkit-keyframes retrySpin { from { -webkit-transform: rotate(0deg); } to { -webkit-transform: rotate(360deg); } }
   @keyframes retrySpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
+  /* v1.73.2/v1.73.3 THE JOB LAYER + THE AFTER-THE-FACT UI (PLAN-V173): a
+     background lane settled — the completion row lands whenever it lands
+     ("The UI be dealt with after the fact"). The state drives the tone:
+     completed composes --ok, failed --err, cancelled the dim text token;
+     the duration chip is the honest clock ("display the time it took for
+     each tool call"). Theme tokens only, never a literal. */
+  .msg-job {
+    align-self: center; font-size: calc(var(--chat-fs) - 3px);
+    padding: calc(8px * var(--chat-scale)) calc(12px * var(--chat-scale));
+    border-radius: 8px; max-width: 90%;
+    background: rgba(var(--ok-rgb, 52, 211, 153), 0.08);
+    border: 1px solid rgba(var(--ok-rgb, 52, 211, 153), 0.3);
+    color: var(--ok);
+  }
+  .msg-job[data-job-state="failed"] {
+    color: var(--err);
+    background: rgba(var(--err-rgb, 239, 68, 68), 0.08);
+    border-color: rgba(var(--err-rgb, 239, 68, 68), 0.3);
+  }
+  .msg-job[data-job-state="cancelled"] {
+    color: var(--text-3);
+    background: transparent;
+    border-color: var(--border);
+  }
+  .msg-job-head { display: flex; align-items: center; gap: 6px; }
+  .msg-job-glyph { font-weight: 700; -webkit-user-select: none; user-select: none; }
+  .msg-job-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .msg-job-dur {
+    margin-left: auto; flex-shrink: 0; font-variant-numeric: tabular-nums;
+    font-size: calc(var(--chat-fs) * 0.72); opacity: 0.85;
+    padding: 1px 7px; border-radius: 99px;
+    background: rgba(var(--ok-rgb, 52, 211, 153), 0.12);
+  }
+  .msg-job[data-job-state="failed"] .msg-job-dur { background: rgba(var(--err-rgb, 239, 68, 68), 0.12); }
+  .msg-job[data-job-state="cancelled"] .msg-job-dur { background: rgba(var(--text-3-rgb, 120,120,120), 0.12); }
+  .msg-job-body { margin-top: 6px; }
+  .msg-job-body summary {
+    cursor: pointer; font-size: calc(var(--chat-fs) * 0.78); opacity: 0.8;
+    -webkit-user-select: none; user-select: none;
+  }
+  .msg-job-pre {
+    margin: 6px 0 0; white-space: pre-wrap; word-wrap: break-word;
+    font-size: calc(var(--chat-fs) * 0.78); max-height: 40vh; overflow-y: auto;
+    font-family: var(--font-mono, ui-monospace, monospace);
+  }
+
   /* v1.56.0 THE HICCUP FLAG: a tool hiccup (a truncated result, a
      refused call, a failed tool) wears the WARNING tone and a ⚠ glyph —
      the user's law: "every single hiccup you encounter while running
@@ -3165,6 +3211,27 @@
   .tool-pill-use { color: var(--text-1); background: rgba(var(--accent-2-rgb),0.07); border: 1px solid rgba(var(--accent-2-rgb),0.35); }
   .tool-pill-result { color: var(--ok); background: rgba(var(--ok-rgb),0.06); border: 1px solid rgba(var(--ok-rgb),0.25); }
   .tool-pill-progress { color: var(--text-3); background: transparent; border: 1px dashed var(--border); }
+  /* v1.73.3 THE HONEST CLOCK + THE SLOW TONE (PLAN-V173 §v1.73.3): every
+     completed pill carries its own duration chip ("12.4s" — tabular, dim,
+     pill-shaped); a call that took ≥ the slow threshold (30s default)
+     wears the warn accent on the whole pill — "indicating they took
+     time", the user's exact ask. Theme tokens only. */
+  .tool-pill-dur {
+    flex-shrink: 0; font-size: calc(var(--chat-fs) * 0.62);
+    font-variant-numeric: tabular-nums; opacity: 0.75;
+    padding: 1px 7px; border-radius: 99px;
+    background: rgba(var(--text-3-rgb, 120,120,120), 0.1);
+    -webkit-user-select: none; user-select: none;
+  }
+  .tool-pill[data-slow="1"] {
+    color: var(--warn);
+    background: rgba(var(--warn-rgb, 251, 191, 36), 0.07);
+    border-color: rgba(var(--warn-rgb, 251, 191, 36), 0.45);
+  }
+  .tool-pill[data-slow="1"] .tool-pill-dur {
+    opacity: 1; color: var(--warn);
+    background: rgba(var(--warn-rgb, 251, 191, 36), 0.14);
+  }
   /* ── v1.23.2 THE ONE PILL: the derived label's dim query tail, the
      in-flight dot, and the dynamic loading bar (theme vars only) ── */
   .tool-pill-tail {
