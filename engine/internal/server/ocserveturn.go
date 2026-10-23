@@ -505,6 +505,35 @@ func (s *Server) ocServeStreamTurn(ctx context.Context, m *ocserve.Manager, sess
                 if err := m.SelectModel(serveSess, modelID); err != nil {
                         return fmt.Errorf("serve bridge select model: %w", err)
                 }
+                // v1.67.1 THE ZOMBIE GUARD: a previous turn still in flight on
+                // this serve session (its pump gone engine-side — a restart, a
+                // cancel, an off-wire terminal, the old forever-stall) would
+                // queue this prompt behind it FOREVER (the serve serializes per
+                // session — the user's "the chat throttled and halted… changing
+                // models didn't fix it; a new chat works"). Interrupt the orphan
+                // first (a no-op on an idle session); a STALE orphan whose
+                // interrupt fails is recycled wholesale (delete + fresh birth).
+                if inFlight, tailAt := m.SessionInFlight(serveSess); inFlight {
+                        age := time.Now().UnixMilli() - tailAt
+                        if _, ierr := m.InterruptSession(serveSess); ierr != nil {
+                                if age > int64(ocServeStallCeilingDur()/time.Millisecond) {
+                                        log.Printf("ocserve: zombie turn on %s (tail %dms old, interrupt failed: %v) — recycling the serve session", serveSess, age, ierr)
+                                        s.ocServeForgetSession(sess.ID)
+                                        if nSess, _, _, nerr := s.ocServeSessionID(m, sess); nerr == nil {
+                                                serveSess = nSess
+                                                if err := m.SelectModel(serveSess, modelID); err != nil {
+                                                        return fmt.Errorf("serve bridge select model: %w", err)
+                                                }
+                                        } else {
+                                                return fmt.Errorf("serve bridge session: %w", nerr)
+                                        }
+                                } else {
+                                        log.Printf("ocserve: in-flight turn on %s (tail %dms old) — interrupt failed (%v); the prompt queues behind it", serveSess, age, ierr)
+                                }
+                        } else {
+                                log.Printf("ocserve: interrupted an orphaned in-flight turn on %s (tail %dms old) — the prompt runs free", serveSess, age)
+                        }
+                }
                 // v1.58.2 THE TERMUX AUTO-ENABLE (R8): the pocket bridge LIVES in
                 // the device's Termux — a chat running through it HAS the termux
                 // capability by construction. The engine self-heals the per-chat
@@ -561,9 +590,20 @@ func (s *Server) ocServeStreamTurn(ctx context.Context, m *ocserve.Manager, sess
                                 }
                         }
                         // the second wall (or no roster to walk): the honest terminal
-                        // (never a silent hang)
-                        out <- map[string]any{"type": "error", "session_id": sessionID,
-                                "error": "oc_free_walled", "message": "OpenCode's free-tier windows are all full right now (the limit is per-model and resets on OpenCode's own clock) — try again in a little while, or switch provider (NVIDIA / PrivateMode have working free models)"}
+                        // (never a silent hang). v1.67.3 THE LOUD 429: the wall now
+                        // ARMS THE RETRY SENTINEL — the windows reset on OpenCode's
+                        // own clock, the bridge-health probe + the auto-continue ARE
+                        // the window test (a still-closed window re-parks with the
+                        // attempts preserved — the sentinel's own law), and the pill
+                        // below the error is the visual the user asked for ("nothing
+                        // to tell me that the chat joined a listener"). The progress
+                        // line names the arm so the wait is never unexplained.
+                        out <- map[string]any{"type": "progress", "session_id": sessionID,
+                                "message": "OpenCode: the free windows are full — the auto-retry timer is armed (it probes and resumes the conversation the moment a window opens)"}
+                        walled := map[string]any{"type": "error", "session_id": sessionID,
+                                "error": "oc_free_walled", "message": "OpenCode's free-tier windows are all full right now (the limit is per-model and resets on OpenCode's own clock) — try again in a little while, or switch provider (NVIDIA / PrivateMode have working free models)",
+                                "retry_class": "429", "retry_provider": "opencode"}
+                        out <- walled
                         out <- map[string]any{"type": "status", "session_id": sessionID, "state": "error", "usage": nil}
                         return nil
                 }
@@ -598,8 +638,38 @@ func ocNextFreeModel(m *ocserve.Manager, walled string) string {
 
 // ocServeSilenceProbe is how long the pump stays quiet before polling the
 // session's own durable record (the volatile-stream no-hang guard — a test
-// may shorten it).
+// may shorten it; DOOMALAY_OC_SILENCE_PROBE_MS overrides for the rigs).
 var ocServeSilenceProbe = 12 * time.Second
+
+func init() {
+        if v := envInt("DOOMALAY_OC_SILENCE_PROBE_MS"); v > 0 {
+                ocServeSilenceProbe = time.Duration(v) * time.Millisecond
+        }
+}
+
+// ocServeStallCeiling — v1.67.1 THE INTERRUPT HAND: how long a turn may
+// stay ABSOLUTELY silent (no live frames AND no durable-record mutation —
+// neither the feed nor the transcript moved) before it is convicted a
+// zombie: a tool that will never return (the complex multi-pipe command
+// parked on stdin, a wedged termux exec) parks the pump in the "still
+// working… Ns" loop FOREVER — the user's "loaded indefinitely… the chat
+// throttled and halted" report. At the ceiling the engine interrupts the
+// turn serve-side (POST /api/session/{id}/interrupt — the researched v2
+// abort), closes every pending pill honestly, and answers the terminal so
+// the chat's lock releases. The engine's own termux runner carries a
+// 30-min budget for LEGITIMATE long tools — the serve's tools stream
+// progress frames while they work (the bash tool emits output chunks), so
+// a genuinely-alive tool keeps bumping lastEvAt and never nears the
+// ceiling; absolute silence is the zombie's signature. Env-rigged
+// (DOOMALAY_OC_STALL_CEILING_MS); 0 disables (the old forever-wait).
+var ocServeStallCeiling = 5 * time.Minute
+
+func ocServeStallCeilingDur() time.Duration {
+        if v := envInt("DOOMALAY_OC_STALL_CEILING_MS"); v > 0 {
+                return time.Duration(v) * time.Millisecond
+        }
+        return ocServeStallCeiling
+}
 
 // ocBareServeToolName — v1.64.1 THE NATIVE SHELF: the direct arm
 // (codemode:false) names every doomalay MCP tool doomalay_<name>; the
@@ -649,9 +719,17 @@ func ocBareServeToolName(name string) string {
 func (s *Server) ocServePump(ctx context.Context, m *ocserve.Manager, serveSess, sessionID, model string, out chan<- map[string]any, turnStartedAt int64) (bool, error) {
         toolNames := map[string]string{} // tool call id → tool name (input.started) — the BARE name (v1.63.1)
         usedEmitted := map[string]bool{}  // the pill law: use BEFORE result, exactly once
+        // v1.67.2 THE UNLOST MID-TURN: the result ledger — every call ID whose
+        // tool_result already rode (live OR recovered). The reconcile diff
+        // (the probe loop below) reads it; the stall ceiling's honest pill
+        // closes read its complement.
+        resultsEmitted := map[string]bool{}
         var usage map[string]any
         finish := "stop"
         lastEvAt := time.Now().UnixMilli()
+        // v1.67.2: the durable record's last-seen newest-message stamp — the
+        // stall ceiling convicts on NEITHER the feed NOR the record moving.
+        lastRecordAt := int64(0)
         emitToolUse := func(callID, name, args string) {
                 if callID == "" || usedEmitted[callID] {
                         return
@@ -729,6 +807,7 @@ func (s *Server) ocServePump(ctx context.Context, m *ocserve.Manager, serveSess,
                         // honestly (we never invent a truncation the serve didn't declare).
                         res := llm.ClampMarked(strings.Join(texts, "\n"), ocObsBudget(model))
                         res = ocResultText(res, ev.Data.Metadata.Truncated != nil && *ev.Data.Metadata.Truncated)
+                        resultsEmitted[ev.Data.ID] = true // v1.67.2: the ledger
                         out <- map[string]any{"type": "tool_result", "session_id": sessionID,
                                 "name": toolNames[ev.Data.ID], "text": res,
                                 "tool_use_id": ev.Data.ID}
@@ -740,6 +819,7 @@ func (s *Server) ocServePump(ctx context.Context, m *ocserve.Manager, serveSess,
                         }
                         // v1.58.1: the failure text rides the same unbounded law (an
                         // honest long error is never amputated at 6000 chars).
+                        resultsEmitted[ev.Data.ID] = true // v1.67.2: the ledger
                         out <- map[string]any{"type": "tool_result", "session_id": sessionID,
                                 "name": toolNames[ev.Data.ID], "text": llm.ClampMarked(msg, ocObsBudget(model)),
                                 "tool_use_id": ev.Data.ID}
@@ -789,18 +869,37 @@ func (s *Server) ocServePump(ctx context.Context, m *ocserve.Manager, serveSess,
                         for _, e := range ocServeFailEvents(sessionID, errType, errMsg, status) {
                                 out <- e
                         }
+                case "session.execution.interrupted":
+                        // v1.67.1 THE INTERRUPT HAND: the serve's own interrupted
+                        // terminal (our stall ceiling's interrupt, a stop, an
+                        // inactivity/superseded kill) — an honest failure, never a
+                        // silent end. The pending pills close honestly first.
+                        ocClosePendingPills(sessionID, model, toolNames, usedEmitted, resultsEmitted, out,
+                                "the turn was interrupted on the serve (a stop or a stall conviction)")
+                        for _, e := range ocServeFailEvents(sessionID, "interrupted", "the turn was interrupted on the serve (a stop, a shutdown, or the stall ceiling's conviction)", 0) {
+                                out <- e
+                        }
                 }
                 return nil
         }
         // v1.59.2: the stream rides its own goroutine; the silence watchdog
         // polls the durable record and owns the off-wire terminal (THE
         // NO-HANG GUARD — see the function comment).
+        // v1.67.1 THE INTERRUPT HAND + v1.67.2 THE UNLOST MID-TURN: the
+        // probe tick now also (a) RECONCILES the durable record against the
+        // live emission — a tool result the volatile feed lost in a
+        // reconnect gap re-emits from the transcript so its pill closes
+        // honestly (the "bot continued on past the spinning pill" death),
+        // and (b) convicts a turn ABSOLUTELY silent past the stall ceiling —
+        // the interrupt POST kills the zombie, every pending pill closes
+        // honestly, the terminal lands, the chat's lock releases.
         pctx, pcancel := context.WithCancel(ctx)
         defer pcancel()
         eventsDone := make(chan error, 1)
         go func() { eventsDone <- m.StreamEvents(pctx, serveSess, pump) }()
         probe := time.NewTicker(ocServeSilenceProbe)
         defer probe.Stop()
+        ceilingMS := int64(ocServeStallCeilingDur() / time.Millisecond)
         for {
                 select {
                 case err := <-eventsDone:
@@ -813,7 +912,150 @@ func (s *Server) ocServePump(ctx context.Context, m *ocserve.Manager, serveSess,
                         if time.Now().UnixMilli()-lastEvAt < quiet*3/4 {
                                 continue // live events are flowing — no probe needed
                         }
-                        ended, failed, errType, errMsg, ansText := m.SessionIdleSince(serveSess, turnStartedAt)
+                        // v1.67.2 THE MID-TURN RECONCILE — ONE transcript read
+                        // serves THREE laws (the record's own truth): the tool
+                        // states (missed results re-emit so their pills close),
+                        // the newest stamp (a mutation between ticks is LIFE),
+                        // and the ended check (the newest idle marker ≥ the
+                        // turn's start → SessionIdleSince owns the verdict).
+                        msgs, merr := m.ListSessionMessages(serveSess, 1)
+                        endedFromRecord := false
+                        if merr != nil || len(msgs) == 0 {
+                                msgs = nil // unreadable — the idle probe below still runs
+                        } else {
+                                newest := msgs[len(msgs)-1]
+                                // the ended check FIRST (a settled turn is never
+                                // "record activity" — the marker's arrival ends
+                                // the wait, it does not extend it)
+                                if newest.Type == "idle" && newest.Time.Created >= turnStartedAt {
+                                        endedFromRecord = true
+                                        msgs = nil // the turn is over — nothing to reconcile
+                                }
+                        }
+                        // v1.67.1 THE STALL CEILING — the record-activity
+                        // tracker: the FIRST observation is the BASELINE (no
+                        // refresh — the pre-pump messages are not life); a
+                        // CHANGED stamp between ticks is life (a message
+                        // landed serve-side without a live frame).
+                        if len(msgs) > 0 && !endedFromRecord {
+                                newest := msgs[len(msgs)-1]
+                                newestAt := newest.Time.Created
+                                if newest.Time.Completed > newestAt {
+                                        newestAt = newest.Time.Completed
+                                }
+                                if lastRecordAt == 0 {
+                                        lastRecordAt = newestAt // the baseline
+                                } else if newestAt > lastRecordAt {
+                                        lastRecordAt = newestAt
+                                        lastEvAt = time.Now().UnixMilli() // the record moved — still alive
+                                        msgs = nil                             // nothing stale to reconcile
+                                }
+                        }
+                        // the missed-result diff: any tool call the transcript
+                        // holds COMPLETE/ERROR whose result never rode (live)
+                        // re-emits NOW — the pill closes in place (the PWA
+                        // merges by tool_use_id), the transcript never lies.
+                        if len(msgs) > 0 {
+                                for mi := len(msgs) - 1; mi >= 0; mi-- {
+                                        if msgs[mi].Type == "idle" {
+                                                msgs = msgs[mi+1:] // this turn's window only
+                                                break
+                                        }
+                                }
+                                for _, msg := range msgs {
+                                        for _, part := range msg.Content {
+                                                if part.Type != "tool" || part.ID == "" {
+                                                        continue
+                                                }
+                                                if part.State == nil || (part.State.Status != "completed" && part.State.Status != "error") {
+                                                        continue // still running serve-side
+                                                }
+                                                callID := part.ID
+                                                if resultsEmitted[callID] {
+                                                        continue // already rode (live or a prior pass)
+                                                }
+                                                name := toolNames[callID]
+                                                args := ""
+                                                if name == "" {
+                                                        name = ocBareServeToolName(part.Name)
+                                                        toolNames[callID] = name
+                                                }
+                                                if part.State != nil && len(part.State.Input) > 0 {
+                                                        args = string(part.State.Input)
+                                                }
+                                                if !usedEmitted[callID] {
+                                                        // the use itself was lost in the gap — the
+                                                        // pill is born whole right before its result
+                                                        if args == "" {
+                                                                args = "{}"
+                                                        }
+                                                        out <- map[string]any{"type": "tool_use", "session_id": sessionID,
+                                                                "name": name, "summary": ocToolSummary(name, args), "args": args,
+                                                                "tool_use_id": callID}
+                                                        usedEmitted[callID] = true
+                                                }
+                                                txt := ""
+                                                for _, c := range part.State.Content {
+                                                        txt += c.Text
+                                                        if txt != "" {
+                                                                txt += "\n"
+                                                        }
+                                                }
+                                                truncated := false
+                                                if part.State.Metadata != nil && part.State.Metadata.Truncated != nil {
+                                                        truncated = *part.State.Metadata.Truncated
+                                                }
+                                                if part.State.Status == "error" {
+                                                        if part.State.Error != nil && part.State.Error.Message != "" {
+                                                                txt = part.State.Error.Message
+                                                        } else if txt == "" {
+                                                                txt = "the tool failed on the serve"
+                                                        }
+                                                }
+                                                res := llm.ClampMarked(txt, ocObsBudget(model))
+                                                res = ocResultText(res, truncated)
+                                                resultsEmitted[callID] = true
+                                                lastEvAt = time.Now().UnixMilli() // the record IS activity
+                                                out <- map[string]any{"type": "tool_result", "session_id": sessionID,
+                                                        "name": name, "text": res,
+                                                        "tool_use_id": callID}
+                                        }
+                                }
+                        }
+                        // v1.67.1 THE STALL CEILING: neither the feed nor the
+                        // record moved since the last tick — absolute silence
+                        // past the ceiling is the zombie's signature.
+                        if ceilingMS > 0 && time.Now().UnixMilli()-lastEvAt >= ceilingMS {
+                                elapsedMin := int(time.Since(time.UnixMilli(turnStartedAt)).Minutes())
+                                // THE CONVICTION: interrupt the zombie turn serve-side,
+                                // close every pending pill honestly, answer the terminal.
+                                interrupted := false
+                                if v, err := m.InterruptSession(serveSess); err != nil {
+                                        log.Printf("ocserve: stall ceiling (%dms) — interrupt failed on %s (%v); the terminal answers anyway", ceilingMS, serveSess, err)
+                                } else {
+                                        interrupted = v
+                                        log.Printf("ocserve: stall ceiling (%dms) — turn on %s interrupted=%v (a tool never returned; the chat's lock releases)", ceilingMS, serveSess, v)
+                                }
+                                pcancel()
+                                <-eventsDone // the cancelled stream returns shortly
+                                ocClosePendingPills(sessionID, model, toolNames, usedEmitted, resultsEmitted, out,
+                                        fmt.Sprintf("the command never returned within %d minute(s) — the turn was cancelled", elapsedMin))
+                                msg := fmt.Sprintf("OpenCode: the turn stalled — no output for %d minute(s) (a tool that never returned). The turn was %s. Try again, or continue the conversation", elapsedMin, map[bool]string{true: "interrupted on the serve", false: "cancelled engine-side"}[interrupted])
+                                for _, e := range ocServeFailEvents(sessionID, "oc_stalled", msg, 0) {
+                                        out <- e
+                                }
+                                return false, nil
+                        }
+                        // v1.67.2: the record's own ended check is the cheap
+                        // authority — SessionIdleSince (its ?limit=2 read) runs
+                        // ONLY for the verdict extraction (the error shape +
+                        // the answer text) once the marker is seen, or when the
+                        // record read failed. A quiet ALIVE tick costs exactly
+                        // ONE transcript read.
+                        ended, failed, errType, errMsg, ansText := endedFromRecord, false, "", "", ""
+                        if endedFromRecord || merr != nil {
+                                ended, failed, errType, errMsg, ansText = m.SessionIdleSince(serveSess, turnStartedAt)
+                        }
                         if !ended {
                                 // v1.64.2 THE LIVING WIRE — THE HONEST WAIT: the turn is
                                 // alive but quiet (a long reasoning phase, a slow tool) —
@@ -822,12 +1064,31 @@ func (s *Server) ocServePump(ctx context.Context, m *ocserve.Manager, serveSess,
                                 // accurate things going on to explain the wait"). Ephemeral
                                 // progress, never persisted; the elapsed count is the
                                 // durable record's own truth (the turn's start stamp).
+                                // v1.67.1: the ping names the PENDING tool + the ceiling —
+                                // the wait is never "uninsightful".
                                 elapsed := int(time.Since(time.UnixMilli(turnStartedAt)).Seconds())
                                 if elapsed < 0 {
                                         elapsed = 0
                                 }
+                                waitingOn := ""
+                                for callID, done := range resultsEmitted {
+                                        if done || !usedEmitted[callID] {
+                                                continue
+                                        }
+                                        if n := toolNames[callID]; n != "" {
+                                                waitingOn = n
+                                                break
+                                        }
+                                }
+                                ping := fmt.Sprintf("OpenCode: %s is still working… %ds in this turn", strings.TrimPrefix(model, "opencode/"), elapsed)
+                                if waitingOn != "" {
+                                        ping = fmt.Sprintf("OpenCode: %s still running… %ds in this turn", waitingOn, elapsed)
+                                        if ceilingMS > 0 {
+                                                ping += fmt.Sprintf(" — auto-cancels at %d min", int(ceilingMS/60000))
+                                        }
+                                }
                                 out <- map[string]any{"type": "progress", "session_id": sessionID,
-                                        "message": fmt.Sprintf("OpenCode: %s is still working… %ds in this turn", strings.TrimPrefix(model, "opencode/"), elapsed)}
+                                        "message": ping}
                                 continue
                         }
                         pcancel()
@@ -854,6 +1115,27 @@ func (s *Server) ocServePump(ctx context.Context, m *ocserve.Manager, serveSess,
         }
 }
 
+// ocClosePendingPills — v1.67.1 THE INTERRUPT HAND: every tool use whose
+// result never rode (the zombie turn's orphaned pills) closes HONESTLY —
+// a synthetic tool_result with the why, merged into its own pill by the
+// PWA's tool_use_id law. The transcript never shows a pill spinning
+// forever, not even on replay (the row persists like any result).
+func ocClosePendingPills(sessionID, model string, toolNames map[string]string, usedEmitted, resultsEmitted map[string]bool, out chan<- map[string]any, why string) {
+        for callID, used := range usedEmitted {
+                if !used || resultsEmitted[callID] || callID == "" {
+                        continue
+                }
+                name := toolNames[callID]
+                if name == "" {
+                        name = "tool"
+                }
+                resultsEmitted[callID] = true
+                out <- map[string]any{"type": "tool_result", "session_id": sessionID,
+                        "name": name, "text": llm.ClampMarked(why, ocObsBudget(model)),
+                        "tool_use_id": callID}
+        }
+}
+
 // ocServeFailEvents builds the honest failure pair (error + terminal
 // status) — ONE truth for both the wire path and the no-hang watchdog.
 func ocServeFailEvents(sessionID, errType, errMsg string, status int) []map[string]any {
@@ -862,6 +1144,13 @@ func ocServeFailEvents(sessionID, errType, errMsg string, status int) []map[stri
                 msg = "the OpenCode free bridge turn failed"
         }
         kind := "oc_bridge_error"
+        // v1.67.1/2: the engine's own verdict kinds ride through (the stall
+        // conviction + the serve's interrupted outcome — the PWA + the
+        // transcript name what actually happened, not the generic bridge
+        // error).
+        if errType == "oc_stalled" || errType == "interrupted" {
+                kind = errType
+        }
         if errType == "provider.auth" || status == 401 {
                 kind = "oc_bridge_auth"
                 msg = "OpenCode rejected the bridge key — check the OpenCode key in the providers screen (" + msg + ")"
@@ -882,10 +1171,19 @@ func ocServeFailEvents(sessionID, errType, errMsg string, status int) []map[stri
                 errEv["retry_class"] = retryClass
                 errEv["retry_provider"] = "opencode"
         }
-        return []map[string]any{
-                errEv,
-                {"type": "status", "session_id": sessionID, "state": "error", "usage": nil},
+        // v1.67.3 THE LOUD 429: the arm rides with a PROGRESS LINE FIRST —
+        // the opencode 429's long wait is never "uninsightful" (the user's
+        // report): the wait names the auto-retry timer before the error +
+        // the sentinel's pill land below it.
+        var events []map[string]any
+        if retryClass != "" {
+                events = append(events, map[string]any{"type": "progress", "session_id": sessionID,
+                        "message": "OpenCode: rate-limited — the auto-retry timer is armed (it probes every few minutes and resumes the conversation the moment the limit clears)"})
         }
+        events = append(events,
+                errEv,
+                map[string]any{"type": "status", "session_id": sessionID, "state": "error", "usage": nil})
+        return events
 }
 
 // errRecycle is the internal sentinel for the recycle law.

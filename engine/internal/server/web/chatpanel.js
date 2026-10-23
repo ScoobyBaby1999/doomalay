@@ -5022,6 +5022,26 @@
         // included (the old loop only handled the last message, leaving
         // earlier thinking dots + cursors blinking forever after the turn).
         completeAllStreaming(bodyEl, state);
+        // v1.67.2 THE UNLOST PILL — THE TURN-END BELT: a terminal that
+        // lands with tool pills still pending (no result ever rode — a
+        // volatile-stream gap, an engine restart mid-tool, any exotic
+        // death) closes them HONESTLY here: the loading bar dies, the row
+        // reads what happened. The engine's own paths (the stall ceiling,
+        // the mid-turn reconcile) own the opencode case; this belt owns
+        // EVERY residual — no pill spins forever, live or on replay.
+        if (wasStreaming) {
+          var lastUserIdx = -1;
+          for (var lu = state.messages.length - 1; lu >= 0; lu--) {
+            if (state.messages[lu] && state.messages[lu].role === 'user') { lastUserIdx = lu; break; }
+          }
+          for (var pi = lastUserIdx + 1; pi < state.messages.length; pi++) {
+            var pmsg = state.messages[pi];
+            if (!pmsg || pmsg.role !== 'tool' || !pmsg.tool || pmsg.res !== undefined) continue;
+            pmsg.res = 'the turn ended before this tool returned — the result was lost in flight (ask again to retry it)';
+            pmsg.resPayload = { name: (pmsg.payload && pmsg.payload.name) || 'tool', lost: true };
+            refreshToolRow(bodyEl, state, pi);
+          }
+        }
         // v1.50.5 THE CONTINUE: the provider's terminal verdict rides the
         // status usage — finish_reason 'length' / output_cut = the reply
         // was CUT mid-flight. Stamp the last assistant message so the
@@ -5224,6 +5244,16 @@
       }
       if (src.provider) {
         errText += ' (via ' + src.provider + (src.model ? ' · ' + src.model : '') + ')';
+      }
+      // v1.67.3 THE LOUD 429: the error names its LISTENER — a retryable
+      // class means the chat joined the auto-retry sentinel's timer (the
+      // pill with the live countdown lands right below this bubble). The
+      // user's report: "I didn't get any indication visually that the chat
+      // chained any timer for errors, no popups, nothing" — the error text
+      // itself now says the timer exists + what it will do.
+      if (src.retry_class) {
+        var rcLbl = retryClassLabel(String(src.retry_class), src.retry_provider || '');
+        errText += ' — auto-retry armed (' + rcLbl + '): the timer probes and CONTINUES this conversation itself the moment the signal clears; no tap needed';
       }
       // v0.37.1: ONE object for state + DOM (data-mi used to be -1 — the
       // push/append literal mismatch made error rows undeletable). ts + ei
