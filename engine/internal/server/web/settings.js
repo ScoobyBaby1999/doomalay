@@ -140,10 +140,19 @@
       // carrying the OLD DEFAULT — chosen by nobody, shipped by v1.42.3
       // — lands on the new manageable size; the flag marks the move so
       // a DELIBERATE re-pick of 64k (or any value) survives every
-      // future load untouched. The dial keeps every rung incl. ∞.
+      // future load untouched.
       if (saved.worldSize === 65536 && !saved.worldSizeV157) {
         merged.worldSize = defaultState.worldSize;
         merged.worldSizeV157 = true;
+      }
+      // v1.67.5 THE FINITE PLATE: the infinite rung is DEAD (the user's
+      // order: "limit the canvas sizes from 8-64 or 128k. No infinite
+      // grid."). Anyone carrying a saved 0 (the old ∞ pick) lands on the
+      // default once — the flag marks the move; a deliberate re-pick of
+      // any REAL rung (8k–128k) survives every future load untouched.
+      if ((merged.worldSize === 0 || saved.worldSize === 0) && !saved.worldSizeV167) {
+        merged.worldSize = defaultState.worldSize;
+        merged.worldSizeV167 = true;
       }
       return merged;
     } catch (e) { return Object.assign({}, defaultState); }

@@ -1266,14 +1266,17 @@
         // world fits the viewport at max zoom-out on any phone), every
         // other rung incl. ∞ stays. app.js's onChange listener
         // re-applies live (clamp + conform + the edge line).
+        // v1.67.5 THE FINITE PLATE: the user's order — "limit the canvas
+        // sizes from 8-64 or 128k. No infinite grid." The ∞ rung is DEAD:
+        // the ladder is 8k→128k, period. settings.js migrates a saved 0
+        // (the old infinite pick) to 16k once (worldSizeV167).
         section('World Size', '' +
-          selectRow('worldSize', 'Bounded world', (typeof s.worldSize === 'number' ? s.worldSize : 16384), [
+          selectRow('worldSize', 'Bounded world', (typeof s.worldSize === 'number' && s.worldSize > 0 ? s.worldSize : 16384), [
             { value: 8192, label: '8k — intimate' },
             { value: 16384, label: '16k — cozy · whole world in view' },
             { value: 32768, label: '32k — roomy' },
             { value: 65536, label: '64k — vast' },
-            { value: 131072, label: '128k — endless' },
-            { value: 0, label: 'Off — infinite' }
+            { value: 131072, label: '128k — endless' }
           ])
         ) +
         // v0.45 ITEM 6: grid quick options — hide / scatter / size / rotate
