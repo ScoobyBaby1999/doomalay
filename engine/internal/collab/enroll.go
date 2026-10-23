@@ -55,6 +55,12 @@ type PairStore interface {
         UpsertCollabInvite(canvasID, code, deviceCode string, expiresAt float64) error
         GetCollabInvite(canvasID string) (*store.CollabInvite, error)
         GetCollabInviteByDeviceCode(deviceCode string) (*store.CollabInvite, error)
+        // v1.71.1 THE DASHBOARD: code-only pairing — the guest names no
+        // canvas (a foreign device under the deployment law has no host
+        // rows); the CODE resolves the canvas, so it must be unique across
+        // the live set.
+        GetCollabInviteByCode(code string) (*store.CollabInvite, error)
+        CollabInviteCodeTaken(code, exceptCanvasID string) (bool, error)
         ClaimCollabInvite(canvasID, deviceName string) error
         ApproveCollabInvite(canvasID string) error
         DenyCollabInvite(canvasID string) error
@@ -113,9 +119,22 @@ var (
 // MintInvite creates/replaces THE canvas's live invite. Returns the
 // 6-digit code the owner shows (the joiner never sees the 256-bit
 // device_code — the code IS the shared proof; the device_code is the
-// joiner's private poll cursor).
+// joiner's private poll cursor). v1.71.1: THE COLLISION-FREE MINT — a
+// code held by any OTHER canvas's live invite is re-minted (the
+// code-only lookup's unambiguity law); 8 draws at 1-in-10⁶ against a
+// handful of live codes make a stuck loop ~impossible.
 func (e *Enroller) MintInvite(canvasID string) (*store.CollabInvite, error) {
         code := randDigits(CodeDigits)
+        for i := 0; i < 8; i++ {
+                taken, err := e.store.CollabInviteCodeTaken(code, canvasID)
+                if err != nil {
+                        return nil, err
+                }
+                if !taken {
+                        break
+                }
+                code = randDigits(CodeDigits)
+        }
         deviceCode := randToken(32)
         expires := float64(time.Now().Add(InviteTTL).UnixMilli()) / 1000.0
         if err := e.store.UpsertCollabInvite(canvasID, code, deviceCode, expires); err != nil {
@@ -124,9 +143,12 @@ func (e *Enroller) MintInvite(canvasID string) (*store.CollabInvite, error) {
         return e.store.GetCollabInvite(canvasID)
 }
 
-// Pair is the joiner's single-use claim: canvas + the 6-digit code + the
-// device name → the poll cursor (device_code). One claim per invite —
-// the owner approves ONE device per code.
+// Pair is the joiner's single-use claim. THE v1.71.1 LAW: canvasID may
+// be EMPTY — a foreign device under the deployment law has no host
+// canvas rows, so the CODE resolves the canvas (GetCollabInviteByCode —
+// the collision-free mint keeps it unambiguous). With a canvas named,
+// the canvas's OWN invite must match (the owner-side path, unchanged).
+// One claim per invite — the owner approves ONE device per code.
 func (e *Enroller) Pair(canvasID, code, deviceName string) (string, error) {
         code = strings.TrimSpace(code)
         if len(code) != CodeDigits || strings.Trim(code, "0123456789") != "" {
@@ -135,15 +157,26 @@ func (e *Enroller) Pair(canvasID, code, deviceName string) (string, error) {
         if strings.TrimSpace(deviceName) == "" {
                 deviceName = "Device"
         }
-        inv, err := e.store.GetCollabInvite(canvasID)
-        if err != nil {
-                return "", ErrPairNoInvite
+        var inv *store.CollabInvite
+        if strings.TrimSpace(canvasID) == "" {
+                // code-only: the code IS the locator (the foreign guest path).
+                resolved, err := e.store.GetCollabInviteByCode(code)
+                if err != nil {
+                        return "", ErrPairNoInvite // the honest miss — no oracle
+                }
+                inv = resolved
+        } else {
+                got, err := e.store.GetCollabInvite(canvasID)
+                if err != nil {
+                        return "", ErrPairNoInvite
+                }
+                inv = got
+                if inv.Code != code {
+                        return "", ErrPairBadCode
+                }
         }
         if float64(time.Now().UnixMilli())/1000.0 > inv.ExpiresAt {
                 return "", ErrPairExpired
-        }
-        if inv.Code != code {
-                return "", ErrPairBadCode
         }
         if inv.DeniedAt != nil {
                 return "", ErrPairDenied
@@ -151,10 +184,25 @@ func (e *Enroller) Pair(canvasID, code, deviceName string) (string, error) {
         if inv.ClaimedName != "" {
                 return "", ErrPairTaken
         }
-        if err := e.store.ClaimCollabInvite(canvasID, deviceName); err != nil {
+        if err := e.store.ClaimCollabInvite(inv.CanvasID, deviceName); err != nil {
                 return "", ErrPairTaken
         }
         return inv.DeviceCode, nil
+}
+
+// PairCanvas is Pair with the RESOLVED canvas id returned (v1.71.1: the
+// code-only guest learns the row only through this — the claim response
+// and the approved poll both carry it).
+func (e *Enroller) PairCanvas(canvasID, code, deviceName string) (string, string, error) {
+        deviceCode, err := e.Pair(canvasID, code, deviceName)
+        if err != nil {
+                return "", "", err
+        }
+        inv, err := e.store.GetCollabInviteByDeviceCode(deviceCode)
+        if err != nil {
+                return deviceCode, "", nil // the claim landed; the name is optional sugar
+        }
+        return deviceCode, inv.CanvasID, nil
 }
 
 // PairResult is the poll's answer.
@@ -162,6 +210,9 @@ type PairResult struct {
         Status string // pending | approved | denied | expired | unknown
         Token  string // set on approved (minted once; polls converge)
         Device string // the device id
+        // v1.71.1: the paired CANVAS (the code-only guest never knew it —
+        // the approval is what reveals it; the activation rides this).
+        Canvas string
         Err    error
 }
 
@@ -188,7 +239,7 @@ func (e *Enroller) PairStatus(deviceCode string) PairResult {
         if err != nil {
                 return PairResult{Status: "error", Err: err}
         }
-        return PairResult{Status: "approved", Token: token, Device: deviceID}
+        return PairResult{Status: "approved", Token: token, Device: deviceID, Canvas: inv.CanvasID}
 }
 
 // mintApproved derives the device credential from the session's device

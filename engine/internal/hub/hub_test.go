@@ -621,6 +621,10 @@ func newMockHF(t *testing.T) *mockHF {
                                 m.mu.Lock()
                                 rp.files[op.Value.Path] = content
                                 m.mu.Unlock()
+                        case "deletedFile": // v1.71.1: the unpublish sweep's op (the client-proven shape)
+                                m.mu.Lock()
+                                delete(rp.files, op.Value.Path)
+                                m.mu.Unlock()
                         case "lfsFile":
                                 m.mu.Lock()
                                 rp.files[op.Value.Path] = m.lfs[op.Value.Oid]
@@ -701,6 +705,10 @@ func mockCommit(w http.ResponseWriter, m *mockHF, repo string, r *http.Request) 
                         }
                         m.mu.Lock()
                         rp.files[op.Value.Path] = content
+                        m.mu.Unlock()
+                case "deletedFile": // v1.71.1: the unpublish sweep's op (the client-proven shape)
+                        m.mu.Lock()
+                        delete(rp.files, op.Value.Path)
                         m.mu.Unlock()
                 case "lfsFile":
                         m.mu.Lock()

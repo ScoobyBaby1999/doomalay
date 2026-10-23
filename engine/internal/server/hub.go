@@ -16,54 +16,55 @@ package server
 // stored locally — the payload-bypass law).
 
 import (
-	"bytes"
-	"encoding/base64"
-	"encoding/json"
-	"fmt"
-	"io"
-	"log"
-	"net/http"
-	"path/filepath"
-	"strconv"
-	"strings"
+        "bytes"
+        "encoding/base64"
+        "encoding/json"
+        "errors"
+        "fmt"
+        "io"
+        "log"
+        "net/http"
+        "path/filepath"
+        "strconv"
+        "strings"
 
-	"github.com/ScoobyBaby1999/doomalay/engine/internal/hub"
+        "github.com/ScoobyBaby1999/doomalay/engine/internal/hub"
 )
 
 const (
-	hubPublishMaxBytes = 26 << 20 // raw JSON body (pngBase64 + payload + overhead); themes carry photo dataURLs
-	// v1.54: the per-type PAYLOAD caps moved to the registry —
-	// hub.LibrarySpec.PayloadMaxBytes() (one truth: persona 64KB, theme
-	// 24MB, canvas 96MB, chat 40MB). The old 64KB + theme-special-case
-	// constants died with the move.
-	hubPNGMaxBytes = 6 << 20 // card background PNG
+        hubPublishMaxBytes = 26 << 20 // raw JSON body (pngBase64 + payload + overhead); themes carry photo dataURLs
+        // v1.54: the per-type PAYLOAD caps moved to the registry —
+        // hub.LibrarySpec.PayloadMaxBytes() (one truth: persona 64KB, theme
+        // 24MB, canvas 96MB, chat 40MB). The old 64KB + theme-special-case
+        // constants died with the move.
+        hubPNGMaxBytes = 6 << 20 // card background PNG
 )
 
 // hubType validates {type} against the registry and writes the 404 on
 // failure. Returns "" + false when the request is already answered.
 func (s *Server) hubType(w http.ResponseWriter, r *http.Request) (string, bool) {
-	typ := r.PathValue("type")
-	if _, err := hub.Get(typ); err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
-		return "", false
-	}
-	return typ, true
+        typ := r.PathValue("type")
+        if _, err := hub.Get(typ); err != nil {
+                writeError(w, http.StatusNotFound, err.Error())
+                return "", false
+        }
+        return typ, true
 }
 
 // hubSpecErr maps a registry error to 404, everything else to 500.
 func hubWriteItemErr(w http.ResponseWriter, err error) {
-	switch {
-	case err == hub.ErrNotConnected:
-		writeError(w, http.StatusUnauthorized, err.Error())
-	case err == hub.ErrNotDownloaded:
-		writeError(w, http.StatusBadRequest, err.Error())
-	case err == hub.ErrNotFoundLocal || hub.IsNotFound(err):
-		writeError(w, http.StatusNotFound, "item not found")
-	case hub.IsUnauthorized(err):
-		writeError(w, http.StatusUnauthorized, "Hugging Face rejected the token (reconnect)")
-	default:
-		writeError(w, http.StatusBadGateway, err.Error())
-	}
+        switch {
+        case err == hub.ErrNotConnected:
+                writeError(w, http.StatusUnauthorized, err.Error())
+        case err == hub.ErrNotDownloaded:
+                writeError(w, http.StatusBadRequest, err.Error())
+        case err == hub.ErrNotFoundLocal || hub.IsNotFound(err):
+                writeError(w, http.StatusNotFound, "item not found")
+        case hub.IsUnauthorized(err):
+                writeError(w, http.StatusUnauthorized, "Hugging Face rejected the token (reconnect)")
+        default:
+                writeError(w, http.StatusBadGateway, err.Error())
+        }
 }
 
 // handleHubLibraries is GET /api/hub/libraries — the registry + local
@@ -71,39 +72,53 @@ func hubWriteItemErr(w http.ResponseWriter, err error) {
 // are filtered out — they're bundle-companion formats, not browsable
 // categories (item/download/repo routes keep accepting the type).
 func (s *Server) handleHubLibraries(w http.ResponseWriter, r *http.Request) {
-	type library struct {
-		hub.LibrarySpec
-		LocalCount int `json:"localCount"`
-	}
-	out := make([]library, 0, 8)
-	for _, spec := range hub.All() {
-		if spec.Hidden {
-			continue
-		}
-		out = append(out, library{LibrarySpec: spec, LocalCount: hub.CountLocal(s.db, spec.Type)})
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"libraries": out})
+        type library struct {
+                hub.LibrarySpec
+                LocalCount int `json:"localCount"`
+        }
+        out := make([]library, 0, 8)
+        for _, spec := range hub.All() {
+                if spec.Hidden {
+                        continue
+                }
+                out = append(out, library{LibrarySpec: spec, LocalCount: hub.CountLocal(s.db, spec.Type)})
+        }
+        writeJSON(w, http.StatusOK, map[string]any{"libraries": out})
 }
 
 // handleHubItems is GET /api/hub/{type}/items?q=&sort=&tag= (refresh=1
 // bypasses the 10-min remote cache). Default sort: relevant when q is
-// non-empty, else recent.
+// non-empty, else recent. v1.71.1 THE DASHBOARD: ?mine=1 is the
+// author-filtered MY PUBLISHED view (the connected user's own items —
+// the hub's downloads pill is a different concept).
 func (s *Server) handleHubItems(w http.ResponseWriter, r *http.Request) {
-	typ, ok := s.hubType(w, r)
-	if !ok {
-		return
-	}
-	refresh := r.URL.Query().Get("refresh") == "1"
-	items, err := s.hub.Items(typ,
-		r.URL.Query().Get("q"),
-		r.URL.Query().Get("sort"),
-		r.URL.Query().Get("tag"),
-		refresh)
-	if err != nil {
-		hubWriteItemErr(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"type": typ, "items": items, "total": len(items)})
+        typ, ok := s.hubType(w, r)
+        if !ok {
+                return
+        }
+        refresh := r.URL.Query().Get("refresh") == "1"
+        var (
+            items []hub.Item
+            err   error
+        )
+        if r.URL.Query().Get("mine") == "1" {
+                items, err = s.hub.ItemsMine(typ,
+                        r.URL.Query().Get("q"),
+                        r.URL.Query().Get("sort"),
+                        r.URL.Query().Get("tag"),
+                        refresh)
+        } else {
+                items, err = s.hub.Items(typ,
+                        r.URL.Query().Get("q"),
+                        r.URL.Query().Get("sort"),
+                        r.URL.Query().Get("tag"),
+                        refresh)
+        }
+        if err != nil {
+                hubWriteItemErr(w, err)
+                return
+        }
+        writeJSON(w, http.StatusOK, map[string]any{"type": typ, "items": items, "total": len(items), "mine": r.URL.Query().Get("mine") == "1"})
 }
 
 // handleHubCollections is GET /api/hub/collections?q=&tag= (refresh=1
@@ -113,43 +128,43 @@ func (s *Server) handleHubItems(w http.ResponseWriter, r *http.Request) {
 // client-side on the item.collection field). v0.73: the matcher rides
 // id+names+descriptions+tags, and tag= filters by the bunch's badge.
 func (s *Server) handleHubCollections(w http.ResponseWriter, r *http.Request) {
-	refresh := r.URL.Query().Get("refresh") == "1"
-	bunches, err := s.hub.Collections(r.URL.Query().Get("q"), r.URL.Query().Get("tag"), refresh)
-	if err != nil {
-		hubWriteItemErr(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"collections": bunches, "total": len(bunches)})
+        refresh := r.URL.Query().Get("refresh") == "1"
+        bunches, err := s.hub.Collections(r.URL.Query().Get("q"), r.URL.Query().Get("tag"), refresh)
+        if err != nil {
+                hubWriteItemErr(w, err)
+                return
+        }
+        writeJSON(w, http.StatusOK, map[string]any{"collections": bunches, "total": len(bunches)})
 }
 
 // handleHubCollectionItems is GET /api/hub/collections/{id}/items — the
 // bunch's member items grouped per library (the sectioned member view
 // the hub opens when a bunch card is tapped).
 func (s *Server) handleHubCollectionItems(w http.ResponseWriter, r *http.Request) {
-	groups, err := s.hub.CollectionItems(r.PathValue("id"))
-	if err != nil {
-		hubWriteItemErr(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"groups": groups})
+        groups, err := s.hub.CollectionItems(r.PathValue("id"))
+        if err != nil {
+                hubWriteItemErr(w, err)
+                return
+        }
+        writeJSON(w, http.StatusOK, map[string]any{"groups": groups})
 }
 
 // handleHubItem is GET /api/hub/{type}/item/{repo}/{id} — {item, payload}
 // (the remote proxy with the local fast-path).
 func (s *Server) handleHubItem(w http.ResponseWriter, r *http.Request) {
-	typ, ok := s.hubType(w, r)
-	if !ok {
-		return
-	}
-	item, payload, err := s.hub.ItemDetail(typ, r.PathValue("repo"), r.PathValue("id"))
-	if err != nil {
-		hubWriteItemErr(w, err)
-		return
-	}
-	// v0.58: overlay the local heart/download state so fresh sessions
-	// render correct endorse/download states.
-	hearted, downloaded := s.hub.LocalStateFor(typ, item.ID)
-	writeJSON(w, http.StatusOK, map[string]any{"item": item, "payload": payload, "hearted": hearted, "downloaded": downloaded})
+        typ, ok := s.hubType(w, r)
+        if !ok {
+                return
+        }
+        item, payload, err := s.hub.ItemDetail(typ, r.PathValue("repo"), r.PathValue("id"))
+        if err != nil {
+                hubWriteItemErr(w, err)
+                return
+        }
+        // v0.58: overlay the local heart/download state so fresh sessions
+        // render correct endorse/download states.
+        hearted, downloaded := s.hub.LocalStateFor(typ, item.ID)
+        writeJSON(w, http.StatusOK, map[string]any{"item": item, "payload": payload, "hearted": hearted, "downloaded": downloaded})
 }
 
 // handleHubPNG is GET /api/hub/{type}/png/{repo}/{id} — the card image
@@ -157,52 +172,52 @@ func (s *Server) handleHubItem(w http.ResponseWriter, r *http.Request) {
 // v0.61 pt C.10 (icons): the art may be an SVG — the content-type is
 // SNIFFED from the bytes (markup-first = image/svg+xml), not assumed.
 func (s *Server) handleHubPNG(w http.ResponseWriter, r *http.Request) {
-	typ, ok := s.hubType(w, r)
-	if !ok {
-		return
-	}
-	png, err := s.hub.PNG(typ, r.PathValue("repo"), r.PathValue("id"))
-	if err != nil || len(png) == 0 {
-		writeError(w, http.StatusNotFound, "no image for this item")
-		return
-	}
-	ct := "image/png"
-	if t := bytes.TrimLeft(png, " \t\r\n\ufeff"); len(t) > 0 && t[0] == '<' {
-		ct = "image/svg+xml" // an SVG document — serve it as one
-	}
-	w.Header().Set("Content-Type", ct)
-	w.Header().Set("Cache-Control", "public, max-age=604800")
-	w.Header().Set("Content-Length", strconv.Itoa(len(png)))
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(png)
+        typ, ok := s.hubType(w, r)
+        if !ok {
+                return
+        }
+        png, err := s.hub.PNG(typ, r.PathValue("repo"), r.PathValue("id"))
+        if err != nil || len(png) == 0 {
+                writeError(w, http.StatusNotFound, "no image for this item")
+                return
+        }
+        ct := "image/png"
+        if t := bytes.TrimLeft(png, " \t\r\n\ufeff"); len(t) > 0 && t[0] == '<' {
+                ct = "image/svg+xml" // an SVG document — serve it as one
+        }
+        w.Header().Set("Content-Type", ct)
+        w.Header().Set("Cache-Control", "public, max-age=604800")
+        w.Header().Set("Content-Length", strconv.Itoa(len(png)))
+        w.WriteHeader(http.StatusOK)
+        _, _ = w.Write(png)
 }
 
 // handleHubDownload is POST /api/hub/{type}/download {repo,id} — saves the
 // item locally (downloaded state) + records the metrics event.
 func (s *Server) handleHubDownload(w http.ResponseWriter, r *http.Request) {
-	typ, ok := s.hubType(w, r)
-	if !ok {
-		return
-	}
-	var req struct {
-		Repo string `json:"repo"`
-		ID   string `json:"id"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
-		return
-	}
-	if req.Repo == "" || req.ID == "" {
-		writeError(w, http.StatusBadRequest, "repo and id are required")
-		return
-	}
-	item, payload, err := s.hub.Download(typ, req.Repo, req.ID)
-	if err != nil {
-		hubWriteItemErr(w, err)
-		return
-	}
-	hearted, _ := s.hub.LocalStateFor(typ, item.ID)
-	writeJSON(w, http.StatusOK, map[string]any{"item": item, "payload": payload, "hearted": hearted, "downloaded": true})
+        typ, ok := s.hubType(w, r)
+        if !ok {
+                return
+        }
+        var req struct {
+                Repo string `json:"repo"`
+                ID   string `json:"id"`
+        }
+        if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+                writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+                return
+        }
+        if req.Repo == "" || req.ID == "" {
+                writeError(w, http.StatusBadRequest, "repo and id are required")
+                return
+        }
+        item, payload, err := s.hub.Download(typ, req.Repo, req.ID)
+        if err != nil {
+                hubWriteItemErr(w, err)
+                return
+        }
+        hearted, _ := s.hub.LocalStateFor(typ, item.ID)
+        writeJSON(w, http.StatusOK, map[string]any{"item": item, "payload": payload, "hearted": hearted, "downloaded": true})
 }
 
 // handleHubDownloads is GET /api/hub/{type}/downloads — the local
@@ -210,20 +225,20 @@ func (s *Server) handleHubDownload(w http.ResponseWriter, r *http.Request) {
 // merges these into its list, so a hub download follows the user across
 // devices and reinstalls (the localStorage "Yours" copy is per-browser).
 func (s *Server) handleHubDownloads(w http.ResponseWriter, r *http.Request) {
-	typ, ok := s.hubType(w, r)
-	if !ok {
-		return
-	}
-	rows, err := s.hub.Downloads(typ)
-	if err != nil {
-		hubWriteItemErr(w, err)
-		return
-	}
-	out := make([]map[string]any, 0, len(rows))
-	for _, row := range rows {
-		out = append(out, map[string]any{"item": row.Item, "payload": row.Payload, "hearted": row.Hearted, "downloaded": true})
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out})
+        typ, ok := s.hubType(w, r)
+        if !ok {
+                return
+        }
+        rows, err := s.hub.Downloads(typ)
+        if err != nil {
+                hubWriteItemErr(w, err)
+                return
+        }
+        out := make([]map[string]any, 0, len(rows))
+        for _, row := range rows {
+                out = append(out, map[string]any{"item": row.Item, "payload": row.Payload, "hearted": row.Hearted, "downloaded": true})
+        }
+        writeJSON(w, http.StatusOK, map[string]any{"items": out})
 }
 
 // handleHubDelete is POST /api/hub/{type}/delete {repo,id} — removes the
@@ -231,39 +246,72 @@ func (s *Server) handleHubDownloads(w http.ResponseWriter, r *http.Request) {
 // confirm bar). The remote listing is untouched: delete-your-copy, not
 // unpublish. Publish-only records (never downloaded) are refused 400.
 func (s *Server) handleHubDelete(w http.ResponseWriter, r *http.Request) {
-	typ, ok := s.hubType(w, r)
-	if !ok {
-		return
-	}
-	var req struct {
-		Repo string `json:"repo"`
-		ID   string `json:"id"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
-		return
-	}
-	if req.ID == "" {
-		writeError(w, http.StatusBadRequest, "id is required")
-		return
-	}
-	if err := s.hub.Delete(typ, req.ID); err != nil {
-		hubWriteItemErr(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "deleted": true, "id": req.ID})
+        typ, ok := s.hubType(w, r)
+        if !ok {
+                return
+        }
+        var req struct {
+                Repo string `json:"repo"`
+                ID   string `json:"id"`
+        }
+        if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+                writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+                return
+        }
+        if req.ID == "" {
+                writeError(w, http.StatusBadRequest, "id is required")
+                return
+        }
+        if err := s.hub.Delete(typ, req.ID); err != nil {
+                hubWriteItemErr(w, err)
+                return
+        }
+        writeJSON(w, http.StatusOK, map[string]any{"ok": true, "deleted": true, "id": req.ID})
+}
+
+// handleHubUnpublish is POST /api/hub/{type}/unpublish {repo,id} — the
+// DASHBOARD's remote delete (v1.71.1 THE DASHBOARD — PLAN-V169 §v1.169.4):
+// ONE HF commit sweeps the item's every file + regenerates the index;
+// the authorship gate lives in the service (the repo owner + the meta's
+// author must both be the connected user). 403 = not ours; 404 = gone.
+func (s *Server) handleHubUnpublish(w http.ResponseWriter, r *http.Request) {
+        typ, ok := s.hubType(w, r)
+        if !ok {
+                return
+        }
+        var req struct {
+                Repo string `json:"repo"`
+                ID   string `json:"id"`
+        }
+        if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+                writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+                return
+        }
+        if req.Repo == "" || req.ID == "" {
+                writeError(w, http.StatusBadRequest, "repo and id are required")
+                return
+        }
+        if err := s.hub.Unpublish(typ, req.Repo, req.ID); err != nil {
+                if errors.Is(err, hub.ErrNotOwner) {
+                        writeError(w, http.StatusForbidden, err.Error())
+                        return
+                }
+                hubWriteItemErr(w, err)
+                return
+        }
+        writeJSON(w, http.StatusOK, map[string]any{"ok": true, "unpublished": true, "id": req.ID})
 }
 
 // handleHubCollectionDelete is POST /api/hub/collections/{id}/delete —
 // removes every LOCALLY-downloaded member of the bundle (v0.60 pt C.6;
 // the client shows a keep/remove confirm bar). Remote listings untouched.
 func (s *Server) handleHubCollectionDelete(w http.ResponseWriter, r *http.Request) {
-	refs, err := s.hub.DeleteCollection(r.PathValue("id"))
-	if err != nil {
-		hubWriteItemErr(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "deleted": len(refs), "items": refs})
+        refs, err := s.hub.DeleteCollection(r.PathValue("id"))
+        if err != nil {
+                hubWriteItemErr(w, err)
+                return
+        }
+        writeJSON(w, http.StatusOK, map[string]any{"ok": true, "deleted": len(refs), "items": refs})
 }
 
 // handleHubCollectionDownload is POST /api/hub/collections/{id}/download —
@@ -281,93 +329,93 @@ func (s *Server) handleHubCollectionDelete(w http.ResponseWriter, r *http.Reques
 // then close. The progress channel is buffered (cap 32) so a slow consumer
 // never blocks the download goroutine.
 func (s *Server) handleHubCollectionDownload(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if id == "" {
-		writeError(w, http.StatusBadRequest, "id is required")
-		return
-	}
-	// SSE handshake — mirror hfspace.go:773-780.
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("X-Accel-Buffering", "no") // defeat nginx buffering so each event flushes
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		writeError(w, http.StatusInternalServerError, "streaming unsupported")
-		return
-	}
+        id := r.PathValue("id")
+        if id == "" {
+                writeError(w, http.StatusBadRequest, "id is required")
+                return
+        }
+        // SSE handshake — mirror hfspace.go:773-780.
+        w.Header().Set("Content-Type", "text/event-stream")
+        w.Header().Set("Cache-Control", "no-cache")
+        w.Header().Set("Connection", "keep-alive")
+        w.Header().Set("X-Accel-Buffering", "no") // defeat nginx buffering so each event flushes
+        flusher, ok := w.(http.Flusher)
+        if !ok {
+                writeError(w, http.StatusInternalServerError, "streaming unsupported")
+                return
+        }
 
-	progress := make(chan hub.DownloadProgress, 32)
-	type dlResult struct {
-		groups []hub.CollectionDownloadGroup
-		err    error
-	}
-	resultCh := make(chan dlResult, 1)
-	go func() {
-		defer close(progress)
-		groups, err := s.hub.DownloadCollectionStream(id, progress)
-		resultCh <- dlResult{groups: groups, err: err}
-	}()
+        progress := make(chan hub.DownloadProgress, 32)
+        type dlResult struct {
+                groups []hub.CollectionDownloadGroup
+                err    error
+        }
+        resultCh := make(chan dlResult, 1)
+        go func() {
+                defer close(progress)
+                groups, err := s.hub.DownloadCollectionStream(id, progress)
+                resultCh <- dlResult{groups: groups, err: err}
+        }()
 
-	writeEvent := func(v any) {
-		var b []byte
-		if s, ok := v.([]byte); ok {
-			b = s
-		} else {
-			b, _ = json.Marshal(v)
-		}
-		// SSE: `data: <json>\n\n` (the trailing blank line terminates the event)
-		w.Write(append(append([]byte("data: "), b...), '\n', '\n'))
-		flusher.Flush()
-	}
+        writeEvent := func(v any) {
+                var b []byte
+                if s, ok := v.([]byte); ok {
+                        b = s
+                } else {
+                        b, _ = json.Marshal(v)
+                }
+                // SSE: `data: <json>\n\n` (the trailing blank line terminates the event)
+                w.Write(append(append([]byte("data: "), b...), '\n', '\n'))
+                flusher.Flush()
+        }
 
-	for {
-		select {
-		case <-r.Context().Done():
-			return // client disconnected — the goroutine finishes on its own (cap-32 buffer absorbs its writes)
-		case p, ok := <-progress:
-			if !ok {
-				// channel closed; the download goroutine finished; read result
-				res := <-resultCh
-				if res.err != nil {
-					writeEvent(map[string]any{"phase": "failed", "error": res.err.Error()})
-				} else {
-					writeEvent(map[string]any{
-						"phase":  "complete",
-						"groups": res.groups,
-					})
-				}
-				return
-			}
-			writeEvent(p)
-		}
-	}
+        for {
+                select {
+                case <-r.Context().Done():
+                        return // client disconnected — the goroutine finishes on its own (cap-32 buffer absorbs its writes)
+                case p, ok := <-progress:
+                        if !ok {
+                                // channel closed; the download goroutine finished; read result
+                                res := <-resultCh
+                                if res.err != nil {
+                                        writeEvent(map[string]any{"phase": "failed", "error": res.err.Error()})
+                                } else {
+                                        writeEvent(map[string]any{
+                                                "phase":  "complete",
+                                                "groups": res.groups,
+                                        })
+                                }
+                                return
+                        }
+                        writeEvent(p)
+                }
+        }
 }
 
 // handleHubRepoTree is GET /api/hub/repo/{repo}/tree?path= — one directory
 // level of any public dataset repo (the [repo] view's tree; v0.60 pt C.8).
 func (s *Server) handleHubRepoTree(w http.ResponseWriter, r *http.Request) {
-	entries, err := s.hub.RepoTree(r.PathValue("repo"), r.URL.Query().Get("path"))
-	if err != nil {
-		hubWriteItemErr(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"entries": entries})
+        entries, err := s.hub.RepoTree(r.PathValue("repo"), r.URL.Query().Get("path"))
+        if err != nil {
+                hubWriteItemErr(w, err)
+                return
+        }
+        writeJSON(w, http.StatusOK, map[string]any{"entries": entries})
 }
 
 // hubRepoTextExts / hubRepoImgTypes classify the repo file preview.
 var (
-	hubRepoTextExts = map[string]bool{
-		".md": true, ".json": true, ".sh": true, ".txt": true, ".py": true,
-		".yaml": true, ".yml": true, ".toml": true, ".csv": true, ".xml": true,
-		".html": true, ".css": true, ".js": true, ".ts": true, ".gitattributes": true,
-		".gitignore": true, "": true,
-	}
-	hubRepoImgTypes = map[string]string{
-		".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-		".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml",
-		".ico": "image/x-icon",
-	}
+        hubRepoTextExts = map[string]bool{
+                ".md": true, ".json": true, ".sh": true, ".txt": true, ".py": true,
+                ".yaml": true, ".yml": true, ".toml": true, ".csv": true, ".xml": true,
+                ".html": true, ".css": true, ".js": true, ".ts": true, ".gitattributes": true,
+                ".gitignore": true, "": true,
+        }
+        hubRepoImgTypes = map[string]string{
+                ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml",
+                ".ico": "image/x-icon",
+        }
 )
 
 // handleHubRepoFile is GET /api/hub/repo/{repo}/file?path= — one file from
@@ -375,60 +423,60 @@ var (
 // stream raw bytes with their content-type (an <img> src); anything else
 // reports {binary:true, size} so the client can say so.
 func (s *Server) handleHubRepoFile(w http.ResponseWriter, r *http.Request) {
-	repo := r.PathValue("repo")
-	path := r.URL.Query().Get("path")
-	body, err := s.hub.RepoFile(repo, path)
-	if err != nil {
-		hubWriteItemErr(w, err)
-		return
-	}
-	ext := strings.ToLower(filepath.Ext(strings.TrimPrefix(path, "/")))
-	if strings.HasPrefix(path, ".") && !strings.Contains(strings.TrimPrefix(path, "/"), "/") {
-		ext = strings.TrimPrefix(path, "/") // .gitattributes & friends
-	}
-	if ct, ok := hubRepoImgTypes[ext]; ok {
-		w.Header().Set("Content-Type", ct)
-		w.Header().Set("Cache-Control", "public, max-age=3600")
-		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(body)
-		return
-	}
-	if hubRepoTextExts[ext] {
-		writeJSON(w, http.StatusOK, map[string]any{"text": string(body), "size": len(body)})
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"binary": true, "size": len(body)})
+        repo := r.PathValue("repo")
+        path := r.URL.Query().Get("path")
+        body, err := s.hub.RepoFile(repo, path)
+        if err != nil {
+                hubWriteItemErr(w, err)
+                return
+        }
+        ext := strings.ToLower(filepath.Ext(strings.TrimPrefix(path, "/")))
+        if strings.HasPrefix(path, ".") && !strings.Contains(strings.TrimPrefix(path, "/"), "/") {
+                ext = strings.TrimPrefix(path, "/") // .gitattributes & friends
+        }
+        if ct, ok := hubRepoImgTypes[ext]; ok {
+                w.Header().Set("Content-Type", ct)
+                w.Header().Set("Cache-Control", "public, max-age=3600")
+                w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+                w.WriteHeader(http.StatusOK)
+                _, _ = w.Write(body)
+                return
+        }
+        if hubRepoTextExts[ext] {
+                writeJSON(w, http.StatusOK, map[string]any{"text": string(body), "size": len(body)})
+                return
+        }
+        writeJSON(w, http.StatusOK, map[string]any{"binary": true, "size": len(body)})
 }
 
 // handleHubEndorse is POST /api/hub/{type}/endorse|unendorse {repo,id} —
 // hearting requires the item be downloaded (the enforceable endorsement
 // rule); unendorse mirrors.
 func (s *Server) handleHubEndorse(endorse bool) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		typ, ok := s.hubType(w, r)
-		if !ok {
-			return
-		}
-		var req struct {
-			Repo string `json:"repo"`
-			ID   string `json:"id"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
-			return
-		}
-		if req.Repo == "" || req.ID == "" {
-			writeError(w, http.StatusBadRequest, "repo and id are required")
-			return
-		}
-		item, err := s.hub.Endorse(typ, req.Repo, req.ID, endorse)
-		if err != nil {
-			hubWriteItemErr(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "item": item, "hearted": endorse, "downloaded": true})
-	}
+        return func(w http.ResponseWriter, r *http.Request) {
+                typ, ok := s.hubType(w, r)
+                if !ok {
+                        return
+                }
+                var req struct {
+                        Repo string `json:"repo"`
+                        ID   string `json:"id"`
+                }
+                if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+                        writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+                        return
+                }
+                if req.Repo == "" || req.ID == "" {
+                        writeError(w, http.StatusBadRequest, "repo and id are required")
+                        return
+                }
+                item, err := s.hub.Endorse(typ, req.Repo, req.ID, endorse)
+                if err != nil {
+                        hubWriteItemErr(w, err)
+                        return
+                }
+                writeJSON(w, http.StatusOK, map[string]any{"ok": true, "item": item, "hearted": endorse, "downloaded": true})
+        }
 }
 
 // handleHubCollectionEndorse is POST /api/hub/collections/{id}/endorse
@@ -436,112 +484,112 @@ func (s *Server) handleHubEndorse(endorse bool) http.HandlerFunc {
 // (the user's spec: "if one user endorses the bundle it counts as 1"),
 // never a fan-out over the members. Requires the bundle downloaded.
 func (s *Server) handleHubCollectionEndorse(endorse bool) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		hearts, err := s.hub.EndorseCollection(r.PathValue("id"), endorse)
-		if err != nil {
-			hubWriteItemErr(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"ok": true, "hearted": endorse, "hearts": hearts,
-		})
-	}
+        return func(w http.ResponseWriter, r *http.Request) {
+                hearts, err := s.hub.EndorseCollection(r.PathValue("id"), endorse)
+                if err != nil {
+                        hubWriteItemErr(w, err)
+                        return
+                }
+                writeJSON(w, http.StatusOK, map[string]any{
+                        "ok": true, "hearted": endorse, "hearts": hearts,
+                })
+        }
 }
 
 // handleHubPublish is POST /api/hub/{type}/publish
 // {name,description,tags,design:{kind,colors},payload,pngBase64} — writes
 // to the connected user's per-type HF dataset repo.
 func (s *Server) handleHubPublish(w http.ResponseWriter, r *http.Request) {
-	typ, ok := s.hubType(w, r)
-	if !ok {
-		return
-	}
-	spec, _ := hub.Get(typ) // hubType validated the lookup
-	var req hub.PublishRequest
-	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
-		// v1.54 THE LIBRARY SHIP: the BINARY path — part `meta` (the JSON,
-		// ≤26MB) + part `payload` (raw .doomcanvas/.doomchat bytes, capped
-		// at the spec's tier; a CommitFile needs the bytes anyway, so a
-		// capped read holds the SAME 1× payload the commit path holds —
-		// a temp file would buy nothing). No base64 anywhere: the WebView
-		// posts a Blob-backed FormData, the engine reads bytes.
-		if !spec.BigPayload() {
-			writeError(w, http.StatusBadRequest, "multipart publish is for canvas/chat payloads")
-			return
-		}
-		mr, err := r.MultipartReader()
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid multipart body: "+err.Error())
-			return
-		}
-		maxPayload := int64(spec.PayloadMaxBytes())
-		for {
-			part, err := mr.NextPart()
-			if err == io.EOF {
-				break
-			}
-			if err != nil {
-				writeError(w, http.StatusBadRequest, "invalid multipart body: "+err.Error())
-				return
-			}
-			switch part.FormName() {
-			case "meta":
-				meta, err := io.ReadAll(io.LimitReader(part, hubPublishMaxBytes+1))
-				if err != nil {
-					writeError(w, http.StatusBadRequest, "meta part: "+err.Error())
-					return
-				}
-				if len(meta) > hubPublishMaxBytes {
-					writeError(w, http.StatusRequestEntityTooLarge, "meta part too large (26MB cap)")
-					return
-				}
-				if err := json.Unmarshal(meta, &req); err != nil {
-					writeError(w, http.StatusBadRequest, "invalid meta JSON: "+err.Error())
-					return
-				}
-			case "payload":
-				bytes, err := io.ReadAll(io.LimitReader(part, maxPayload+1))
-				if err != nil {
-					writeError(w, http.StatusBadRequest, "payload part: "+err.Error())
-					return
-				}
-				if int64(len(bytes)) > maxPayload {
-					writeError(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("payload too large (%dMB cap for %s)", maxPayload>>20, typ))
-					return
-				}
-				req.PayloadBytes = bytes
-			}
-		}
-	} else {
-		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, hubPublishMaxBytes))
-		if err != nil {
-			writeError(w, http.StatusRequestEntityTooLarge, "publish body too large (26MB cap)")
-			return
-		}
-		if err := json.Unmarshal(body, &req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
-			return
-		}
-		if len(req.Payload) > spec.PayloadMaxBytes() {
-			writeError(w, http.StatusBadRequest, fmt.Sprintf("payload too large (%dMB cap for %s)", int64(spec.PayloadMaxBytes())>>20, typ))
-			return
-		}
-	}
-	if strings.TrimSpace(req.Name) == "" {
-		writeError(w, http.StatusBadRequest, "name is required")
-		return
-	}
-	if b, err := base64.StdEncoding.DecodeString(req.PNGBase64); err == nil && len(b) > hubPNGMaxBytes {
-		writeError(w, http.StatusBadRequest, "png too large (6MB cap)")
-		return
-	}
-	item, err := s.hub.Publish(typ, req)
-	if err != nil {
-		hubWriteItemErr(w, err)
-		return
-	}
-	hearted, _ := s.hub.LocalStateFor(typ, item.ID)
-	writeJSON(w, http.StatusOK, map[string]any{"item": item, "repo": item.Repo, "hearted": hearted, "downloaded": true})
+        typ, ok := s.hubType(w, r)
+        if !ok {
+                return
+        }
+        spec, _ := hub.Get(typ) // hubType validated the lookup
+        var req hub.PublishRequest
+        if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+                // v1.54 THE LIBRARY SHIP: the BINARY path — part `meta` (the JSON,
+                // ≤26MB) + part `payload` (raw .doomcanvas/.doomchat bytes, capped
+                // at the spec's tier; a CommitFile needs the bytes anyway, so a
+                // capped read holds the SAME 1× payload the commit path holds —
+                // a temp file would buy nothing). No base64 anywhere: the WebView
+                // posts a Blob-backed FormData, the engine reads bytes.
+                if !spec.BigPayload() {
+                        writeError(w, http.StatusBadRequest, "multipart publish is for canvas/chat payloads")
+                        return
+                }
+                mr, err := r.MultipartReader()
+                if err != nil {
+                        writeError(w, http.StatusBadRequest, "invalid multipart body: "+err.Error())
+                        return
+                }
+                maxPayload := int64(spec.PayloadMaxBytes())
+                for {
+                        part, err := mr.NextPart()
+                        if err == io.EOF {
+                                break
+                        }
+                        if err != nil {
+                                writeError(w, http.StatusBadRequest, "invalid multipart body: "+err.Error())
+                                return
+                        }
+                        switch part.FormName() {
+                        case "meta":
+                                meta, err := io.ReadAll(io.LimitReader(part, hubPublishMaxBytes+1))
+                                if err != nil {
+                                        writeError(w, http.StatusBadRequest, "meta part: "+err.Error())
+                                        return
+                                }
+                                if len(meta) > hubPublishMaxBytes {
+                                        writeError(w, http.StatusRequestEntityTooLarge, "meta part too large (26MB cap)")
+                                        return
+                                }
+                                if err := json.Unmarshal(meta, &req); err != nil {
+                                        writeError(w, http.StatusBadRequest, "invalid meta JSON: "+err.Error())
+                                        return
+                                }
+                        case "payload":
+                                bytes, err := io.ReadAll(io.LimitReader(part, maxPayload+1))
+                                if err != nil {
+                                        writeError(w, http.StatusBadRequest, "payload part: "+err.Error())
+                                        return
+                                }
+                                if int64(len(bytes)) > maxPayload {
+                                        writeError(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("payload too large (%dMB cap for %s)", maxPayload>>20, typ))
+                                        return
+                                }
+                                req.PayloadBytes = bytes
+                        }
+                }
+        } else {
+                body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, hubPublishMaxBytes))
+                if err != nil {
+                        writeError(w, http.StatusRequestEntityTooLarge, "publish body too large (26MB cap)")
+                        return
+                }
+                if err := json.Unmarshal(body, &req); err != nil {
+                        writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+                        return
+                }
+                if len(req.Payload) > spec.PayloadMaxBytes() {
+                        writeError(w, http.StatusBadRequest, fmt.Sprintf("payload too large (%dMB cap for %s)", int64(spec.PayloadMaxBytes())>>20, typ))
+                        return
+                }
+        }
+        if strings.TrimSpace(req.Name) == "" {
+                writeError(w, http.StatusBadRequest, "name is required")
+                return
+        }
+        if b, err := base64.StdEncoding.DecodeString(req.PNGBase64); err == nil && len(b) > hubPNGMaxBytes {
+                writeError(w, http.StatusBadRequest, "png too large (6MB cap)")
+                return
+        }
+        item, err := s.hub.Publish(typ, req)
+        if err != nil {
+                hubWriteItemErr(w, err)
+                return
+        }
+        hearted, _ := s.hub.LocalStateFor(typ, item.ID)
+        writeJSON(w, http.StatusOK, map[string]any{"item": item, "repo": item.Repo, "hearted": hearted, "downloaded": true})
 }
 
 // handleHubPayload is GET /api/hub/{type}/payload/{repo}/{id} — the v1.54
@@ -550,126 +598,126 @@ func (s *Server) handleHubPublish(w http.ResponseWriter, r *http.Request) {
 // through). Gated on the local downloaded row — the endorsement gate's
 // twin (no download, no bytes).
 func (s *Server) handleHubPayload(w http.ResponseWriter, r *http.Request) {
-	typ, ok := s.hubType(w, r)
-	if !ok {
-		return
-	}
-	spec, _ := hub.Get(typ)
-	repo := r.PathValue("repo")
-	id := r.PathValue("id")
-	body, n, err := s.hub.PayloadStream(typ, repo, id)
-	if err != nil {
-		hubWriteItemErr(w, err)
-		return
-	}
-	defer body.Close()
-	if n >= 0 {
-		w.Header().Set("Content-Length", strconv.FormatInt(n, 10))
-	}
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.WriteHeader(http.StatusOK)
-	// Defense in depth for an undeclared length: cap the copy at max+1.
-	// The declared-length check (PayloadStream) is the real gate; a zip
-	// ladder (canvasbundle/chatbundle read) rejects anything over-cap on
-	// the client side regardless.
-	max := int64(spec.PayloadMaxBytes())
-	written, err := io.Copy(w, io.LimitReader(body, max+1))
-	if err != nil {
-		log.Printf("hub: payload stream %s/%s: copied %d bytes: %v", repo, id, written, err)
-	}
-	if written > max {
-		log.Printf("hub: payload stream %s/%s: body exceeded the %d cap mid-stream (%d) — the client ladder rejects", repo, id, max, written)
-	}
+        typ, ok := s.hubType(w, r)
+        if !ok {
+                return
+        }
+        spec, _ := hub.Get(typ)
+        repo := r.PathValue("repo")
+        id := r.PathValue("id")
+        body, n, err := s.hub.PayloadStream(typ, repo, id)
+        if err != nil {
+                hubWriteItemErr(w, err)
+                return
+        }
+        defer body.Close()
+        if n >= 0 {
+                w.Header().Set("Content-Length", strconv.FormatInt(n, 10))
+        }
+        w.Header().Set("Content-Type", "application/octet-stream")
+        w.Header().Set("X-Content-Type-Options", "nosniff")
+        w.WriteHeader(http.StatusOK)
+        // Defense in depth for an undeclared length: cap the copy at max+1.
+        // The declared-length check (PayloadStream) is the real gate; a zip
+        // ladder (canvasbundle/chatbundle read) rejects anything over-cap on
+        // the client side regardless.
+        max := int64(spec.PayloadMaxBytes())
+        written, err := io.Copy(w, io.LimitReader(body, max+1))
+        if err != nil {
+                log.Printf("hub: payload stream %s/%s: copied %d bytes: %v", repo, id, written, err)
+        }
+        if written > max {
+                log.Printf("hub: payload stream %s/%s: body exceeded the %d cap mid-stream (%d) — the client ladder rejects", repo, id, max, written)
+        }
 }
 
 // handleHubPersonaHeart is POST /api/hub/persona/heart {id,name} — the
 // persona picker's local-only heart (+ hub rows when the id matches).
 func (s *Server) handleHubPersonaHeart(heart bool) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			ID   string `json:"id"`
-			Name string `json:"name"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
-			return
-		}
-		if req.ID == "" {
-			writeError(w, http.StatusBadRequest, "id is required")
-			return
-		}
-		var err error
-		if heart {
-			err = s.hub.HeartPersonaLocal(req.ID, req.Name)
-		} else {
-			err = s.hub.UnheartPersonaLocal(req.ID, req.Name)
-		}
-		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "hearted": heart, "id": req.ID})
-	}
+        return func(w http.ResponseWriter, r *http.Request) {
+                var req struct {
+                        ID   string `json:"id"`
+                        Name string `json:"name"`
+                }
+                if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+                        writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+                        return
+                }
+                if req.ID == "" {
+                        writeError(w, http.StatusBadRequest, "id is required")
+                        return
+                }
+                var err error
+                if heart {
+                        err = s.hub.HeartPersonaLocal(req.ID, req.Name)
+                } else {
+                        err = s.hub.UnheartPersonaLocal(req.ID, req.Name)
+                }
+                if err != nil {
+                        writeError(w, http.StatusBadRequest, err.Error())
+                        return
+                }
+                writeJSON(w, http.StatusOK, map[string]any{"ok": true, "hearted": heart, "id": req.ID})
+        }
 }
 
 // handleHubPersonasHearted is GET /api/hub/personas/hearted — the picker's
 // hearted-first sort + badges.
 func (s *Server) handleHubPersonasHearted(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.hub.HeartedPersonas()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	type hearted struct {
-		ID   string `json:"id"`
-		Name string `json:"name"`
-	}
-	out := make([]hearted, 0, len(rows))
-	for _, row := range rows {
-		out = append(out, hearted{ID: row.Item.ID, Name: row.Item.Name})
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"personas": out})
+        rows, err := s.hub.HeartedPersonas()
+        if err != nil {
+                writeError(w, http.StatusInternalServerError, err.Error())
+                return
+        }
+        type hearted struct {
+                ID   string `json:"id"`
+                Name string `json:"name"`
+        }
+        out := make([]hearted, 0, len(rows))
+        for _, row := range rows {
+                out = append(out, hearted{ID: row.Item.ID, Name: row.Item.Name})
+        }
+        writeJSON(w, http.StatusOK, map[string]any{"personas": out})
 }
 
 // handleHubAuthStatus is GET /api/hub/auth/status — {connected,username}
 // (username comes from the vault extra stamped at connect time; the token
 // itself never leaves the engine).
 func (s *Server) handleHubAuthStatus(w http.ResponseWriter, r *http.Request) {
-	connected := s.hub.Token() != ""
-	writeJSON(w, http.StatusOK, map[string]any{
-		"connected": connected,
-		"username":  s.hub.Username(),
-	})
+        connected := s.hub.Token() != ""
+        writeJSON(w, http.StatusOK, map[string]any{
+                "connected": connected,
+                "username":  s.hub.Username(),
+        })
 }
 
 // handleHubAuthConnect is POST /api/hub/auth/connect {token} — verifies
 // via whoami (401 on a bad token) then stores it in the vault.
 func (s *Server) handleHubAuthConnect(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Token string `json:"token"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
-		return
-	}
-	name, err := s.hub.Connect(req.Token)
-	if err != nil {
-		if hub.IsUnauthorized(err) {
-			writeError(w, http.StatusUnauthorized, "Hugging Face rejected the token")
-			return
-		}
-		writeError(w, http.StatusBadGateway, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "username": name})
+        var req struct {
+                Token string `json:"token"`
+        }
+        if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+                writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+                return
+        }
+        name, err := s.hub.Connect(req.Token)
+        if err != nil {
+                if hub.IsUnauthorized(err) {
+                        writeError(w, http.StatusUnauthorized, "Hugging Face rejected the token")
+                        return
+                }
+                writeError(w, http.StatusBadGateway, err.Error())
+                return
+        }
+        writeJSON(w, http.StatusOK, map[string]any{"ok": true, "username": name})
 }
 
 // handleHubAuthDisconnect is POST /api/hub/auth/disconnect.
 func (s *Server) handleHubAuthDisconnect(w http.ResponseWriter, r *http.Request) {
-	if err := s.hub.Disconnect(); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+        if err := s.hub.Disconnect(); err != nil {
+                writeError(w, http.StatusInternalServerError, err.Error())
+                return
+        }
+        writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

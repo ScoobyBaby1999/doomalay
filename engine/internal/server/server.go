@@ -776,6 +776,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/hub/{type}/payload/{repo}/{id}", s.handleHubPayload)
 	s.mux.HandleFunc("POST /api/hub/{type}/download", s.handleHubDownload)
 	s.mux.HandleFunc("POST /api/hub/{type}/delete", s.handleHubDelete)
+	// v1.71.1 THE DASHBOARD: the remote delete (the authorship-gated sweep).
+	s.mux.HandleFunc("POST /api/hub/{type}/unpublish", s.handleHubUnpublish)
 	s.mux.HandleFunc("POST /api/hub/{type}/endorse", s.handleHubEndorse(true))
 	s.mux.HandleFunc("POST /api/hub/{type}/unendorse", s.handleHubEndorse(false))
 	s.mux.HandleFunc("POST /api/hub/{type}/publish", s.handleHubPublish)

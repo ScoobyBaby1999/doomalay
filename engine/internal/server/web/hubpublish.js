@@ -251,6 +251,13 @@
       badgeImage: prefill.badgeImage || null,   // {sid, pid, rev} for image badges
       // v0.77.6: the upstream credit ("ported from") — prefilled on edit.
       upstream: prefill.upstream || '',
+      // v1.71.1 THE DASHBOARD: the fork lineage — the canvas's own
+      // $.imported stamp (uuid/author/from), prefilled by the publish
+      // sheet. Rides the meta as parentUuid/parentAuthor/parentName so
+      // the item JSON carries the badge's truth ("fork of X by Y").
+      parentUuid: prefill.parentUuid || '',
+      parentAuthor: prefill.parentAuthor || '',
+      parentName: prefill.parentName || '',
       // v0.44: a full gradient spec — "none" still sends the picked
       // gradient (the card stays deterministic)
       design: preDesign,
@@ -952,6 +959,10 @@
       badge_png_base64: bd.badge_png_base64 || '',
       collection: cur.collection || '',
       upstream: cur.upstream || '',
+      // v1.71.1: the lineage stamp rides the publish meta.
+      parentUuid: cur.parentUuid || '',
+      parentAuthor: cur.parentAuthor || '',
+      parentName: cur.parentName || '',
       stageCount: cur.type === 'template' ? (cur.stageCount || 0) : 0,
       files: files
     };

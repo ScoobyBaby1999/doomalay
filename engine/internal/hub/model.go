@@ -144,6 +144,27 @@ type Item struct {
         // repo view lists them; empty = a plain single-payload item.
         Files  []string `json:"files,omitempty"`
         File   string   `json:"file"` // in-repo payload path ("items/<id><ext>")
+        // v1.71.1 THE DASHBOARD (PLAN-V169 §v1.169.4): FORK LINEAGE — the
+        // bundle this one derives from, stamped at publish time from the
+        // .doomcanvas manifest's own 1.1 fields (a canvas imported from a
+        // bundle carries $.imported.uuid; publishing it stamps
+        // parentUuid = that uuid). The badge renders "fork of <parentName>
+        // by <parentAuthor>" on cards + the detail view; empty = an original.
+        ParentUuid   string `json:"parentUuid,omitempty"`
+        ParentAuthor string `json:"parentAuthor,omitempty"`
+        ParentName   string `json:"parentName,omitempty"`
+}
+
+// SanitizeParentField normalizes a lineage field (uuid/author/name):
+// whitespace-collapsed, capped, never structural — display + match text
+// only (the author of a credential it is not; the authorship gate is
+// the repo owner, never these fields).
+func SanitizeParentField(raw string, cap int) string {
+        raw = strings.Join(strings.Fields(raw), " ")
+        if len(raw) > cap {
+                raw = raw[:cap]
+        }
+        return raw
 }
 
 // CountStages deterministically counts a TEMPLATE payload's stages: a JSON
@@ -198,6 +219,26 @@ func SanitizeUpstream(raw string) string {
         raw = strings.Join(strings.Fields(raw), " ")
         if len(raw) > 120 {
                 raw = raw[:120]
+        }
+        return raw
+}
+
+// SanitizeUUID caps a lineage uuid at 64 chars (the manifest's own mint
+// law: cvb_ + ≤24 chars — anything longer is garbage, never a match key).
+// Interior whitespace collapses — a uuid is ONE token (a match key, never
+// display prose).
+func SanitizeUUID(raw string) string {
+        raw = strings.Join(strings.Fields(raw), " ")
+        raw = strings.TrimSpace(raw)
+        if raw == "" {
+                return ""
+        }
+        parts := strings.Split(raw, " ")
+        if len(parts) > 1 {
+                raw = strings.Join(parts, "") // a single token — no interior gaps
+        }
+        if len(raw) > 64 {
+                raw = raw[:64]
         }
         return raw
 }

@@ -63,6 +63,13 @@
     return { persona: 'my personas', skill: 'my skills', template: 'my templates', theme: 'my themes', script: 'my scripts', doc: 'my docs', canvas: 'my worlds', chat: 'my chats' }[type] || 'my items';
   }
 
+  // v1.71.1 THE DASHBOARD: the MY PUBLISHED label — the author-filtered
+  // view of the connected user's OWN published items (the downloads pill
+  // is a different concept: what this device downloaded).
+  function myPubLabel(type) {
+    return { persona: 'my published personas', skill: 'my published skills', template: 'my published templates', theme: 'my published themes', script: 'my published scripts', doc: 'my published docs', canvas: 'my published canvases', chat: 'my published chats' }[type] || 'my published';
+  }
+
   // The served Item carries no local-state flags — the web tracks what
   // THIS session downloaded / hearted so the item detail can enable the
   // endorse button (the engine enforces "download before endorse" with
@@ -1651,6 +1658,73 @@
 
   function bodyHTML() {
     var c = cur;
+    // v1.71.1 THE DASHBOARD: THE MY PUBLISHED view — the management list
+    // (grouped by bundle like the downloads view; each member row carries
+    // its fork badge + the ⤫ unpublish affordance; the confirm bar rides
+    // the body's bottom like the bundle-delete's own). Theme-law tokens
+    // only — no hardcoded colors, no body appenders.
+    if (c.myPub) {
+      if (c.myPubLoading) return '<div class="art-loading">loading your published ' + esc(shortType(c.type)) + 's…</div>';
+      var items = (c.myPubItems || []).slice();
+      if (!items.length) {
+        return '<div class="hub-empty">nothing published yet — open a canvas\u2019s ⋯ menu → publish, or publish from any library</div>';
+      }
+      var groups = {}, order = [];
+      items.forEach(function (it) {
+        var key = String(it.collection || '');
+        if (!groups[key]) { groups[key] = []; order.push(key); }
+        groups[key].push(it);
+      });
+      order.sort(function (a, b) {
+        return groups[b].length - groups[a].length || (a || 'zzzz').localeCompare(b || 'zzzz');
+      });
+      var out2 = '';
+      order.forEach(function (key) {
+        var members = groups[key];
+        var mOpen = !!(c.myPubOpen && c.myPubOpen[key]);
+        var secCls = 'hub-bunch-sec' + (mOpen ? '' : ' folded');
+        var secAttrs = ' data-psec="' + escAttr(key) + '"';
+        var head = key
+          ? libIcon(c.type) + ' <span class="hub-mine-bundle">' + esc(key) + '</span>'
+          : 'loose publications';
+        out2 += '<div class="' + secCls + '"' + secAttrs + '>' +
+          '<div class="hub-bunch-sec-h" role="button" tabindex="0" aria-expanded="' + (mOpen ? 'true' : 'false') + '">' + head +
+            ' <span class="hub-bunch-sec-n">' + members.length + '</span>' +
+            '<span class="hub-sec-chev" aria-hidden="true">▸</span>' +
+          '</div>' +
+          '<div class="hub-grid" style="--hub-cols:1">' +
+            members.map(function (it) {
+              var fork = it.parentUuid
+                ? '<span class="hi-chip hi-chip--info" title="a derivative of another bundle">⑂ fork' +
+                  (it.parentName ? ' of ' + esc(it.parentName) : '') + '</span>'
+                : '';
+              return '<div class="hub-card" style="cursor:default;display:flex;flex-direction:column;gap:4px;justify-content:center;text-align:left">' +
+                '<span style="display:flex;align-items:center;gap:8px;min-width:0">' +
+                  '<span style="color:var(--text-1);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(it.name) + '</span>' + fork +
+                '</span>' +
+                '<span style="color:var(--text-3);font-size:var(--ui-tiny-fs)">' +
+                  '♥ ' + (it.hearts || 0) + ' · ⤓ ' + (it.downloads || 0) +
+                  (it.updatedAt ? ' · updated ' + esc(String(it.updatedAt).slice(0, 10)) : '') +
+                '</span>' +
+                '<span style="display:flex;gap:6px;margin-top:2px">' +
+                  '<button type="button" class="hi-delbar-btn" data-open-item="' + escAttr(it.id) + '" style="background:var(--surface-2);color:var(--text-2);border:1px solid var(--border);border-radius:8px;padding:5px 10px;font-size:var(--ui-tiny-fs);cursor:pointer">view</button>' +
+                  '<button type="button" class="hi-delbar-btn hi-delbar-btn--rm" data-unpub="' + escAttr(it.id) + '" title="unpublish from the library" style="background:var(--surface-2);color:var(--warn,var(--text-1));border:1px solid var(--border);border-radius:8px;padding:5px 10px;font-size:var(--ui-tiny-fs);cursor:pointer">⤫ unpublish</button>' +
+                '</span>' +
+              '</div>';
+            }).join('') +
+          '</div>' +
+        '</div>';
+      });
+      if (c.myPubConfirm) {
+        var cf = c.myPubConfirm;
+        out2 += '<div class="hi-delbar hub-mine-delbar" id="hub-mypub-delbar" role="alertdialog" aria-label="confirm unpublish">' +
+          '<span class="hi-delbar-text">Unpublish <b>' + esc(cf.name || 'this item') + '</b> from the library? every device loses it.</span>' +
+          '<button type="button" class="hi-delbar-btn" data-punpub="keep">keep</button>' +
+          '<button type="button" class="hi-delbar-btn hi-delbar-btn--rm" data-punpub="remove">unpublish</button>' +
+        '</div>';
+      }
+      return out2;
+    }
     // v0.58 (user spec pt 8): MY-xyz — the my-pill filters the grid to the
     // user's downloads (client-side q + sort over the downloads list).
     // (v0.60 pt B: the BUNCH view is its own pushed view now — the grid
@@ -1898,7 +1972,13 @@
         '<span class="hub-card-body">' +
           '<span class="hub-card-titlerow">' +
             (ico ? '<span class="hub-card-ico" aria-hidden="true">' + ico + '</span>' : '') +
-            '<span class="hub-card-name"><span class="hub-card-name-in">' + esc(it.name) + '</span></span>' +
+            '<span class="hub-card-name"><span class="hub-card-name-in">' + esc(it.name) + '</span>' +
+            // v1.71.1 THE DASHBOARD: the fork badge — a published derivative
+            // names its parent (the lineage stamp rides the item meta).
+            (it.parentUuid
+              ? '<span class="hub-card-fork" title="fork of ' + escAttr(it.parentName || 'another bundle') + '" aria-label="fork of ' + escAttr(it.parentName || 'another bundle') + '">⑂</span>'
+              : '') +
+            '</span>' +
           '</span>' +
           '<span class="hub-card-desc">' + esc(sub) + '</span>' +
           '<span class="hub-card-author">by ' + esc(it.author || 'unknown') + creditSuffix(it.upstream) + '</span>' +
@@ -2342,6 +2422,10 @@
         cur.page = 1;
         cur.mine = false;
         cur.mineItems = null;
+        // v1.71.1: the my-published view is per-type too.
+        cur.myPub = false;
+        cur.myPubItems = null;
+        cur.myPubConfirm = null;
         saveHubstate(); // v0.60 pt B
         var si = q('#hub-search');
         if (si) si.value = '';
@@ -2481,6 +2565,60 @@
         cur.mineConfirm = '';
         if (b.getAttribute('data-mdel') === 'remove' && key) { doBundleDelete(key); return; }
         updateBody();
+      });
+    });
+
+    // v1.71.1 THE DASHBOARD: the MY PUBLISHED view's wiring — the row's
+    // view button opens the detail (the shared card path), ⤫ arms the
+    // unpublish confirm bar, and the bar's remove hits the engine's
+    // authorship-gated sweep then reloads the list.
+    host.querySelectorAll('[data-open-item]').forEach(function (b) {
+      b.addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (!cur) return;
+        var id = b.getAttribute('data-open-item');
+        var it = (cur.myPubItems || []).filter(function (x) { return x && x.id === id; })[0];
+        if (it && window.HubItem) window.HubItem.open(cur.type, it, {});
+      });
+    });
+    host.querySelectorAll('[data-unpub]').forEach(function (b) {
+      b.addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (!cur) return;
+        var id = b.getAttribute('data-unpub');
+        var it = (cur.myPubItems || []).filter(function (x) { return x && x.id === id; })[0];
+        if (!it) return;
+        cur.myPubConfirm = { id: it.id, repo: it.repo, name: it.name };
+        updateBody();
+      });
+    });
+    var pbar = host.querySelector('#hub-mypub-delbar');
+    if (pbar) pbar.querySelectorAll('[data-punpub]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        if (!cur) return;
+        var cf = cur.myPubConfirm;
+        cur.myPubConfirm = null;
+        if (b.getAttribute('data-punpub') === 'remove' && cf) {
+          doMyUnpublish({ id: cf.id, repo: cf.repo, name: cf.name });
+          return;
+        }
+        updateBody();
+      });
+    });
+    host.querySelectorAll('[data-psec]').forEach(function (sec) {
+      var h = sec.querySelector('.hub-bunch-sec-h');
+      if (!h) return;
+      var flip = function (e) {
+        if (e && e.target && e.target.closest && e.target.closest('button')) return;
+        if (!cur) return;
+        var key = sec.getAttribute('data-psec');
+        cur.myPubOpen = cur.myPubOpen || {};
+        cur.myPubOpen[key] = !cur.myPubOpen[key];
+        updateBody();
+      };
+      h.addEventListener('click', flip);
+      h.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); flip(e); }
       });
     });
 
@@ -2685,6 +2823,19 @@
         '<span class="hub-chatpill-label">' + esc(mineLabel(cur.type)) + '</span>' +
         (cur.mine ? '<span class="hub-chatpill-chev" aria-hidden="true">✓</span>' : '') + '</button>';
     }
+    // v1.71.1 THE DASHBOARD: the MY PUBLISHED pill — the author-filtered
+    // management view (unpublish per item, the fork badges). Rides ONLY
+    // when the hub is connected (the view needs the whoami-verified user).
+    if (cur && cur.auth && cur.auth.connected) {
+      out += '<button type="button" id="hub-mypub" class="hub-chatpill hub-chatpill--mine' +
+        (cur.myPub ? ' on' : '') + '"' +
+        ' aria-pressed="' + (cur.myPub ? 'true' : 'false') + '"' +
+        ' title="manage the ' + esc(shortType(cur.type)) + 's you published"' +
+        ' aria-label="' + escAttr(myPubLabel(cur.type)) + ' — manage your published items">' +
+        '<span class="hub-chatpill-ico">⤒</span>' +
+        '<span class="hub-chatpill-label">' + esc(myPubLabel(cur.type)) + '</span>' +
+        (cur.myPub ? '<span class="hub-chatpill-chev" aria-hidden="true">✓</span>' : '') + '</button>';
+    }
     return out;
   }
 
@@ -2732,9 +2883,35 @@
           return;
         }
         cur.mine = true;
+        cur.myPub = false; // v1.71.1: the two management views are exclusive
         cur.page = 1;
         saveHubstate(); // v0.60 pt B
         loadMine();
+      });
+    }
+    // v1.71.1 THE DASHBOARD: the MY PUBLISHED toggle — the author-filtered
+    // management view (the same exclusivity law as the downloads pill).
+    var mypub = root.querySelector('#hub-mypub');
+    if (mypub && !mypub._myPubWired) {
+      mypub._myPubWired = 1;
+      mypub.addEventListener('click', function () {
+        if (!cur) return;
+        if (cur.myPub) {
+          cur.myPub = false;
+          cur.myPubItems = null;
+          cur.page = 1;
+          saveHubstate();
+          updateChatrow();
+          updateBody();
+          return;
+        }
+        cur.myPub = true;
+        cur.mine = false;
+        cur.mineItems = null;
+        cur.page = 1;
+        saveHubstate();
+        updateChatrow();
+        loadMyPub();
       });
     }
   }
@@ -2765,6 +2942,54 @@
         cur.mineLoading = false;
         cur.mineItems = [];
         toast((e && e.message) || 'could not load your downloads');
+        updateBody();
+      });
+  }
+
+  // v1.71.1 THE DASHBOARD: load the connected user's OWN published items
+  // (the author-filtered ?mine=1 view — the management surface with the
+  // unpublish affordances + the fork badges).
+  function loadMyPub() {
+    if (!cur || !cur.type) return;
+    var type = cur.type;
+    cur.myPubLoading = true;
+    updateChatrow();
+    updateBody();
+    api('GET', '/api/hub/' + encodeURIComponent(type) + '/items?mine=1')
+      .then(function (d) {
+        if (!cur || cur.type !== type || !cur.myPub) return;
+        cur.myPubLoading = false;
+        cur.myPubItems = (d && d.items) || [];
+        updateBody();
+      })
+      .catch(function (e) {
+        if (!cur || !cur.myPub) return;
+        cur.myPubLoading = false;
+        cur.myPubItems = [];
+        toast((e && e.message) || 'could not load your published items');
+        updateBody();
+      });
+  }
+
+  // v1.71.1 THE DASHBOARD: doMyUnpublish — the management row's remote
+  // delete (the engine's authorship gate is the truth; the row clears
+  // and the list reloads).
+  function doMyUnpublish(it) {
+    if (!cur || !it) return;
+    toast('unpublishing…', { hold: true });
+    api('POST', '/api/hub/' + encodeURIComponent(cur.type) + '/unpublish',
+        { repo: it.repo, id: it.id })
+      .then(function () {
+        if (!cur) return;
+        cur.myPubConfirm = null;
+        if (window.Hub) window.Hub.markStale(cur.type);
+        toast('unpublished — ' + (it.name || 'the item') + ' is off the library');
+        loadMyPub();
+      })
+      .catch(function (e) {
+        if (!cur) return;
+        cur.myPubConfirm = null;
+        toast((e && e.message) || 'the unpublish failed');
         updateBody();
       });
   }

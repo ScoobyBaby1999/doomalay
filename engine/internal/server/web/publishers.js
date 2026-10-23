@@ -648,7 +648,12 @@
       savedAt: Date.now(),
       imported: {
         from: ctx.manifest.name || '', author: ctx.manifest.author || '',
-        at: ctx.manifest.createdAt || '', appVersion: ctx.manifest.appVersion || ''
+        at: ctx.manifest.createdAt || '', appVersion: ctx.manifest.appVersion || '',
+        // v1.71.1 THE DASHBOARD: the lineage chain — the BUNDLE's own uuid
+        // (a re-export stamps parentUuid = this, so forks chain across
+        // exports) + the bundle's parent (depth-2 honesty on the row).
+        uuid: ctx.manifest.uuid || '',
+        parentUuid: ctx.manifest.parentUuid || ''
       }
     };
     var name = (ctx.manifest.name || 'imported world') + '';

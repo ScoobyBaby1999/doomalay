@@ -3278,6 +3278,36 @@
     if (collabSession) { collabSession.close(); collabSession = null; }
   }
 
+  // v1.71.1 THE DASHBOARD: THE RETURNING GUEST — a stored device token
+  // (this device once joined a shared canvas through THIS host) re-arms
+  // the live session at boot: GET /api/collab/my names the shared rows;
+  // the freshest one activates (activate()'s doc pull materializes it
+  // through the standard apply hooks — the two-device story survives a
+  // reload). Already-live (the join-approved flow) or tokenless = no-op;
+  // a revoked token 401s and the sheet's clear path owns the cleanup.
+  function collabBootReactivate() {
+    try {
+      if (collabSession) return;
+      if (!(window.DoomCollabUI && window.DoomCollabUI.storedToken)) return;
+      var token = window.DoomCollabUI.storedToken();
+      if (!token) return;
+      var device = '';
+      try { device = localStorage.getItem('doomalay.collab.device') || ''; } catch (e) {}
+      fetch('/api/collab/my?token=' + encodeURIComponent(token))
+        .then(function (r) { if (!r.ok) throw new Error('my ' + r.status); return r.json(); })
+        .then(function (d) {
+          var rows = (d && d.canvases) || [];
+          if (!rows.length) return; // nothing shared with this device (yet)
+          collabActivate({
+            token: token, device: device,
+            name: (d.device && d.device.name) || 'This device',
+            guest: true, canvas: rows[0].id
+          });
+        })
+        .catch(function () { /* a stale/revoked token — inert until the next join */ });
+    } catch (e) {}
+  }
+
   function collabStatus() {
     if (!collabSession) return { active: false };
     return {
@@ -3701,6 +3731,11 @@
     // residue (a fresh install or a drifted device converges here).
     materializeCanvasScope(pickCanvasScopeFromState(saved));
     applyWorldState(saved, { boot: true });
+
+    // v1.71.1 THE DASHBOARD: THE RETURNING GUEST — after the world is up,
+    // a stored device token re-arms its shared-canvas session (the freshest
+    // shared row activates; the doc pull materializes it live).
+    collabBootReactivate();
 
     // v0.84.2: the persona-saved listener (boot-only wiring — the
     // per-world refresh rides applyWorldState itself).

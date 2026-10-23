@@ -37,6 +37,9 @@
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
     });
   }
+  // v1.71.1: escAttr — esc already neutralizes quotes; the twin exists for
+  // the same call sites uikit uses it for (title/aria attributes).
+  function escAttr(s) { return esc(s); }
 
   function fetchRows() {
     return fetch('/api/canvases').then(function (r) {
@@ -83,6 +86,15 @@
     var badge = isActive
       ? '<span style="color:var(--ok);font-size:var(--ui-tiny-fs);border:1px solid var(--border);border-radius:999px;padding:1px 7px">active</span>'
       : '';
+    // v1.71.1 THE DASHBOARD: the sharing truth on the row — the live collab
+    // member count (⇄ N = the per-canvas sandbox's device set) + the fork
+    // glyph on a bundle-born row (the ◇/⑂ law, the worldsmanager's twin).
+    if (r.shared_count) {
+      badge += ' <span title="shared with ' + r.shared_count + ' device' + (r.shared_count === 1 ? '' : 's') + '" style="color:var(--text-3);font-size:var(--ui-tiny-fs);border:1px solid var(--border);border-radius:999px;padding:1px 7px">⇄ ' + r.shared_count + '</span>';
+    }
+    if (r.imported) {
+      badge += ' <span title="' + escAttr(r.imported_uuid ? ('fork of ' + r.imported) : 'imported from ' + r.imported) + '" style="color:var(--text-3);font-size:var(--ui-tiny-fs);border:1px solid var(--border);border-radius:999px;padding:1px 7px">' + (r.imported_uuid ? '⑂' : '◇') + ' ' + esc(r.imported) + '</span>';
+    }
     return '<div data-cv-id="' + esc(r.id) + '" style="display:flex;align-items:center;gap:10px;padding:8px 2px;border-bottom:1px solid var(--border);cursor:pointer;touch-action:manipulation">' +
       thumb +
       '<div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">' +
@@ -92,6 +104,7 @@
         '</div>' +
       '</div>' +
       '<div style="display:flex;gap:4px;flex:none">' +
+        '<button data-cv-act="share" data-cv-id="' + esc(r.id) + '" title="Share Canvas" style="background:var(--surface-2);color:var(--text-2);border:1px solid var(--border);border-radius:8px;width:30px;height:30px;cursor:pointer;font-size:13px">⇄</button>' +
         '<button data-cv-act="rename" data-cv-id="' + esc(r.id) + '" title="Rename" style="background:var(--surface-2);color:var(--text-2);border:1px solid var(--border);border-radius:8px;width:30px;height:30px;cursor:pointer;font-size:13px">✎</button>' +
         '<button data-cv-act="dup" data-cv-id="' + esc(r.id) + '" title="Duplicate" style="background:var(--surface-2);color:var(--text-2);border:1px solid var(--border);border-radius:8px;width:30px;height:30px;cursor:pointer;font-size:13px">⧉</button>' +
         '<button data-cv-act="del" data-cv-id="' + esc(r.id) + '" title="Delete" style="background:var(--surface-2);color:var(--text-2);border:1px solid var(--border);border-radius:8px;width:30px;height:30px;cursor:pointer;font-size:13px">✕</button>' +
@@ -150,6 +163,7 @@
           e.stopPropagation();
           if (act === 'rename') doRename(id);
           else if (act === 'dup') doDuplicate(id);
+          else if (act === 'share') doShare(id);
           else if (act === 'del') doDelete(id);
         } else {
           doSwitch(id);
@@ -193,6 +207,15 @@
       })
       .then(function (res) { note((res && res.ok) ? 'a new world' : 'created'); fill(); })
       .catch(function (e) { note('create failed — ' + e.message); });
+  }
+
+  // doShare(id) — v1.71.1 THE DASHBOARD (PLAN-V169 §v1.69.4: "canvasespanel
+  // grows the sharing section"): the row's ⇄ opens the shipped SHARE sheet
+  // (the mint + the pending claim with THE ALLOW/DENY TAP + the roster with
+  // revoke) bound to THIS canvas — the manager-parity entry point.
+  function doShare(id) {
+    if (!(window.DoomCollabUI && window.DoomCollabUI.share)) { note('the share sheet is unavailable'); return; }
+    window.DoomCollabUI.share(id);
   }
 
   function doRename(id) {

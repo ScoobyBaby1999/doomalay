@@ -4468,6 +4468,15 @@
      shadow-only-names bug on WebView; see the [data-fmt-grad~="a1"]
      .hub-card-name-in note in the projection block). */
   .hub-card-name-in { display: inline-block; white-space: nowrap; }
+  /* v1.71.1 THE DASHBOARD: the fork badge on library cards — the lineage
+     glyph rides the name row (theme tokens only; a derivative names its
+     parent through the title/aria — no hardcoded colors). */
+  .hub-card-fork {
+    display: inline-flex; align-items: center; margin-left: 6px; padding: 0 5px;
+    font-size: var(--ui-tiny-fs); font-weight: 700; color: var(--accent);
+    border: 1px solid var(--border); border-radius: 999px; line-height: 1.5;
+    vertical-align: middle;
+  }
   .hub-card-name.marquee { text-overflow: clip; }
   .hub-card-name.marquee .hub-card-name-in { will-change: transform; }
   .hub-card-name.marquee .hub-card-name-in {

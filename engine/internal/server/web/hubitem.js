@@ -104,10 +104,22 @@
       payload: opts.payload != null ? opts.payload : null,
       downloaded: !!(window.Hub && window.Hub.isDownloaded(type, item.repo, item.id)),
       hearted: !!(window.Hub && window.Hub.isHearted(type, item.repo, item.id)),
-      folded: false
+      folded: false,
+      own: false, // v1.71.1: the authorship flag (the auth fetch below)
+      confirmUnpub: false // v1.71.1: the unpublish confirm state
     };
     panel.pushView(buildView());
     if (cur.payload == null) fetchDetail();
+    // v1.71.1 THE DASHBOARD: THE OWNERSHIP PROBE — the connected username
+    // vs the item's author decides the unpublish affordance (the server's
+    // gate is the truth; this is only the honest affordance).
+    fetch('/api/hub/auth/status').then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) {
+        if (!cur || !d) return;
+        cur.own = !!(d.connected && d.username && item.author === d.username);
+        if (cur.own) cur.panel.replaceView(buildView(), { keepScroll: true });
+      })
+      .catch(function () {});
   }
 
   function buildView() {
@@ -176,6 +188,12 @@
     var chips = (it.tags || []).map(function (t) {
       return '<span class="hi-chip">#' + esc(t) + '</span>';
     }).join('');
+    // v1.71.1 THE DASHBOARD: the fork badge — the lineage stamp rides the
+    // chips row (a published derivative of another bundle names it).
+    if (it.parentUuid) {
+      chips = '<span class="hi-chip hi-chip--info" title="a derivative of another bundle">⑂ fork' +
+        (it.parentName ? ' of ' + esc(it.parentName) : '') + '</span>' + chips;
+    }
 
     // v0.61 (icons): a file:<path> icon renders the item's own art file
     // (png/svg through the repo-file route); kebab names stay Lucide.
@@ -221,6 +239,8 @@
             '<div class="hi-desc">' + esc(it.description || '—') + '</div>' +
             '<div class="hi-meta">by ' + esc(it.author || 'unknown') +
               (it.upstream ? ' — ported from ' + esc(String(it.upstream).trim()) : '') +
+              (it.parentUuid ? ' — fork of ' + esc(it.parentName || 'another bundle') +
+                (it.parentAuthor ? ' by ' + esc(it.parentAuthor) : '') : '') +
               (it.updatedAt ? ' · updated ' + esc(String(it.updatedAt).slice(0, 10)) : '') + '</div>' +
             chipsRow +
             '<div class="hi-counts">' +
@@ -238,32 +258,37 @@
               '</div>') +
         '</div>' +
         '<div class="hi-fabs">' +
-          (cur.confirmDel
+          (cur.confirmDel || cur.confirmUnpub
             ? '<div class="hi-delbar" id="hi-delbar" role="alertdialog" aria-label="confirm delete">' +
-                '<span class="hi-delbar-text">Remove <b>' + esc(it.name || 'this item') + '</b> from your device?</span>' +
+                '<span class="hi-delbar-text">' + (cur.confirmUnpub
+                  ? 'Unpublish <b>' + esc(it.name || 'this item') + '</b> from the library? every device loses it — your local canvas keeps its copy.'
+                  : 'Remove <b>' + esc(it.name || 'this item') + '</b> from your device?') + '</span>' +
                 '<button type="button" class="hi-delbar-btn" data-del="keep">keep</button>' +
-                '<button type="button" class="hi-delbar-btn hi-delbar-btn--rm" data-del="remove">remove</button>' +
+                '<button type="button" class="hi-delbar-btn hi-delbar-btn--rm" data-del="remove">' + (cur.confirmUnpub ? 'unpublish' : 'remove') + '</button>' +
               '</div>'
             : '') +
-          (isTpl && !cur.confirmDel
+          (isTpl && !cur.confirmDel && !cur.confirmUnpub
             ? '<button class="hi-fab hi-fab--use" id="hi-use" title="use this template" aria-label="use this template">' +
                 hiGlyph('play') + '</button>'
             : '') +
-          (!cur.confirmDel
+          (!cur.confirmDel && !cur.confirmUnpub
             ? '<button class="hi-fab" id="hi-dl" title="' +
                 (isTpl && cur.downloaded ? 're-publish with edits' : 'download') +
                 '" aria-label="' + (isTpl && cur.downloaded ? 're-publish with edits' : 'download') + '">' +
                 (isTpl && cur.downloaded ? hiGlyph('pen-line') : hiGlyph('download')) + '</button>'
             : '') +
-          (!cur.confirmDel
+          (!cur.confirmDel && !cur.confirmUnpub
             ? '<button class="hi-fab hi-fab--heart' + (cur.hearted ? ' on' : '') +
                 (cur.downloaded ? '' : ' locked') + '" id="hi-heart"' +
                 (cur.downloaded ? ' title="endorse"' : ' title="download first"') +
                 ' aria-label="endorse">' + hiGlyph('heart', cur.hearted) + '</button>'
             : '') +
-          (cur.downloaded && !cur.confirmDel
+          (cur.downloaded && !cur.confirmDel && !cur.confirmUnpub
             ? '<button class="hi-fab hi-fab--del" id="hi-del" title="delete your copy" aria-label="delete your copy">' +
                 hiGlyph('trash-2') + '</button>'
+            : '') +
+          (cur.own && !cur.confirmDel && !cur.confirmUnpub
+            ? '<button class="hi-fab hi-fab--del" id="hi-unpub" title="unpublish from the library" aria-label="unpublish from the library">⤫</button>'
             : '') +
         '</div>' +
       '</div>'
@@ -394,12 +419,25 @@
       cur.confirmDel = true;
       cur.panel.replaceView(buildView(), { keepScroll: true });
     });
+    // v1.71.1 THE DASHBOARD: THE UNPUBLISH FAB — the authorship probe said
+    // this is OUR item; the tap arms the same in-DOM confirm bar (the
+    // remove button reads "unpublish" — the remote sweep, not delete-copy).
+    var unpub = el.querySelector('#hi-unpub');
+    if (unpub) unpub.addEventListener('click', function () {
+      if (!cur || cur.busy) return;
+      cur.confirmUnpub = true;
+      cur.panel.replaceView(buildView(), { keepScroll: true });
+    });
     var bar = el.querySelector('#hi-delbar');
     if (bar) bar.querySelectorAll('[data-del]').forEach(function (b) {
       b.addEventListener('click', function () {
         if (!cur) return;
-        if (b.getAttribute('data-del') === 'remove') { doDelete(); return; }
+        if (b.getAttribute('data-del') === 'remove') {
+          if (cur.confirmUnpub) { doUnpublish(); return; }
+          doDelete(); return;
+        }
         cur.confirmDel = false;
+        cur.confirmUnpub = false;
         cur.panel.replaceView(buildView(), { keepScroll: true });
       });
     });
@@ -688,6 +726,38 @@
     } else {
       toast('no chat panel to apply it to');
     }
+  }
+
+  // v1.71.1 THE DASHBOARD: UNPUBLISH — the author's REMOTE delete (the
+  // server's authorship gate is the truth; the 403 names a foreign repo).
+  // ONE commit sweeps the item's every file + the index; the engine also
+  // drops the local published row. The detail view is dead after this —
+  // it pops back to the library (which reloads stale).
+  function doUnpublish() {
+    if (!cur || cur.busy) return;
+    cur.busy = true;
+    var it = cur.item;
+    toast('unpublishing…', { hold: true });
+    api('POST', '/api/hub/' + encodeURIComponent(cur.type) + '/unpublish',
+        { repo: it.repo, id: it.id })
+      .then(function () {
+        if (!cur) return;
+        cur.busy = false;
+        cur.confirmUnpub = false;
+        if (window.Hub) {
+          window.Hub.unmarkDownloaded(cur.type, it.repo, it.id);
+          window.Hub.markStale(cur.type);
+        }
+        toast('unpublished — ' + (it.name || 'the item') + ' is off the library');
+        cur.panel.popView();
+      })
+      .catch(function (e) {
+        if (!cur) return;
+        cur.busy = false;
+        cur.confirmUnpub = false;
+        cur.panel.replaceView(buildView(), { keepScroll: true });
+        toast((e && e.message) || 'the unpublish failed');
+      });
   }
 
   // v0.60 (pt A.3): DELETE — removes the LOCAL copy (engine row + the

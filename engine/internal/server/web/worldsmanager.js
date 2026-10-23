@@ -175,8 +175,17 @@
     // v1.54 THE LIBRARY SHIP: the provenance chip — an imported world
     // remembers where it came from ($.imported.from, the v1.42.8 stamp,
     // now surfaced by the engine's list probe). Theme-law tokens only.
+    // v1.71.1 THE DASHBOARD: a bundle-born row ($.imported.uuid — the
+    // format-1.1 stamp) wears the FORK glyph (⑂, a named derivative)
+    // instead of the plain import diamond; the shared chip (⇄ N) names
+    // the canvas's live collab member count (the per-canvas sandbox
+    // made visible on the owner's rows).
     if (r.imported) {
-      badge += ' <span style="color:var(--text-3);font-size:var(--ui-tiny-fs);border:1px solid var(--border);border-radius:999px;padding:1px 7px;flex:none">◇ ' + esc(r.imported) + '</span>';
+      var forkGlyph = r.imported_uuid ? '⑂' : '◇';
+      badge += ' <span title="' + escAttr(r.imported_uuid ? ('fork of ' + r.imported) : 'imported from ' + r.imported) + '" style="color:var(--text-3);font-size:var(--ui-tiny-fs);border:1px solid var(--border);border-radius:999px;padding:1px 7px;flex:none">' + forkGlyph + ' ' + esc(r.imported) + '</span>';
+    }
+    if (r.shared_count) {
+      badge += ' <span title="shared with ' + r.shared_count + ' device' + (r.shared_count === 1 ? '' : 's') + '" style="color:var(--text-3);font-size:var(--ui-tiny-fs);border:1px solid var(--border);border-radius:999px;padding:1px 7px;flex:none">⇄ ' + r.shared_count + '</span>';
     }
     var meta = (r.icon_count || 0) + ' icons · ' + fmtSize(r.state_bytes) + ' · ' + fmtAgo(r.saved_at || r.updated_at);
     return '<div data-wm-id="' + esc(r.id) + '" style="display:flex;align-items:center;gap:10px;padding:9px 2px;border-bottom:1px solid var(--border);cursor:' + (dead ? 'default' : 'pointer') + ';touch-action:manipulation;' + (dead ? 'opacity:0.55' : '') + '">' +
@@ -452,6 +461,7 @@
       '</div>' +
       btn('rename', '✎', 'rename') +
       btn('dup', '⧉', 'duplicate') +
+      btn('share', '⇄', 'share canvas') +
       btn('pub', '⤒', 'publish .doomcanvas') +
       btn('del', '🗑', 'delete') +
       '</div>';
@@ -465,6 +475,7 @@
             if (act === 'rename') doRename(id);
             else if (act === 'dup') doDuplicate(id);
             else if (act === 'pub') doPublish(id);
+            else if (act === 'share') doShare(id);
             else if (act === 'del') doDelete(id);
           });
         });
@@ -593,7 +604,7 @@
     function recompute() {
       var el = sizeEl();
       if (el) el.textContent = '≈ ' + fmtSize(pubPickedBytes(collected, picks)) + ' · ' +
-        (window.CanvasBundle && window.CanvasBundle.probe ? 'format 1.0' : '');
+        (window.CanvasBundle && window.CanvasBundle.probe ? 'format 1.1' : '');
     }
     function toggleRowHTML(t, depth) {
       var pad = 10 + depth * 18;
@@ -678,7 +689,14 @@
               name: row.name,
               desc: desc,
               payloadBlob: bytes,
-              payloadLabel: row.name + ' — ' + fmtSize(bytes.length)
+              payloadLabel: row.name + ' — ' + fmtSize(bytes.length),
+              // v1.71.1 THE DASHBOARD: the fork lineage — the row's own
+              // $.imported probes (uuid/author/from) ride the prefill so
+              // the publish meta stamps parentUuid (a canvas born from a
+              // bundle publishes as its fork, visibly).
+              parentUuid: row.imported_uuid || '',
+              parentAuthor: row.imported_author || '',
+              parentName: row.imported || ''
             };
             // the card art: the world's own thumbnail (≤64KB PNG), if any
             var turl = '/api/canvases/' + encodeURIComponent(row.id) + '/thumb';
@@ -705,6 +723,16 @@
         recompute();
       }
     });
+  }
+
+  // doShare(id) — v1.71.1 THE DASHBOARD: the manager's parity row with the
+  // grid menu's ⇄ Share Canvas (the canvasespanel's twin). The sheet is
+  // the shipped collab SHARE sheet (mint + THE ALLOW/DENY TAP + revoke);
+  // it names the row's OWN canvas (the active-id fallback dies — a row
+  // ≠ the active world).
+  function doShare(id) {
+    if (!(window.DoomCollabUI && window.DoomCollabUI.share)) return;
+    window.DoomCollabUI.share(id);
   }
 
   // doImport — the file picker (the input lives INSIDE the overlay

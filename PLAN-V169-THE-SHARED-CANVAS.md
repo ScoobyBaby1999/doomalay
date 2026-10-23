@@ -257,3 +257,32 @@ plan → build → revise/test/redteam as a real user. (Done: see RESEARCH below
   every web change ships via engine rebuild (the rigs build their own binary).
 - **Push discipline**: three-dot phases (v1.69.1 → …), rebase before every push (fetch,
   diff, merge, then publish), ship v1.69.0 at the end.
+
+---
+
+## THE RENUMBER ADDENDUM (v1.70.0 shipped mid-wave — the +1 law)
+
+The ROBUST FIELD (PLAN-V170, the 4-provider campaign) shipped buildinfo 1.70.0
+while phases 1–3 of this wave were already pushed (v1.69.1/.2/.3 stand). The
+remaining phases renumber; the ship takes the next free minor:
+
+- §v1.69.4 → **v1.71.1 THE DASHBOARD** (bundles management + fork tags + the
+  canvasespanel sharing section)
+- §v1.69.5 → **v1.71.2 THE LIVE PROOF** (the rig `scripts/v1710-shared-canvas-rig.mjs`,
+  port 8710, pins `TestV171_…`)
+- the ship: **v1.71.0 THE SHARED CANVAS** (buildinfo 1.71.0 + README v1.71 +
+  the tag `v1.71.0-the-shared-canvas`)
+
+Two build-time convictions from the live audit (2026-10-23) that the plan's
+§v1.169.4 glossed over, resolved here: (a) **rename cannot be same-id republish**
+(ItemID hashes the name) — the honest chain is local rename → republish (new
+id) → unpublish the old item, surfaced as the MY PUBLISHED view + unpublish;
+(b) **the join sheet cannot bind the guest's LOCAL canvas id** (a foreign
+device under the deployment law has no host rows) — the CODE resolves the
+canvas: mint is collision-free across live invites and Pair accepts an empty
+canvas (code-only lookup); the approved poll returns the canvas so the guest
+activates onto the real row. Plus the unwired journal GC (TrimCanvasOps had no
+caller) rides the checkpoint calm, threshold-guarded.
+
+Harness lesson (the session's own conviction): `rebuild-sandbox.sh` hard-resets
+the tree — NEVER run it with uncommitted work; commit (or stash) first.

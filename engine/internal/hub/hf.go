@@ -367,6 +367,12 @@ func (c *HFClient) CreateRepo(token, namespace, name string) error {
 type CommitFile struct {
         Path    string
         Content []byte
+        // v1.71.1 THE DASHBOARD: Delete marks the entry as a `deletedFile`
+        // op (the client-proven shape — see forge/hf.go's v0.93.5 note: the
+        // OpenAPI's `deletedEntry` is a spec bug; huggingface_hub + hub.js
+        // both send `deletedFile`). Content is ignored on a Delete entry;
+        // deletes never ride preupload/LFS.
+        Delete bool
 }
 
 // CommitFiles atomically writes files to a repo's main branch.
@@ -400,12 +406,26 @@ func (c *HFClient) commitFiles(token, repo, message string, files []CommitFile, 
         if len(files) == 0 {
                 return nil
         }
-        modes, err := c.preuploadType(token, repo, files, repoType)
-        if err != nil {
-                return err
+        // v1.71.1: deletes ride the commit but never the upload protocols.
+        var writes, deletes []CommitFile
+        for _, f := range files {
+                if f.Delete {
+                        deletes = append(deletes, f)
+                } else {
+                        writes = append(writes, f)
+                }
+        }
+        modes := map[string]string{}
+        var err error
+        if len(writes) > 0 {
+                m, perr := c.preuploadType(token, repo, writes, repoType)
+                if perr != nil {
+                        return perr
+                }
+                modes = m
         }
         var lfsFiles []CommitFile
-        for _, f := range files {
+        for _, f := range writes {
                 if modes[f.Path] == "lfs" {
                         lfsFiles = append(lfsFiles, f)
                 }
@@ -421,7 +441,12 @@ func (c *HFClient) commitFiles(token, repo, message string, files []CommitFile, 
                 buf.WriteByte('\n')
         }
         w(map[string]any{"key": "header", "value": map[string]string{"summary": message, "description": ""}})
-        for _, f := range files {
+        for _, f := range deletes {
+                w(map[string]any{"key": "deletedFile", "value": map[string]string{
+                        "path": strings.TrimPrefix(f.Path, "/"),
+                }})
+        }
+        for _, f := range writes {
                 if modes[f.Path] == "lfs" {
                         sum := sha256.Sum256(f.Content)
                         w(map[string]any{"key": "lfsFile", "value": map[string]any{

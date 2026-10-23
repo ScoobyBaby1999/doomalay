@@ -4,15 +4,15 @@
 // above everything), both theme-law only (every color a var; zero
 // literals).
 //
-//	THE SHARE SHEET (the OWNER): mint the 6-digit code, watch the pending
-//	claim, THE ALLOW/DENY TAP, the member roster with revoke. Entered
-//	from the canvas long-press menu ("share this canvas").
+//      THE SHARE SHEET (the OWNER): mint the 6-digit code, watch the pending
+//      claim, THE ALLOW/DENY TAP, the member roster with revoke. Entered
+//      from the canvas long-press menu ("share this canvas").
 //
-//	THE JOIN SHEET (the JOINER — any device pointed at the host engine's
-//	URL, e.g. through the tunnel): the code + a device name → the poll
-//	("waiting for the owner's approval…") → approved: the credential is
-//	stored + the shared canvas goes LIVE. The guest's session never
-//	whole-state PUTs (ops only — the doc is the room's truth).
+//      THE JOIN SHEET (the JOINER — any device pointed at the host engine's
+//      URL, e.g. through the tunnel): the code + a device name → the poll
+//      ("waiting for the owner's approval…") → approved: the credential is
+//      stored + the shared canvas goes LIVE. The guest's session never
+//      whole-state PUTs (ops only — the doc is the room's truth).
 (function () {
   'use strict';
 
@@ -156,7 +156,7 @@
       html += '<div style="display:flex;flex-direction:column;align-items:center;gap:6px;padding:14px 0">' +
         '<div style="font-size:26px;color:var(--ok,var(--accent))">✓</div>' +
         '<div style="font-size:var(--ui-small-fs);color:var(--text-1)">' + esc(st.deviceName || 'this device') + ' is connected</div>' +
-        '<div style="' + T.sub + '">the shared canvas is live — every edit syncs</div>' +
+        '<div style="' + T.sub + '">' + (st.canvasName ? ('on \u201C' + esc(st.canvasName) + '\u201D — ') : '') + 'the shared canvas is live — every edit syncs</div>' +
         '</div><button data-cj-act="enter" style="' + T.btn + '">open the canvas</button>';
     } else if (st.phase === 'denied') {
       html += '<div style="display:flex;flex-direction:column;align-items:center;gap:6px;padding:14px 0">' +
@@ -187,17 +187,21 @@
             var code = (codeEl && codeEl.value || '').replace(/\D/g, '');
             var name = (nameEl && nameEl.value || '').trim() || 'Device';
             if (code.length !== 6) { joinState = { phase: 'error', error: 'the code is 6 digits' }; joinRender(); return; }
-            // the pair names the canvas this device is already viewing
-            // (the host engine's OWN registry named it); the code proves
-            // the owner's intent.
-            var canvas = joinState.canvas || (window.Worlds && window.Worlds.activeId ? window.Worlds.activeId() : null);
-            if (!canvas) { joinState = { phase: 'error', error: 'no canvas to join' }; joinRender(); return; }
+            // v1.71.1 THE DASHBOARD: THE CODE IS THE LOCATOR. A foreign
+            // device under the deployment law has NO host canvas rows — the
+            // old "the pair names the canvas this device is already viewing"
+            // law could never hold for the guest. The canvas rides the
+            // request ONLY when this device actually knows one (the owner's
+            // own join path); otherwise the server resolves it FROM the code
+            // (the collision-free mint keeps the lookup unambiguous) and
+            // the claim + approval responses carry it back.
+            var canvas = joinState.canvas || (window.Worlds && window.Worlds.activeId ? window.Worlds.activeId() : null) || '';
             var r = await jfetch('POST', '/api/collab/pair', { canvas: canvas, code: code, name: name });
             if (r.status !== 200) {
               joinState = { phase: 'error', error: r.status === 404 ? 'no matching invite' : r.status === 429 ? 'too many attempts — wait a minute' : 'pairing failed (' + r.status + ')' };
               joinRender(); return;
             }
-            joinState = { phase: 'polling', canvas: canvas, code: code, deviceCode: r.body.device_code, deviceName: name };
+            joinState = { phase: 'polling', canvas: r.body.canvas || canvas || null, canvasName: r.body.canvas_name || '', code: code, deviceCode: r.body.device_code, deviceName: name };
             joinRender();
             joinPoll();
           });
@@ -230,7 +234,9 @@
       if (st === 'approved') {
         clearInterval(joinTimer); joinTimer = 0;
         // THE CREDENTIAL lands: stored per HOST ORIGIN (a device may know
-        // many hosts), then the canvas session activates with it.
+        // many hosts), then the canvas session activates with it. v1.71.1:
+        // the approved response carries the paired CANVAS (the code-only
+        // guest's truth — the activation + the sheet's label ride it).
         try {
           var key = 'doomalay.collab.token';
           localStorage.setItem(key, r.body.token || '');
@@ -238,6 +244,8 @@
         } catch (e) {}
         joinState.token = r.body.token;
         joinState.device = r.body.device_id;
+        if (r.body.canvas) joinState.canvas = r.body.canvas;
+        if (r.body.canvas_name) joinState.canvasName = r.body.canvas_name;
         joinState.phase = 'approved';
         joinRender();
       } else if (st === 'denied') {

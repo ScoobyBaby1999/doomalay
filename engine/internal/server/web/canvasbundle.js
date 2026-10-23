@@ -197,6 +197,37 @@
   }
 
   // ══ THE BUILD ════════════════════════════════════════════════════
+  // ── v1.71.1 THE DASHBOARD: the lineage helpers (format 1.1) ──────
+  // sha256Hex(bytes|string) → hex ('' when the platform lacks the
+  // primitive — the honest absence; every modern engine has subtle).
+  async function sha256Hex(data) {
+    try {
+      if (data == null) return '';
+      var bytes = (typeof data === 'string')
+        ? new TextEncoder().encode(data)
+        : new Uint8Array(data);
+      var subtle = (typeof crypto !== 'undefined' && crypto.subtle) ? crypto.subtle : null;
+      if (!subtle) return '';
+      var buf = await subtle.digest('SHA-256', bytes);
+      var u8 = new Uint8Array(buf);
+      var hex = '';
+      for (var i = 0; i < u8.length; i++) hex += (u8[i] < 16 ? '0' : '') + u8[i].toString(16);
+      return hex;
+    } catch (e) { return ''; }
+  }
+
+  // lineageOf(imported) → {uuid, author, name} — the source world's own
+  // $.imported stamp, normalized for the manifest's parent fields. A
+  // home-grown canvas (no stamp) exports with an empty chain (an original).
+  function lineageOf(imported) {
+    if (!imported || typeof imported !== 'object') return { uuid: '', author: '', name: '' };
+    return {
+      uuid: String(imported.uuid || ''),
+      author: String(imported.author || ''),
+      name: String(imported.from || '')
+    };
+  }
+
   // collect(picks, worldCtx) → drives the publishers (everything ON)
   // → { files, tree, requires, warnings, canvasName, childBytes, meta }.
   // worldCtx (optional — the publish sheet for a NON-active row): 
@@ -263,6 +294,11 @@
     return {
       files: files, tree: tree, requires: requires, warnings: warnings,
       canvasName: canvasName, appVersion: ctx.appVersion,
+      // v1.71.1 THE DASHBOARD: the source world's own lineage stamp
+      // ($.imported — uuid/author/from) rides the collected truth so the
+      // manifest builder can stamp parentUuid (a bundle exported from an
+      // IMPORTED canvas is a fork of the bundle it came from).
+      imported: worldState.imported || null,
       childBytes: childBytes, chatHistoryBytes: chatHistoryBytes
     };
   }
@@ -341,14 +377,26 @@
       var s = (typeof b === 'string') ? b.length : b.byteLength;
       sizes[n] = s; total += s;
     });
+    // v1.71.1 THE DASHBOARD (PLAN-V169 §v1.169.4): FORMAT 1.1 — the fork
+    // lineage. parentUuid/parentAuthor/parentName derive from the source
+    // world's own $.imported stamp (an IMPORTED canvas re-exported names
+    // the bundle it was born from); contentHash = sha256 of canvas.json
+    // (the content's own fingerprint — "the same bytes" is checkable
+    // across the chain). The 1.0 reader already accepts 1.1 (MAJOR≤1 law).
+    var lineage = lineageOf(collected.imported);
+    var contentHash = await sha256Hex(files['canvas.json']);
     var manifest = {
       format: 'doomalay-canvas',
-      formatVersion: '1.0',
+      formatVersion: '1.1',
       uuid: 'cvb_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36),
       createdAt: new Date().toISOString(),
       appVersion: collected.appVersion || '',
       name: collected.canvasName || 'a world',
       author: '',
+      parentUuid: lineage.uuid,
+      parentAuthor: lineage.author,
+      parentName: lineage.name,
+      contentHash: contentHash,
       contents: {
         settings: !!files['settings.json'],
         iconsets: !!files['iconsets.json'],
@@ -387,11 +435,15 @@
       Object.assign(files, r.files);
     }
     delete files['manifest.json'];
+    // v1.71.1: the child manifest carries the same 1.1 lineage law (a
+    // nested world that was itself imported keeps its chain).
+    var lineage = lineageOf(worldState.imported);
     var manifest = {
-      format: 'doomalay-canvas', formatVersion: '1.0',
+      format: 'doomalay-canvas', formatVersion: '1.1',
       uuid: 'cvb_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36),
       createdAt: new Date().toISOString(), appVersion: appVersion || '',
       name: name, author: '',
+      parentUuid: lineage.uuid, parentAuthor: lineage.author, parentName: lineage.name,
       contents: {}, sizes: {}, flags: { provenance: 'doomalay-canvas', requires: [] }
     };
     files['manifest.json'] = JSON.stringify(manifest);

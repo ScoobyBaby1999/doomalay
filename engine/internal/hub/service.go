@@ -561,11 +561,36 @@ func runBounded(n int, f func(i int)) {
 //            "downloads" | "hearts" (count desc), "relevant" (score desc; an
 //            empty query falls back to recent).
 func (s *Service) Items(typ, q, sortMode, tagFilter string, refresh bool) ([]Item, error) {
+        return s.items(typ, q, sortMode, tagFilter, refresh, false)
+}
+
+// ItemsMine is the author-filtered view (v1.71.1 THE DASHBOARD — PLAN-V169
+// §v1.169.4: "the MY PUBLISHED view (all bundles)"): every item whose Author
+// is the CURRENTLY-CONNECTED user (the whoami-verified username — never a
+// client claim). Builtins never match (their author is the builtin repo).
+func (s *Service) ItemsMine(typ, q, sortMode, tagFilter string, refresh bool) ([]Item, error) {
+        return s.items(typ, q, sortMode, tagFilter, refresh, true)
+}
+
+func (s *Service) items(typ, q, sortMode, tagFilter string, refresh bool, mine bool) ([]Item, error) {
         spec, err := Get(typ)
         if err != nil {
                 return nil, err
         }
         q = strings.TrimSpace(q)
+        // v1.71.1: the author filter needs a KNOWN user — an unconnected
+        // engine answers the honest error (the UI hides the pill, the API
+        // never lies with an empty list).
+        user := ""
+        if mine {
+                if s.Token() == "" {
+                        return nil, ErrNotConnected
+                }
+                user = s.currentUser()
+                if user == "" {
+                        return nil, ErrNotConnected
+                }
+        }
         v := s.view(spec, refresh)
 
         // Local overlay: downloaded rows (skipping non-hub heart rows).
@@ -615,6 +640,20 @@ func (s *Service) Items(typ, q, sortMode, tagFilter string, refresh bool) ([]Ite
         }
         for _, row := range local { // downloaded locally but no longer indexed remotely
                 addItem(row.Item, rowState(row))
+        }
+
+        // v1.71.1 THE DASHBOARD: the mine filter keeps ONLY the connected
+        // user's own published rows — the authorship is the whoami-verified
+        // username the publish path stamped server-side (a client can never
+        // claim another author). Builtins + foreign heart rows drop out.
+        if mine {
+                kept := merged[:0]
+                for _, it := range merged {
+                        if it.Author == user && !itemIsBuiltin(it) {
+                                kept = append(kept, it)
+                        }
+                }
+                merged = kept
         }
 
         // Tag filter (exact, case-insensitive).
@@ -1087,6 +1126,15 @@ type PublishRequest struct {
         // ports never read as original (the superpowers-by-obra report).
         Upstream    string         `json:"upstream"`
         StageCount  int            `json:"stageCount"` // v0.58: templates — manual stage count (0 = auto-count the payload)
+        // v1.71.1 THE DASHBOARD (PLAN-V169 §v1.169.4): FORK LINEAGE — the
+        // publish-side mirror of the .doomcanvas manifest's 1.1 fields. The
+        // publisher derives them from the canvas's own $.imported stamp
+        // (uuid/author/from); the server sanitizes + stamps them onto the
+        // item JSON so cards + details render "fork of X by Y". Display +
+        // match text only — authorship is still the repo owner.
+        ParentUuid   string `json:"parentUuid"`
+        ParentAuthor string `json:"parentAuthor"`
+        ParentName   string `json:"parentName"`
         // v1.54 THE LIBRARY SHIP: the BINARY payload path. Canvas/chat
         // publishes ride multipart/form-data — the `meta` part decodes
         // into this struct (Payload stays "") and the raw `payload` part
@@ -1211,6 +1259,11 @@ func (s *Service) Publish(typ string, req PublishRequest) (Item, error) {
                 Icon:       SanitizeIcon(req.Icon),
                 Collection: SanitizeCollection(req.Collection),
                 Upstream:   SanitizeUpstream(req.Upstream),
+                // v1.71.1: the lineage stamp (fork tags — the plan's
+                // "throwaway feature", the metadata is the foundation).
+                ParentUuid:   SanitizeUUID(req.ParentUuid),
+                ParentAuthor: SanitizeParentField(req.ParentAuthor, 64),
+                ParentName:   SanitizeParentField(req.ParentName, 120),
                 CreatedAt:  now, UpdatedAt: now,
                 Design: normalizeDesign(req.Design),
                 File:   "items/" + id + spec.PayloadExt,
@@ -1382,6 +1435,113 @@ func (s *Service) Publish(typ string, req PublishRequest) (Item, error) {
         s.appendMetric("publish", target(repo, id))
         s.Invalidate("") // the library + metrics views changed
         return item, nil
+}
+
+// Unpublish removes the item from the REMOTE library (v1.71.1 THE
+// DASHBOARD — PLAN-V169 §v1.169.4: "unpublish (the commit machinery
+// removes the item)"). ONE commit deletes every file the publish wrote
+// — the meta, the payload, the companions (item.Files), the card art —
+// and rewrites items/index.json without the row. THE AUTHORSHIP GATE:
+// the repo's owner prefix must be the connected user AND the stored
+// meta's author must agree (both server-side truths — a client can
+// never unpublish someone else's work). The LOCAL published row dies
+// too (the author's own copy record — a remote-gone row must not
+// render as "published" in the MY view).
+func (s *Service) Unpublish(typ, repo, id string) error {
+        if _, err := Get(typ); err != nil {
+                return err
+        }
+        token := s.Token()
+        if token == "" {
+                return ErrNotConnected
+        }
+        user := s.currentUser()
+        if user == "" {
+                return ErrNotConnected
+        }
+        repo = strings.TrimSpace(repo)
+        if repo == "" || strings.TrimSpace(id) == "" {
+                return errors.New("repo and id are required")
+        }
+        // THE AUTHORSHIP GATE — the repo is "<user>/<reponame>" by the
+        // publish law; anything else is not ours to delete.
+        if owner, _, ok := strings.Cut(repo, "/"); !ok || owner != user {
+                return ErrNotOwner
+        }
+        // the item's OWN meta is the second witness (the route's id must
+        // name a real row whose author agrees — never trust the caller).
+        meta, err := s.hf.FetchFile(repo, "items/"+strings.TrimSpace(id)+".json")
+        if err != nil {
+                return err // 404 maps up honestly (IsNotFound)
+        }
+        var item Item
+        if err := json.Unmarshal(meta, &item); err != nil {
+                return fmt.Errorf("the item's meta is unreadable: %w", err)
+        }
+        if item.Author != user {
+                return ErrNotOwner
+        }
+        // the sweep — every path the publish commit wrote for this id.
+        paths := map[string]bool{
+                "items/" + item.ID + ".json": true,
+                item.File:                     true,
+        }
+        if item.Design.Kind == "png" {
+                paths["items/"+item.ID+".png"] = true
+        }
+        if strings.HasPrefix(item.Icon, "file:") {
+                paths[strings.TrimSpace(strings.TrimPrefix(item.Icon, "file:"))] = true
+        }
+        if item.Badge != nil && item.Badge.File != "" {
+                paths[item.Badge.File] = true
+        }
+        for _, f := range item.Files {
+                if f != "" {
+                        paths[f] = true
+                }
+        }
+        // the index — regenerated WITHOUT the row, riding the same commit.
+        var files []CommitFile
+        for p := range paths {
+                files = append(files, CommitFile{Path: p, Delete: true})
+        }
+        if index, err := s.removeFromIndex(repo, item.ID); err == nil {
+                files = append(files, CommitFile{Path: "items/index.json", Content: index})
+        }
+        if err := s.hf.CommitFiles(token, repo, "unpublish "+item.Name, files); err != nil {
+                return err
+        }
+        // the local row dies (published records are the author's own
+        // copies — DeleteLocalItem is the existing law; a never-downloaded
+        // publish-only row ALSO dies here, unlike the downloads delete).
+        _ = DeleteLocalItem(s.db, typ, item.ID)
+        s.appendMetric("unpublish", target(repo, item.ID))
+        s.Invalidate("")
+        return nil
+}
+
+// ErrNotOwner is the authorship refusal (mapped to 403 by the route).
+var ErrNotOwner = errors.New("only the publisher can do that")
+
+// removeFromIndex regenerates items/index.json WITHOUT the id (the
+// regenIndex twin — no append, sort-stable by updatedAt).
+func (s *Service) removeFromIndex(repo, id string) ([]byte, error) {
+        var items []Item
+        if body, err := s.hf.FetchFile(repo, "items/index.json"); err == nil {
+                _ = json.Unmarshal(body, &items)
+        } else if !IsNotFound(err) {
+                return nil, err
+        }
+        kept := items[:0]
+        for _, it := range items {
+                if it.ID != id {
+                        kept = append(kept, it)
+                }
+        }
+        sort.SliceStable(kept, func(i, j int) bool {
+                return ParseTime(kept[i].UpdatedAt) > ParseTime(kept[j].UpdatedAt)
+        })
+        return json.MarshalIndent(kept, "", "  ")
 }
 
 // ensureLFSAttributes seeds the repo's .gitattributes with our payload
