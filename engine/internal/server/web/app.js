@@ -3008,6 +3008,12 @@
       // each canvas carries its own look (theme + grid); the GLOBAL keys
       // (text sizes, renderer knobs, worldSize) never enter a world row.
       settings: (window.Settings) ? pickCanvasScope(window.Settings.getState()) : {},
+      // v1.69.1 THE SHARED CANVAS: worldSize moves INTO the doc — it is
+      // STRUCTURAL (two devices on different plate sizes would diverge
+      // the same canvas; PLAN-V169's doc/view law). Old canvases carry no
+      // field and fall back to the personal setting at load (byte-identical
+      // for them); a dial write schedules a save so the row picks it up.
+      worldSize: WORLD_SIZE,
       savedAt: Date.now(),
       // v1.42.4 THE LEDGER: the scratch carries its canvas id — the
       // boot heal's ownership check (a fresher scratch only wins for
@@ -3042,6 +3048,7 @@
       currentFamily: currentFamily,
       icons: world.entities.map(function (c) { return c.serialize(); }),
       dots: (window.TabGroups) ? window.TabGroups.serialize() : [],
+      worldSize: WORLD_SIZE,
       settings: (window.Settings) ? pickCanvasScope(window.Settings.getState()) : {}
     };
   }
@@ -3113,6 +3120,13 @@
   // the caller. opts.boot gates the first-run empty-state card.
   function applyWorldState(saved, opts) {
     opts = opts || {};
+    // v1.69.1 THE SHARED CANVAS: the doc's own plate size leads when the
+    // canvas carries one (structural truth — a shared canvas MUST have
+    // one size); absent (every pre-v1.69 canvas) keeps the personal
+    // setting the boot/switch already applied (byte-identical fallback).
+    if (saved && typeof saved.worldSize === 'number' && saved.worldSize > 0) {
+      try { applyWorldSize(saved.worldSize); } catch (e) {}
+    }
     // v1.42.8 THE VESSEL: the provenance mark rides the loaded state.
     if (saved && saved.imported && typeof saved.imported === 'object') {
       worldProvenance = saved.imported;
@@ -3395,7 +3409,15 @@
       // the select stores a string — coerce (the ladder snaps strays)
       var sz = Number(st && st.worldSize !== undefined ? st.worldSize : 16384);
       if (!isFinite(sz) || sz <= 0) sz = 16384; // v1.67.5: 0 is not a rung — the plate is finite
-      if (sz !== WORLD_SIZE) applyWorldSize(sz);
+      if (sz !== WORLD_SIZE) {
+        applyWorldSize(sz);
+        // v1.69.1: the dial's new size is CANVAS state now (the doc/view
+        // law — PLAN-V169 §v1.69.1): the row must pick it up at the next
+        // save. The settings-gap stays for every other key (a theme flip
+        // reaches the row only at the next world mutation — the documented
+        // v1.42.5 law); worldSize is the one structural key that saves NOW.
+        scheduleSave();
+      }
     });
     // Settings names override config names if the user has edited them.
     const settingsNames = window.Settings.getState().names;

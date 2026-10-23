@@ -112,6 +112,27 @@ CREATE TABLE IF NOT EXISTS chat_events (
 );
 CREATE INDEX IF NOT EXISTS idx_chat_events_session ON chat_events(session_id, seq);
 
+-- v1.69.1 THE SHARED CANVAS (PLAN-V169 v1.69.1): the canvas op-log —
+-- the chat_events law promoted to the DOCUMENT. One row per accepted
+-- op; per-canvas seq = the server's one clock (Figma's multiplayer
+-- law: LWW per (id, property), server arrival order is the order).
+-- the op column is the validated op JSON; device_id names the author.
+-- The row's canvases.state is the CHECKPOINT; canvases.fold_seq is the
+-- watermark of what that checkpoint already contains (ops at or below
+-- fold_seq are journal-replay history, GC-able after the idle sweep;
+-- ops above fold_seq are the live tail a cold boot folds onto the
+-- checkpoint).
+CREATE TABLE IF NOT EXISTS canvas_ops (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  canvas_id   TEXT NOT NULL,
+  seq         INTEGER NOT NULL,
+  device_id   TEXT NOT NULL DEFAULT '',
+  op          TEXT NOT NULL CHECK (json_valid(op)),
+  at          REAL NOT NULL,
+  UNIQUE(canvas_id, seq)
+);
+CREATE INDEX IF NOT EXISTS idx_canvas_ops_canvas ON canvas_ops(canvas_id, seq);
+
 CREATE TABLE IF NOT EXISTS provider_keys (
   env_var     TEXT PRIMARY KEY,
   provider    TEXT NOT NULL,
@@ -287,6 +308,11 @@ CREATE TABLE IF NOT EXISTS canvases (
                 // local state queries (downloaded? hearted?).
                 {"hub_items", "via_collection", "ALTER TABLE hub_items ADD COLUMN via_collection INTEGER NOT NULL DEFAULT 0"},
                 {"hub_items", "collection", "ALTER TABLE hub_items ADD COLUMN collection TEXT NOT NULL DEFAULT ''"},
+                // v1.69.1 THE SHARED CANVAS (PLAN-V169 §v1.69.1): the
+                // checkpoint watermark — the highest canvas_ops.seq whose
+                // effect the row's state already contains. 0 = the state
+                // predates the journal (or no journal at all).
+                {"canvases", "fold_seq", "ALTER TABLE canvases ADD COLUMN fold_seq INTEGER NOT NULL DEFAULT 0"},
         }
         for _, m := range migrations {
                 if err := db.ensureColumn(m.table, m.col, m.ddl); err != nil {
@@ -318,20 +344,20 @@ func (db *DB) SetSetting(key, value string) error {
 // ListSettingsLike returns every row whose key matches the prefix
 // (v1.61.3 THE RETRY SENTINEL: the boot scan walks retry.sentinel.*).
 func (db *DB) ListSettingsLike(prefix string) (map[string]string, error) {
-	rows, err := db.Query("SELECT key, value FROM app_settings WHERE key LIKE ?", prefix+"%")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := map[string]string{}
-	for rows.Next() {
-		var k, v string
-		if err := rows.Scan(&k, &v); err != nil {
-			return nil, err
-		}
-		out[k[len(prefix):]] = v
-	}
-	return out, rows.Err()
+        rows, err := db.Query("SELECT key, value FROM app_settings WHERE key LIKE ?", prefix+"%")
+        if err != nil {
+                return nil, err
+        }
+        defer rows.Close()
+        out := map[string]string{}
+        for rows.Next() {
+                var k, v string
+                if err := rows.Scan(&k, &v); err != nil {
+                        return nil, err
+                }
+                out[k[len(prefix):]] = v
+        }
+        return out, rows.Err()
 }
 
 // DeleteSetting removes one app_settings row (idempotent).
