@@ -145,7 +145,7 @@ ORDER BY seq ASC`, sessionID, eventType)
 }
 
 // ListEventsTailN answers the LAST n events in seq order plus whether
-// OLDER rows exist beyond the window (v1.63.3 THE UNLOST TAIL: the
+// OLDER rows exist beyond the window (v1.64.3 THE UNLOST TAIL: the
 // bootstrap fetch caps at the tail — "the most recent chats are what's
 // important, older messages can stay dormant until scrolled to"). len<n
 // means the window reaches the session's head.
@@ -266,7 +266,7 @@ func (db *DB) SessionEventSeqLengths(sessionID string) ([][2]int, error) {
         return out, rows.Err()
 }
 
-// SpliceEvent is one row of a splice (v1.63.3 THE SERVE TRUTH RECONCILE):
+// SpliceEvent is one row of a splice (v1.64.3 THE SERVE TRUTH RECONCILE):
 // the serve's own completed turn mapped into the engine's event grammar.
 // CreatedAtMs carries the serve's own clock for the row (0 = now) — the
 // recovered transcript keeps its true day dividers.
@@ -278,7 +278,7 @@ type SpliceEvent struct {
 }
 
 // SpliceSessionEvents atomically REPLACES everything after afterSeq with
-// the given rows (v1.63.3 THE UNLOST TAIL): the engine died mid-turn and
+// the given rows (v1.64.3 THE UNLOST TAIL): the engine died mid-turn and
 // the boot heal spliced an "interrupted by engine restart" terminal (plus
 // v1.52.3's synthesized never-ran tool results) over the turn's dangling
 // window — while the serve, wake-locked in Termux, COMPLETED the turn.

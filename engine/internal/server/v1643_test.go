@@ -1,6 +1,6 @@
 package server
 
-// v1633_test.go — v1.63.3 THE UNLOST TAIL pins (PLAN-V163 §3).
+// v1643_test.go — v1.64.3 THE UNLOST TAIL pins (PLAN-V164 §3).
 //
 // THE CONVICTION (the user's words): "long chats get preserved malformed,
 // with messages unordered, the bottom chunk of tools and reasoning calls
@@ -98,7 +98,7 @@ func v1633ServeTurn(fake *fakeServe, serveSess, promptText string, atMs int64) {
         fake.v1592Msg(serveSess, map[string]any{"type": "idle", "outcome": "succeeded", "time": map[string]any{"created": atMs + 9500}})
 }
 
-func TestV1633_ServeTruthReconcile(t *testing.T) {
+func TestV1643_ServeTruthReconcile(t *testing.T) {
         dataDir := t.TempDir()
         db, err := store.Open(dataDir)
         if err != nil {
@@ -212,7 +212,7 @@ func TestV1633_ServeTruthReconcile(t *testing.T) {
         }
 }
 
-func TestV1633_ReconcileDegrades(t *testing.T) {
+func TestV1643_ReconcileDegrades(t *testing.T) {
         dataDir := t.TempDir()
         db, err := store.Open(dataDir)
         if err != nil {
@@ -280,7 +280,7 @@ func TestV1633_ReconcileDegrades(t *testing.T) {
         }
 }
 
-func TestV1633_MapTurnShapes(t *testing.T) {
+func TestV1643_MapTurnShapes(t *testing.T) {
         // the FAILED outcome: the honest error row (with the sentinel's 429
         // marker) + the error terminal — never an empty success
         failed := []ocserve.ServeMessage{
@@ -356,7 +356,7 @@ func TestV1633_MapTurnShapes(t *testing.T) {
         }
 }
 
-func TestV1633_TailAndBeforePages(t *testing.T) {
+func TestV1643_TailAndBeforePages(t *testing.T) {
         db, err := store.Open(t.TempDir())
         if err != nil {
                 t.Fatalf("open db: %v", err)

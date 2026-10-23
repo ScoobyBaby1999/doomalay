@@ -1,6 +1,6 @@
 package server
 
-// ocservereconcile.go — v1.63.3 THE UNLOST TAIL (the engine-death half).
+// ocservereconcile.go — v1.64.3 THE UNLOST TAIL (the engine-death half).
 //
 // THE CONVICTION (the user's words): "long chats get preserved malformed,
 // with messages unordered, the bottom chunk of tools and reasoning calls

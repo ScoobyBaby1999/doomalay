@@ -1,6 +1,6 @@
 package server
 
-// v1631_test.go — v1.63.1 THE NATIVE SHELF pins (PLAN-V163 §1).
+// v1641_test.go — v1.64.1 THE NATIVE SHELF pins (PLAN-V164 §1).
 //
 // THE CONVICTION (the device's own serve-side self-diagnosis, the user's
 // paste): the 30 doomalay tools run at /mcp/oc/<chat-id> and answer — but
@@ -57,7 +57,7 @@ func v1631Adopt(t *testing.T, db *store.DB, m *ocserve.Manager, fake *fakeServe,
 	return bound, true
 }
 
-func TestV1631_AdoptionReHome(t *testing.T) {
+func TestV1641_AdoptionReHome(t *testing.T) {
 	dataDir := t.TempDir()
 	fake := &fakeServe{}
 	srv := httptest.NewServer(http.HandlerFunc(fake.handler))
@@ -145,11 +145,11 @@ func TestV1631_AdoptionReHome(t *testing.T) {
 	fake.mu.Unlock()
 }
 
-// TestV1631_BareNamePill pins the pump's bare-name law: the direct arm
+// TestV1641_BareNamePill pins the pump's bare-name law: the direct arm
 // (codemode:false) names every tool doomalay_<name> on the wire — the pill
 // events must speak the BARE name (calculator) with mcpbus.DefaultSummary's
 // operand (the expression), byte-identical to a native pill.
-func TestV1631_BareNamePill(t *testing.T) {
+func TestV1641_BareNamePill(t *testing.T) {
 	t.Setenv("DOOMALAY_OPENCODE_SERVE_PASSWORD", "rig-pw")
 	fake := &fakeServe{}
 	srv := httptest.NewServer(http.HandlerFunc(fake.handler))
@@ -228,10 +228,10 @@ func TestV1631_BareNamePill(t *testing.T) {
 	}
 }
 
-// TestV1631_ToolsBlockDirectGrammar pins the {tools} block's direct-arm
+// TestV1641_ToolsBlockDirectGrammar pins the {tools} block's direct-arm
 // teaching: the catalog lists doomalay_<name> (the names the MODEL must
 // call), the block says DIRECTLY + never inside Code Mode's execute.
-func TestV1631_ToolsBlockDirectGrammar(t *testing.T) {
+func TestV1641_ToolsBlockDirectGrammar(t *testing.T) {
 	s := &Server{}
 	sess := &store.Session{ID: "c1", Title: "t", Provider: "opencode", Model: "opencode/big-pickle"}
 	bound := s.toolsBlockFor(sess, true, true)

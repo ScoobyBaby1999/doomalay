@@ -1,6 +1,6 @@
 package server
 
-// v1632_test.go — v1.63.2 THE LIVING WIRE pins (PLAN-V163 §2).
+// v1632_test.go — v1.64.2 THE LIVING WIRE pins (PLAN-V164 §2).
 //
 // THE CONVICTION: the pump's /api/event SSE connection had NO liveness law
 // — a silently-dead connection (mobile network switch, NAT timeout, the
@@ -67,10 +67,10 @@ func v1632Pump(t *testing.T, m *ocserve.Manager, serveSess, chatID string, turnS
         return evts
 }
 
-// TestV1632_MidTurnReconnect pins (a): the connection dies mid-turn after
+// TestV1642_MidTurnReconnect pins (a): the connection dies mid-turn after
 // the reasoning + first text delta; the reconnect delivers the rest — the
 // collected events carry EVERY frame in order and the idle terminal.
-func TestV1632_MidTurnReconnect(t *testing.T) {
+func TestV1642_MidTurnReconnect(t *testing.T) {
         t.Setenv("DOOMALAY_OPENCODE_SERVE_PASSWORD", "rig-pw")
         fake := &fakeServe{streamCuts: 1, streamCutAfter: 3}
         srv := httptest.NewServer(http.HandlerFunc(fake.handler))
@@ -123,10 +123,10 @@ func TestV1632_MidTurnReconnect(t *testing.T) {
         }
 }
 
-// TestV1632_HonestWait pins (b): a quiet-but-alive turn emits the elapsed
+// TestV1642_HonestWait pins (b): a quiet-but-alive turn emits the elapsed
 // progress pings on every probe tick (the thinking pill NEVER sits static),
 // then the off-wire idle lands the answer + terminal.
-func TestV1632_HonestWait(t *testing.T) {
+func TestV1642_HonestWait(t *testing.T) {
         t.Setenv("DOOMALAY_OPENCODE_SERVE_PASSWORD", "rig-pw")
         oldProbe := ocServeSilenceProbe
         ocServeSilenceProbe = 120 * time.Millisecond
@@ -178,9 +178,9 @@ func TestV1632_HonestWait(t *testing.T) {
         }
 }
 
-// TestV1632_InterruptedOutcome pins (c): outcome=interrupted is an honest
+// TestV1642_InterruptedOutcome pins (c): outcome=interrupted is an honest
 // failure with a human message — never the empty-text success.
-func TestV1632_InterruptedOutcome(t *testing.T) {
+func TestV1642_InterruptedOutcome(t *testing.T) {
         t.Setenv("DOOMALAY_OPENCODE_SERVE_PASSWORD", "rig-pw")
         oldProbe := ocServeSilenceProbe
         ocServeSilenceProbe = 120 * time.Millisecond
@@ -222,9 +222,9 @@ func TestV1632_InterruptedOutcome(t *testing.T) {
         }
 }
 
-// TestV1632_StepStartedPing pins the step line: a session.step.started
+// TestV1642_StepStartedPing pins the step line: a session.step.started
 // frame rides as an ephemeral progress ping (the turn visibly moves).
-func TestV1632_StepStartedPing(t *testing.T) {
+func TestV1642_StepStartedPing(t *testing.T) {
         t.Setenv("DOOMALAY_OPENCODE_SERVE_PASSWORD", "rig-pw")
         fake := &fakeServe{}
         srv := httptest.NewServer(http.HandlerFunc(fake.handler))

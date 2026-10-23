@@ -820,7 +820,7 @@ func (m *Manager) SessionExists(serveSess string) bool {
 
 // SessionDirectory answers the serve session's CURRENT working directory
 // (GET /api/session/{id} → data.directory — the projector's own row; the
-// same GET SessionExists probes). v1.63.1 THE NATIVE SHELF: the adoption
+// same GET SessionExists probes). v1.64.1 THE NATIVE SHELF: the adoption
 // path needs it to decide whether a persisted binding's session still
 // lives in its per-chat config directory — an unmoved adoptee resolves
 // the serve's ROOT config (permissions only, NO mcp block: the device's
@@ -940,7 +940,7 @@ func (m *Manager) SessionIdleSince(serveSess string, sinceMs int64) (ended, fail
                 return false, false, "", "", "" // still running (or a PREVIOUS turn's idle)
         }
         if newest.Outcome == "failed" || newest.Outcome == "interrupted" {
-                // v1.63.2 THE LIVING WIRE: the idle marker carries outcome ∈
+                // v1.64.2 THE LIVING WIRE: the idle marker carries outcome ∈
                 // succeeded|failed|interrupted (the 2.x schema, live-verified) —
                 // an INTERRUPTED turn (a serve-side stop/shutdown) is an honest
                 // failure, never the empty-text "success" the old code answered
@@ -1005,7 +1005,7 @@ func (m *Manager) DeleteSession(serveSess string) error {
 }
 
 // ServeContentPart is one part of a serve transcript message's content
-// (v1.63.3 THE UNLOST TAIL — the shapes LIVE-CAPTURED against the pinned
+// (v1.64.3 THE UNLOST TAIL — the shapes LIVE-CAPTURED against the pinned
 // 2.1.2 with a real tool-using turn):
 //
 //      {"type":"reasoning","text":…,"native":{…},"time":{created,completed}}
@@ -1085,7 +1085,7 @@ type ServeMessage struct {
 }
 
 // ListSessionMessages walks the serve's DURABLE transcript (the whole
-// truth — v1.63.3 THE SERVE TRUTH RECONCILE's source) and answers it in
+// truth — v1.64.3 THE SERVE TRUTH RECONCILE's source) and answers it in
 // CHRONOLOGICAL order (oldest-first). The wire is newest-first with
 // base64 cursor pagination (live-probed: ?limit=N returns the newest N;
 // ?cursor=<cursor.next> walks older); this reader reverses each page and
@@ -1549,7 +1549,7 @@ func (e Event) IsAuthError() bool {
 }
 
 // ocStreamByteDeadline is how long the event stream may stay byte-silent
-// before the connection is convicted dead and reconnected (v1.63.2 THE
+// before the connection is convicted dead and reconnected (v1.64.2 THE
 // LIVING WIRE). The 2.x serve sends an SSE `: heartbeat` comment every 15s
 // and the first frame is server.connected (live-verified, 2026-10-22) —
 // 45s without a byte (3 missed heartbeats, the official client's own idle
@@ -1564,7 +1564,7 @@ var ocStreamByteDeadline = 45 * time.Second
 // (session.execution.succeeded / .failed — this session's frames only),
 // the ctx dies, or a HARD error (auth, an unexpected status) breaks it.
 //
-// v1.63.2 THE LIVING WIRE: connection deaths mid-turn no longer end the
+// v1.64.2 THE LIVING WIRE: connection deaths mid-turn no longer end the
 // stream — a broken/dead/silent connection RECONNECTS (bounded backoff,
 // 250ms→2s) until the terminal lands on a live wire or the ctx dies. The
 // bus is global + multi-subscriber (a Set of per-connection queues,

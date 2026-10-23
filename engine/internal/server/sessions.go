@@ -476,7 +476,7 @@ func (s *Server) handleSessionsAppendEvent(w http.ResponseWriter, r *http.Reques
 // handleSessionsEvents is GET /api/sessions/{id}/events — replay the
 // event log.
 //
-// v1.63.3 THE UNLOST TAIL shapes:
+// v1.64.3 THE UNLOST TAIL shapes:
 //   - ?since=N          → the gap replay (rows with seq > N; the WS
 //                          resume handshake) — unchanged, the live tail.
 //   - ?tail=N           → the BOOTSTRAP window: the newest N rows +
@@ -490,7 +490,7 @@ func (s *Server) handleSessionsAppendEvent(w http.ResponseWriter, r *http.Reques
 //                          (oldest-first) + "older" again.
 // No params → the whole log (the legacy/export shape, unchanged).
 //
-// v1.63.3 THE SERVE TRUTH RECONCILE hooks here: a bootstrap-shape GET on
+// v1.64.3 THE SERVE TRUTH RECONCILE hooks here: a bootstrap-shape GET on
 // a log whose last event is the healed terminal first gives the serve's
 // own completed turn the chance to land whole (bounded, best-effort,
 // serialized — a miss costs one tail read and the healed log stands).

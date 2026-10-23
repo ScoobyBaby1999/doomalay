@@ -1440,7 +1440,7 @@ func (s *Server) handleTurn(sender *websocket.Conn, pipe *chatPipe, sessionID st
                 sess = fresh
         }
 
-        // v1.63.3 THE SEND-PATH RECONCILE (the fresh-boot half of THE SERVE
+        // v1.64.3 THE SEND-PATH RECONCILE (the fresh-boot half of THE SERVE
         // TRUTH RECONCILE): a send into a chat whose log ends in the healed
         // splice + a living serve binding first lands the serve's completed
         // tail — the manager build rides THIS goroutine (the turn needs it

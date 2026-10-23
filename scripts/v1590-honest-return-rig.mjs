@@ -206,7 +206,8 @@ section('§A THE BOTTOM — the reload load lands at the bottom (v1.59.1)');
   abEval(`doomalay.openChatBySession('${s1}')`);
   // the census observer rides the transcript container the moment it exists
   abEval("(function(){var c=document.querySelector('#chat-messages');if(!c)return 'no container';window.__loadMuts=0;" +
-    "window.__mo=new MutationObserver(function(rs){for(var i=0;i<rs.length;i++)if(rs[i].addedNodes.length)window.__loadMuts+=1;});" +
+    "window.__mo=new MutationObserver(function(rs){for(var i=0;i<rs.length;i++)if(rs[i].addedNodes.length){window.__loadMuts+=1;" +
+    "window.__recs=window.__recs||[];var n=rs[i].addedNodes[0];window.__recs.push((n.className||n.id||n.tagName||'?')+':'+String(n.textContent||'').slice(0,24));}});" +
     "window.__mo.observe(c,{childList:true});return 'observing'})()");
 
   // settle: the client connects + the mount landed + a quiet beat
@@ -238,6 +239,13 @@ section('§A THE BOTTOM — the reload load lands at the bottom (v1.59.1)');
   ok('the scroll lands at the BOTTOM', probe.atBottom !== null && probe.atBottom <= 80, probe.atBottom);
   ok('THE CENSUS: the load is a tail-shaped mount (≤ 6 childList records — the legacy replay was 180+)',
     probe.muts <= 6, probe.muts);
+  if (probe.muts > 6) {
+    const recs = abJson("(function(){return JSON.stringify(window.__recs||[])})()") || [];
+    console.log('  ── CENSUS DEBUG (' + recs.length + ' records) — first 10:');
+    for (const r of recs.slice(0, 10)) console.log('     ' + r);
+    console.log('  ── last 5:');
+    for (const r of recs.slice(-5)) console.log('     ' + r);
+  }
   ok('no mid-flight theater (the composer settles on send)', probe.streaming === false && probe.mode === 'send',
     JSON.stringify({ streaming: probe.streaming, mode: probe.mode }));
   const errs = abJson("(function(){return JSON.stringify(window.__errs||[])})()");

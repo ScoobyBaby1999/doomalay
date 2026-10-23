@@ -1,4 +1,4 @@
-# PLAN-V163 THE ARMED SHELF — opencode native tools + the living wire + the unlost tail
+# PLAN-V164 THE ARMED SHELF — opencode native tools + the living wire + the unlost tail
 
 The user's ask (verbatim core): "We still have issues where the chat loads weird, long
 chats get preserved malformed, with messages unordered, the bottom chunk of tools and
@@ -100,7 +100,7 @@ rides the existing backfill boundary) — "the most recent chats are what's impo
 
 ## THE SUB-WAVES
 
-### v1.63.1 THE NATIVE SHELF — every serve session lives in its per-chat dir, tools bare
+### v1.64.1 THE NATIVE SHELF — every serve session lives in its per-chat dir, tools bare
 - ocserve: `SessionDirectory(serveSess)` (GET /api/session/{id} → data.directory; ""
   when the build doesn't speak it) + the adoption path in ocServeSessionID MOVES the
   persisted session into the per-chat dir when the directory differs (or is unreadable —
@@ -115,7 +115,7 @@ rides the existing backfill boundary) — "the most recent chats are what's impo
 - Pins: the config bytes (codemode:false + the direct naming), the adoption move (both
   spawners), the prefix-strip law, the {tools} block grammar.
 
-### v1.63.2 THE LIVING WIRE — the stream never dies silently, the wait speaks
+### v1.64.2 THE LIVING WIRE — the stream never dies silently, the wait speaks
 - ocserve: StreamEvents restructured as streamOnce + a reconnect loop (250ms→2s backoff)
   until the terminal/ctx; a byte-deadline watchdog (45s, reset on every read — the 15s
   heartbeat law) cancels stale connections; the reconnect re-filters the same session
@@ -127,7 +127,7 @@ rides the existing backfill boundary) — "the most recent chats are what's impo
 - Pins: the watchdog (a stalled body dies + reconnects + the terminal still lands), the
   progress pings on the wire, the interrupted verdict.
 
-### v1.63.3 THE UNLOST TAIL — the serve's transcript is the truth; the open lands at the bottom
+### v1.64.3 THE UNLOST TAIL — the serve's transcript is the truth; the open lands at the bottom
 - ocserve: `ListSessionMessages(serveSess, …)` (GET /api/session/{id}/message?order=asc
   + the cursor walk) — the durable transcript reader (live-captured shape: user/
   assistant/idle + parts).
@@ -143,8 +143,8 @@ rides the existing backfill boundary) — "the most recent chats are what's impo
 - Pins: the reconcile mapping (seeded serve + killed engine → the tail lands whole), the
   bottom-open law, the dormant-older law, the retention budget.
 
-### v1.63.4 THE LIVE PROOF — the real serve, the real key, the whole chain
-- scripts/v1630-armed-shelf-rig.py: DESKTOP — spawn the real 2.1.x serve (the engine's
+### v1.64.4 THE LIVE PROOF — the real serve, the real key, the whole chain
+- scripts/v1640-armed-shelf-rig.py: DESKTOP — spawn the real 2.1.x serve (the engine's
   own EnsureBinary), bind a chat, send a REAL turn with the user's real opencode key:
   (S1) the direct arm: the model calls doomalay tools bare-named (calculator end-to-end,
   the pill grammar on the WS exactly as the PWA sees it); (S2) the adoption move: kill

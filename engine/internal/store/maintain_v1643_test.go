@@ -1,6 +1,6 @@
 package store
 
-// maintain_v1633_test.go — v1.63.3 THE GENEROUS WINDOW pins (PLAN-V163 §3):
+// maintain_v1643_test.go — v1.64.3 THE GENEROUS WINDOW pins (PLAN-V164 §3):
 // the per-session retention budget. The user's law verbatim: "give a very
 // generous amount (a month or couple worth of messages - 50ish mb maybe
 // uncompressed)". A session past the budget loses its OLDEST rows first
@@ -13,7 +13,7 @@ import (
 	"testing"
 )
 
-func TestV1633_RetentionBudget(t *testing.T) {
+func TestV1643_RetentionBudget(t *testing.T) {
 	db, err := Open(t.TempDir())
 	if err != nil {
 		t.Fatalf("open db: %v", err)

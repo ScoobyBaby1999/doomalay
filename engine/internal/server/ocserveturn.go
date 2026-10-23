@@ -199,7 +199,7 @@ func (s *Server) ocServeChatDir(m *ocserve.Manager, chatID string) (string, bool
                 "url":      fmt.Sprintf("http://127.0.0.1:%d/mcp/oc/%s", port, safeChat),
                 "headers":  map[string]string{"X-Doomalay-Session": safeChat}, // the belt: headers RIDED live-proven
                 "oauth":    false,                                            // plain loopback HTTP — no OAuth probing
-                "codemode": false, // v1.63.1 THE NATIVE SHELF: codemode:true bundled every doomalay tool INSIDE Code Mode's single execute tool (tools.doomalay_<name> dotted calls — the schema's own default, "Expose this server's tools through Code Mode") — the user saw opencode's own execute pill and our tools armed NOWHERE natively, and the nested calls rode EPHEMERAL progress frames (the "bottom chunk of tools… doesn't save" half). codemode:false exposes every tool DIRECTLY to the model as a first-class doomalay_<tool> (the permission config's own doomalay_* allow-rules), every call a real session.tool.* frame → a persisted pill. The v1.60.4 conviction ("Unknown tool 'doomalay_calculator'" from inside execute) was the OLD {tools} block teaching Code Mode naming under the false arm — the block now teaches the direct grammar, and the v1630 rig live-proves the direct route end-to-end (the unproven-arm law honored: prove it or revert it).
+                "codemode": false, // v1.64.1 THE NATIVE SHELF: codemode:true bundled every doomalay tool INSIDE Code Mode's single execute tool (tools.doomalay_<name> dotted calls — the schema's own default, "Expose this server's tools through Code Mode") — the user saw opencode's own execute pill and our tools armed NOWHERE natively, and the nested calls rode EPHEMERAL progress frames (the "bottom chunk of tools… doesn't save" half). codemode:false exposes every tool DIRECTLY to the model as a first-class doomalay_<tool> (the permission config's own doomalay_* allow-rules), every call a real session.tool.* frame → a persisted pill. The v1.60.4 conviction ("Unknown tool 'doomalay_calculator'" from inside execute) was the OLD {tools} block teaching Code Mode naming under the false arm — the block now teaches the direct grammar, and the v1640 rig live-proves the direct route end-to-end (the unproven-arm law honored: prove it or revert it).
                 "timeout":  map[string]int{"startup": 20000, "catalog": 20000, "execution": 300000},
         }
         cfg := map[string]any{
@@ -240,7 +240,7 @@ func (s *Server) ocServeChatDir(m *ocserve.Manager, chatID string) (string, bool
 // v1.60 THE WIDE SHELF: a FRESH session is created + MOVED into its own
 // per-chat config dir (the doomalay MCP binding) — the third return is the
 // BOUND state (the {tools} block speaks it honestly); an ADOPTED session
-// is RE-HOMED into its per-chat dir by v1.63.1 THE NATIVE SHELF (below).
+// is RE-HOMED into its per-chat dir by v1.64.1 THE NATIVE SHELF (below).
 func (s *Server) ocServeSessionID(m *ocserve.Manager, sess *store.Session) (string, bool, bool, error) {
                 s.ocServeSessMu.Lock()
         defer s.ocServeSessMu.Unlock()
@@ -257,7 +257,7 @@ func (s *Server) ocServeSessionID(m *ocserve.Manager, sess *store.Session) (stri
                 if s.ocServeBound == nil {
                         s.ocServeBound = map[string]bool{}
                 }
-                // v1.63.1 THE NATIVE SHELF — THE UNMOVED ADOPTEE: the device's own
+                // v1.64.1 THE NATIVE SHELF — THE UNMOVED ADOPTEE: the device's own
                 // conviction was an adopted session whose serve-side directory was
                 // still the ROOT (born pre-v1.60, or a move that failed at birth) —
                 // the root config carries NO mcp block, so 30 running tools armed
@@ -538,7 +538,7 @@ func (s *Server) ocServeStreamTurn(ctx context.Context, m *ocserve.Manager, sess
                         "message": "OpenCode: " + strings.TrimPrefix(modelID, "opencode/") + " is thinking…"}
                 recycled, err := s.ocServePump(ctx, m, serveSess, sessionID, sess.Model, out, turnStartedAt)
                 if recycled {
-                        // v1.63.4 THE WALL WALK: the free-limit wall is PER-MODEL
+                        // v1.64.4 THE WALL WALK: the free-limit wall is PER-MODEL
                         // (the live conviction, v1630's rig: each free model carries
                         // its own small window — a 429 on one says NOTHING about the
                         // roster; the user's law verbatim: "We are not rate limited,
@@ -573,7 +573,7 @@ func (s *Server) ocServeStreamTurn(ctx context.Context, m *ocserve.Manager, sess
 }
 
 // ocNextFreeModel answers the next cost-0 opencode-zen model from the
-// serve's LIVE catalogue (v1.63.4 THE WALL WALK) — the first free model
+// serve's LIVE catalogue (v1.64.4 THE WALL WALK) — the first free model
 // that is not the walled one, in the catalogue's own order. "" = the
 // roster holds no alternative (the honest terminal answers).
 func ocNextFreeModel(m *ocserve.Manager, walled string) string {
@@ -601,7 +601,7 @@ func ocNextFreeModel(m *ocserve.Manager, walled string) string {
 // may shorten it).
 var ocServeSilenceProbe = 12 * time.Second
 
-// ocBareServeToolName — v1.63.1 THE NATIVE SHELF: the direct arm
+// ocBareServeToolName — v1.64.1 THE NATIVE SHELF: the direct arm
 // (codemode:false) names every doomalay MCP tool doomalay_<name>; the
 // pill grammar speaks the BARE name (calculator | 17*23) so the pills
 // render byte-identically to native ones (the OOP reuse law — the PWA's
@@ -644,7 +644,7 @@ func ocBareServeToolName(name string) string {
 // the honest terminal (error + status, or the assistant text + idle) and
 // RETURNS.
 //
-// v1.63.1 THE NATIVE SHELF: tool names ride the pump BARE (ocBareServeToolName
+// v1.64.1 THE NATIVE SHELF: tool names ride the pump BARE (ocBareServeToolName
 // strips the doomalay_ prefix — every pill reads like a native one).
 func (s *Server) ocServePump(ctx context.Context, m *ocserve.Manager, serveSess, sessionID, model string, out chan<- map[string]any, turnStartedAt int64) (bool, error) {
         toolNames := map[string]string{} // tool call id → tool name (input.started) — the BARE name (v1.63.1)
@@ -744,7 +744,7 @@ func (s *Server) ocServePump(ctx context.Context, m *ocserve.Manager, serveSess,
                                 "name": toolNames[ev.Data.ID], "text": llm.ClampMarked(msg, ocObsBudget(model)),
                                 "tool_use_id": ev.Data.ID}
                 case "session.step.started":
-                        // v1.63.2 THE LIVING WIRE: a new model step is the honest
+                        // v1.64.2 THE LIVING WIRE: a new model step is the honest
                         // mid-turn signal — the turn moves (reasoning round, a tool
                         // wave) even when its outputs are quiet. Rides the progress
                         // machinery (ephemeral, never persisted) so the activity
@@ -815,7 +815,7 @@ func (s *Server) ocServePump(ctx context.Context, m *ocserve.Manager, serveSess,
                         }
                         ended, failed, errType, errMsg, ansText := m.SessionIdleSince(serveSess, turnStartedAt)
                         if !ended {
-                                // v1.63.2 THE LIVING WIRE — THE HONEST WAIT: the turn is
+                                // v1.64.2 THE LIVING WIRE — THE HONEST WAIT: the turn is
                                 // alive but quiet (a long reasoning phase, a slow tool) —
                                 // SAY SO every probe tick instead of letting the pill sit
                                 // static for minutes (the user's "no visual feedback of

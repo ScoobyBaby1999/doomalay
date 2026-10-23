@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// v1630-armed-shelf-live.mjs — v1.63.4 THE LIVE PROOF (PLAN-V163 §4).
+// v1640-armed-shelf-live.mjs — v1.64.4 THE LIVE PROOF (PLAN-V164 §4).
 //
 // The REAL 2.1.2 serve, the REAL OpenCode key, a REAL engine, REAL kills.
 // The user's ask verbatim: "Focus on fixing opencode, test it yourself.
@@ -36,9 +36,9 @@ const __ROOT = path.resolve(path.dirname(process.argv[1] || ''), '..');
 const KEY = process.env.OPENCODE_KEY || 'oc_sk_bbf69edc3c82_e7-rIeaD13naMp4-M5SP5jqBo6Uq0eM-';
 const PORT = 8473;
 const ENGINE = 'http://127.0.0.1:' + PORT;
-const BIN = '/tmp/v1630-engine';
-const DATA = '/tmp/v1630-data';
-const HOME = '/tmp/v1630-home';
+const BIN = '/tmp/v1640-engine';
+const DATA = '/tmp/v1640-data';
+const HOME = '/tmp/v1640-home';
 const OC_ROOT = '/home/z/ocprobe';
 const OC_BIN = OC_ROOT + '/package/bin/opencode';
 const NPM_TGZ = 'https://registry.npmjs.org/@opencode/cli-linux-x64/-/cli-linux-x64-2.1.2.tgz';
@@ -252,9 +252,9 @@ execFileSync(process.env.GO_BIN || 'go', ['build', '-o', BIN, './cmd/doomalay'],
 fs.rmSync(DATA, { recursive: true, force: true });
 fs.rmSync(HOME, { recursive: true, force: true });
 fs.mkdirSync(HOME, { recursive: true });
-for (const f of ['/tmp/v1630-eng1.log', '/tmp/v1630-eng2.log', '/tmp/v1630-eng3.log']) fs.rmSync(f, { force: true });
+for (const f of ['/tmp/v1640-eng1.log', '/tmp/v1640-eng2.log', '/tmp/v1640-eng3.log']) fs.rmSync(f, { force: true });
 
-bootEngine('/tmp/v1630-eng1.log');
+bootEngine('/tmp/v1640-eng1.log');
 ok('engine 1 boots', await waitBoot());
 
 const kr = await api('POST', '/api/keys', { provider: 'opencode', env_var: 'OPENCODE_ZEN_API_KEY', key: KEY });
@@ -341,7 +341,7 @@ section('S2 the adoption — an engine restart keeps the serve session + its mem
 {
   killEngine();
   await sleep(1200);
-  bootEngine('/tmp/v1630-eng2.log');
+  bootEngine('/tmp/v1640-eng2.log');
   ok('engine 2 boots (the same data dir)', await waitBoot());
   const open = await api('GET', `/api/sessions/${sid}/events`);
   ok('S2: the chat opens (the events GET — the reconcile hook rides harmlessly)',
@@ -352,7 +352,7 @@ section('S2 the adoption — an engine restart keeps the serve session + its mem
     ok('S2: the adopted turn ends idle', t2.idle === true, JSON.stringify({ lastErr: t2.lastErr }).slice(0, 300));
     ok('S2: the model REMEMBERS the calculator fact (391 — no recap, the serve session adopted)', /391/.test(t2.assistant), t2.assistant.slice(0, 200));
   }
-  const eng2 = fs.readFileSync('/tmp/v1630-eng2.log', 'utf8');
+  const eng2 = fs.readFileSync('/tmp/v1640-eng2.log', 'utf8');
   ok('S2: the engine log shows the ADOPTION (no fresh session)', /adopted serve session/.test(eng2), eng2.split('\n').filter((l) => l.includes('ocserve')).slice(0, 3).join(' | ').slice(0, 300));
 }
 
@@ -386,6 +386,9 @@ section('S3 the living wire — SIGSTOP the serve mid-turn; pings, watchdog, no 
       t3.idle === true || t3.terminal === 'error', JSON.stringify({ terminal: t3.terminal, lastErr: t3.lastErr }).slice(0, 300));
     ok('S3: the answer landed (the turn survived the frozen wire)', /lighthouse/i.test(t3.assistant) || t3.assistant.length > 20, t3.assistant.slice(0, 150));
   }
+  if (!s3ran) {
+    def('S3 the living wire (model half)', 'every attempt walled before the freeze could matter — the pings/watchdog halves are unit-pinned (v1632); the stall needs an open window');
+  }
 }
 
 section('S4 the serve truth reconcile — kill the ENGINE mid-turn; the serve completes; the open lands the tail whole');
@@ -416,7 +419,7 @@ section('S4 the serve truth reconcile — kill the ENGINE mid-turn; the serve co
 
     // give the orphaned serve time to complete the turn serve-side
     await sleep(25000);
-    bootEngine('/tmp/v1630-eng3.log');
+    bootEngine('/tmp/v1640-eng3.log');
     ok('S4: engine 3 boots (the boot heal writes the interrupted splice)', await waitBoot());
 
     // THE REAL USER FLOW: the open (GET events — the open hook; a fresh
@@ -437,7 +440,7 @@ section('S4 the serve truth reconcile — kill the ENGINE mid-turn; the serve co
     const markerAnswer = evs.some((e) => (e.type === 'assistant' || e.type === 'assistant_delta') && String(e.text || '').includes(marker));
     const lastEv = evs[evs.length - 1] || {};
     const realTerminal = lastEv.type === 'status' && (lastEv.state === 'idle' || lastEv.state === 'error');
-    const eng3log = fs.existsSync('/tmp/v1630-eng3.log') ? fs.readFileSync('/tmp/v1630-eng3.log', 'utf8') : '';
+    const eng3log = fs.existsSync('/tmp/v1640-eng3.log') ? fs.readFileSync('/tmp/v1640-eng3.log', 'utf8') : '';
     const reconcileLanded = /reconcile.*landed whole/.test(eng3log);
     // the splice proof: the engine's own reconcile line (whatever the
     // serve's truth was — the answer, or its honest 429 tail mapped)
@@ -451,9 +454,12 @@ section('S4 the serve truth reconcile — kill the ENGINE mid-turn; the serve co
     let mono = true;
     for (let i = 1; i < evs.length; i++) { if (typeof evs[i].seq === 'number' && evs[i].seq <= evs[i - 1].seq) { mono = false; break; } }
     ok('S4: the seqs stay monotonic through the splice', mono);
-    const eng3 = fs.readFileSync('/tmp/v1630-eng3.log', 'utf8');
+    const eng3 = fs.readFileSync('/tmp/v1640-eng3.log', 'utf8');
     ok('S4: the engine log records the reconcile', /reconcile/.test(eng3) && /landed whole/.test(eng3),
       eng3.split('\n').filter((l) => l.includes('reconcile')).slice(0, 2).join(' | ').slice(0, 200));
+  }
+  if (!spliced) {
+    def('S4 the serve truth reconcile (live half)', 'every marker turn walled before the mid-flight kill could land — the splice is unit+fake-proven (v1633) and was live-proven in earlier rig runs; re-run when a window opens');
   }
 }
 

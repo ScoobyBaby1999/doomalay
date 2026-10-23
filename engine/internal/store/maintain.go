@@ -42,7 +42,7 @@ type MaintenanceReport struct {
         PageBytes     int64  // PRAGMA page_size
         DbBytes       int64  // main DB file size after the pass
         LastVacuumAgo string // human-readable age of the last VACUUM stamp ("" = never)
-        // v1.63.3 THE GENEROUS WINDOW: the per-session retention pass
+        // v1.64.3 THE GENEROUS WINDOW: the per-session retention pass
         // (sessions trimmed, rows deleted) — the user's law: "give a very
         // generous amount (a month or couple worth of messages - 50ish mb
         // maybe uncompressed)"; the trim keeps the newest 48MB of content
@@ -69,7 +69,7 @@ const (
 )
 
 // retentionBudget is the per-session event-content budget
-// (v1.63.3 THE GENEROUS WINDOW): 48MB ≈ the user's "50ish mb maybe
+// (v1.64.3 THE GENEROUS WINDOW): 48MB ≈ the user's "50ish mb maybe
 // uncompressed" — a month or couple of messages rides whole per chat;
 // only beyond it do the OLDEST rows go. (A var, not a const: the test
 // budget overrides it — the v1633 rig never seeds 48MB.)
@@ -156,7 +156,7 @@ func (db *DB) Maintain(force bool) (*MaintenanceReport, error) {
         rep.WALBytesPost = fileSize(db.walPath())
         rep.DbBytes = fileSize(db.path)
 
-        // 4. v1.63.3 THE GENEROUS WINDOW — the per-session retention trim:
+        // 4. v1.64.3 THE GENEROUS WINDOW — the per-session retention trim:
         // a session whose CONTENT bytes exceed 48MB loses its OLDEST rows
         // until it fits (a month or couple of messages rides whole; the
         // trim walks (seq, bytes) pairs — never content). NEVER a pending

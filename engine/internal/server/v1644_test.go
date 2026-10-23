@@ -1,7 +1,7 @@
 package server
 
-// v1634_test.go — v1.63.4 THE WALL WALK pins (PLAN-V163 §4's engine piece,
-// the live conviction the v1630 rig surfaced: the free-limit wall is
+// v1634_test.go — v1.64.4 THE WALL WALK pins (PLAN-V164 §4's engine piece,
+// the live conviction the v1640 rig surfaced: the free-limit wall is
 // PER-MODEL — each free model carries its own small window; a 429 on one
 // says nothing about the roster).
 //
@@ -37,10 +37,10 @@ const v1634Catalog = `{"data":[
   {"id":"kimi-k2.7-code","modelID":"kimi-k2.7-code","providerID":"opencode","name":"Kimi","status":"active","cost":[{"input":0.95,"output":4}],"capabilities":{"tools":true}}
 ]}`
 
-// TestV1634_TheWallWalk pins the walk itself: a walled first attempt keeps
+// TestV1644_TheWallWalk pins the walk itself: a walled first attempt keeps
 // the serve session (NO recycle, NO opening-text recap), selects the next
 // FREE model, rides ONE honest notice, and the retry answers clean.
-func TestV1634_TheWallWalk(t *testing.T) {
+func TestV1644_TheWallWalk(t *testing.T) {
 	t.Setenv("DOOMALAY_OPENCODE_SERVE_PASSWORD", "rig-pw")
 	fake := &fakeServe{}
 	srv := httptest.NewServer(http.HandlerFunc(fake.handler))
@@ -134,10 +134,10 @@ func TestV1634_TheWallWalk(t *testing.T) {
 	}
 }
 
-// TestV1634_WallWalkHonestTerminal pins the exhausted-roster branch: the
+// TestV1644_WallWalkHonestTerminal pins the exhausted-roster branch: the
 // walk fires once, the SECOND wall answers the honest per-model terminal
 // (never a silent hang, never a loop).
-func TestV1634_WallWalkHonestTerminal(t *testing.T) {
+func TestV1644_WallWalkHonestTerminal(t *testing.T) {
 	t.Setenv("DOOMALAY_OPENCODE_SERVE_PASSWORD", "rig-pw")
 	fake := &fakeServe{}
 	srv := httptest.NewServer(http.HandlerFunc(fake.handler))
@@ -195,10 +195,10 @@ func TestV1634_WallWalkHonestTerminal(t *testing.T) {
 	}
 }
 
-// TestV1634_NoRosterNoWalk pins the empty-roster shape: a wall with no
+// TestV1644_NoRosterNoWalk pins the empty-roster shape: a wall with no
 // free alternative in the catalogue answers the honest terminal IMMEDIATELY
 // (one prompt — the walk never fires without a destination).
-func TestV1634_NoRosterNoWalk(t *testing.T) {
+func TestV1644_NoRosterNoWalk(t *testing.T) {
 	t.Setenv("DOOMALAY_OPENCODE_SERVE_PASSWORD", "rig-pw")
 	fake := &fakeServe{}
 	srv := httptest.NewServer(http.HandlerFunc(fake.handler))

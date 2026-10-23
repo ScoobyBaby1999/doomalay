@@ -1517,7 +1517,7 @@
       scrollEl.addEventListener('scroll', function () {
         rememberScroll(state, scrollEl.scrollTop); // v0.34: where the user is
         jumpRead(); // v0.40 pill visibility + the freeze check (v0.78.3: rAF-batched)
-        // v1.63.3 THE DORMANT PAGE: the reader reaching the top of the
+        // v1.64.3 THE DORMANT PAGE: the reader reaching the top of the
         // mounted window loads one older page (never eager — the open
         // cost stays the bootstrap's tail window).
         if (scrollEl.scrollTop < 400) fetchOlderPage(state);
@@ -1807,7 +1807,7 @@
         if (live && scrollEl) scrollEl.scrollTo({ top: live.offsetTop - 6, behavior: 'smooth' });
       }, 120);
     } else if (state.fulfilled && state.messages.length) {
-      // v1.63.3 THE OPEN LAW: every fresh open lands at the BOTTOM — the
+      // v1.64.3 THE OPEN LAW: every fresh open lands at the BOTTOM — the
       // newest messages are what's important (the user's law verbatim:
       // "Opening the chat for a user should load bottom up not top down.
       // The most recent chats are what's important"). The v0.34 "back
@@ -3817,7 +3817,7 @@
   // &since=<maxSeq> and the engine ships only the gap + the live tail).
 
   // bootstrapHistory: a FRESH state for an EXISTING session fetches the
-  // log's TAIL WINDOW in ONE GET (v1.63.3 THE UNLOST TAIL: ?tail=2500 —
+  // log's TAIL WINDOW in ONE GET (v1.64.3 THE UNLOST TAIL: ?tail=2500 —
   // "the most recent chats are what's important, older messages can stay
   // dormant until scrolled to"; a 50MB lifetime log never rides the open
   // again) and folds it data-only. cb always runs (a failed fetch degrades
@@ -3872,7 +3872,7 @@
     return true;
   }
 
-  // ── v1.63.3 THE DORMANT PAGE ────────────────────────────────────────
+  // ── v1.64.3 THE DORMANT PAGE ────────────────────────────────────────
   // "Older messages can stay dormant until scrolled to": history beyond
   // the bootstrap's tail window loads ONE page at a time, only when the
   // reader scrolls to the top of the mounted window (never eagerly — the
@@ -6748,7 +6748,7 @@
       }
       if (idx <= 0) {                                         // fully mounted
         state._bfGen = 0; state._bfFrom = 0;
-        // v1.63.3 THE DORMANT PAGE: the in-memory window is fully mounted
+        // v1.64.3 THE DORMANT PAGE: the in-memory window is fully mounted
         // — if the reader still sits at the top (a short window, or a fast
         // swipe that outran the idle chunks), the first dormant page loads
         olderCheck(state, scrollEl || (container.closest ? container.closest('#chat-scroll') : null));
