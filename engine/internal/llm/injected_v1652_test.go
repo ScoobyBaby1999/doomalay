@@ -1,6 +1,6 @@
 package llm
 
-// injected_v1642_test.go — v1.64.2 THE LOUD INJECTION pins (PLAN-V164 §2).
+// injected_v1642_test.go — v1.65.2 THE LOUD INJECTION pins (PLAN-V165 §2).
 //
 // THE USER'S LAW: the system must never inject a prompt silently — every
 // injection renders (the injected chunk → the hiccup box's new state →
@@ -18,10 +18,10 @@ import (
         "testing"
 )
 
-// TestV1642_RetryDirectiveFor_VerbatimLaw — the anti-simplification order
+// TestV1652_RetryDirectiveFor_VerbatimLaw — the anti-simplification order
 // carries the call VERBATIM ("add the tool it did verbatim back to it"),
 // clamps honestly at 480 bytes, and keeps the const order as its tail.
-func TestV1642_RetryDirectiveFor_VerbatimLaw(t *testing.T) {
+func TestV1652_RetryDirectiveFor_VerbatimLaw(t *testing.T) {
         got := RetryDirectiveFor("termux", `{"action":"exec","args":{"command":"cal 10 2026"}}`)
         if !strings.Contains(got, "verbatim, as you sent it: termux {\"action\":\"exec\"") {
                 t.Errorf("the verbatim call is missing: %q", got)
@@ -46,11 +46,11 @@ func TestV1642_RetryDirectiveFor_VerbatimLaw(t *testing.T) {
         }
 }
 
-// TestV1642_ProceedInjectionText_DynamicTail — the proceed nudge carries the
+// TestV1652_ProceedInjectionText_DynamicTail — the proceed nudge carries the
 // announcement's TAIL for context ("proceed and print the tail of the
 // message for context"); a bare announcement answers the generic-simple
 // arm.
-func TestV1642_ProceedInjectionText_DynamicTail(t *testing.T) {
+func TestV1652_ProceedInjectionText_DynamicTail(t *testing.T) {
         ann := "I will now read the three timer regions in chatpanel.js, patch the scheduleUpdate guard, then verify the walk."
         got := ProceedInjectionText(ann)
         if !strings.Contains(got, "proceed") || !strings.Contains(got, "execute the plan you just announced") {
@@ -73,9 +73,9 @@ func TestV1642_ProceedInjectionText_DynamicTail(t *testing.T) {
         }
 }
 
-// TestV1642_EmitInjected_Chunk — the law speaks ChatChunk{Type:"injected"}
+// TestV1652_EmitInjected_Chunk — the law speaks ChatChunk{Type:"injected"}
 // with the exact prompt, never blocks, never speaks an empty text.
-func TestV1642_EmitInjected_Chunk(t *testing.T) {
+func TestV1652_EmitInjected_Chunk(t *testing.T) {
         ch := make(chan ChatChunk, 4)
         EmitInjected(ch, "(proceed — execute the announced plan with your tools now)")
         select {
@@ -111,10 +111,10 @@ func TestV1642_EmitInjected_Chunk(t *testing.T) {
         }
 }
 
-// TestV1642_Proceed_LoudIntegration — the v1294 harness + the loud law:
+// TestV1652_Proceed_LoudIntegration — the v1294 harness + the loud law:
 // the proceed round must ALSO speak the injected chunk carrying the
 // DYNAMIC text (the announcement's tail rides for context).
-func TestV1642_Proceed_LoudIntegration(t *testing.T) {
+func TestV1652_Proceed_LoudIntegration(t *testing.T) {
         var calls int32
         srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
                 n := atomic.AddInt32(&calls, 1)

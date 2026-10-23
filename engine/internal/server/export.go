@@ -107,7 +107,7 @@ func foldEvents(events []*store.Event) []foldedRow {
                                 rows = append(rows, foldedRow{Seq: ev.Seq, Type: "retry", Text: line, At: ev.CreatedAt})
                         }
                         case "injected":
-                        // v1.64.2 THE LOUD INJECTION: the system-injected prompt
+                        // v1.65.2 THE LOUD INJECTION: the system-injected prompt
                         // rows ride the export too — the user's law: "the system
                         // should never inject a prompt without making it clear
                         // for both the frontend and the chat transcript".
@@ -336,7 +336,7 @@ func (s *Server) handleSessionExport(w http.ResponseWriter, r *http.Request) {
                                 // rides the export (the probes are the turn's truth).
                                 fmt.Fprintf(&b, "> ↻ %s\n\n", row.Text)
                                                 case "injected":
-                                // v1.64.2 THE LOUD INJECTION: every system-injected
+                                // v1.65.2 THE LOUD INJECTION: every system-injected
                                 // prompt rides the transcript verbatim.
                                 fmt.Fprintf(&b, "> ⌁ system injected: %s\n\n", row.Text)
                         }

@@ -5109,7 +5109,7 @@
         appendMessage(msgContainer, scrollEl, nmsg, bodyEl, state._icon, state);
       }
     } else if (type === 'injected') {
-      // v1.64.2 THE LOUD INJECTION: a system-injected prompt — the user's
+      // v1.65.2 THE LOUD INJECTION: a system-injected prompt — the user's
       // law: "reuse the message box that appears when a model hiccups but
       // add another state to it for when the system injects a prompt,
       // displaying the prompt that we injected. Every Injected prompt
@@ -5771,7 +5771,7 @@
       return '<div class="msg-bubble msg-notice" data-msg-role="notice"' + nCode + miAttr + '>' +
         '<div class="fmt fmt-plain">' + esc(msg.text) + '</div></div>';
     } else if (msg.role === 'injected') {
-      // v1.64.2 THE LOUD INJECTION — the hiccup box's NEW STATE (the
+      // v1.65.2 THE LOUD INJECTION — the hiccup box's NEW STATE (the
       // user's law: "reuse the message box that appears when a model
       // hiccups but add another state to it for when the system injects
       // a prompt, displaying the prompt that we injected"): the SAME
@@ -6054,7 +6054,7 @@
     }
     return a;
   }
-  // v1.64.1 THE SPEAKING HEADER — ONE shared derivation for every
+  // v1.65.1 THE SPEAKING HEADER — ONE shared derivation for every
   // command pill (the termux exec law widened to compounds + the opencode
   // shell pill; the user's asks: the header = the command's own program,
   // "dynamically derived similarly to how our termux exec tool is", and
@@ -6277,7 +6277,7 @@
             else if (act === 'file_delete') { title = 'delete'; var wA = xOf(ga.path); if (wA) body = wA; }
             else if (act) { title = String(act).slice(0, 12); var wB = xOf(ga.path || ga.ws || ga.query || ga.what); if (wB) body = String(wB).slice(0, 40); }
           } else if (fam === 'shell') {
-            // v1.64.1 THE SPEAKING HEADER (the user's ask: the opencode
+            // v1.65.1 THE SPEAKING HEADER (the user's ask: the opencode
             // shell pill's collapsed header shows a static 'shell' title
             // followed by the command — "change the collapsed tool pill
             // header from shell to grep or whatever the first word of the
@@ -7669,7 +7669,7 @@
       // v1.23.2 THE ONE PILL seams (scripts/v1232-one-pill-rig.cjs)
       termuxArgsOf: termuxArgsOf,
       toolPillLabelParts: toolPillLabelParts,
-      // v1.64.1 THE SPEAKING HEADER seam (scripts/v1640-loud-system-rig.mjs)
+      // v1.65.1 THE SPEAKING HEADER seam (scripts/v1640-loud-system-rig.mjs)
       commandTitleParts: commandTitleParts,
       // v1.33.2 THE HONEST TAILS seams (scripts/v1350-ownership-rig.cjs)
       pathTail: pathTail,

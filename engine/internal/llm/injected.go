@@ -2,7 +2,7 @@ package llm
 
 import "strings"
 
-// injected.go — v1.64.2 THE LOUD INJECTION (PLAN-V164 §2).
+// injected.go — v1.65.2 THE LOUD INJECTION (PLAN-V165 §2).
 //
 // THE USER'S LAW (verbatim): "Anytime our system automatically injects a
 // prompt into a turn… We should render this in the UI, try and reuse the

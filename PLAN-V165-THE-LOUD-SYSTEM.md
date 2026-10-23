@@ -1,4 +1,4 @@
-# PLAN-V164 — THE LOUD SYSTEM
+# PLAN-V165 — THE LOUD SYSTEM
 
 The user's four asks (verbatim core):
 1. The opencode **shell** pill's collapsed header shows a static "shell" title +
@@ -65,7 +65,7 @@ new UI, rebase before push, phases x.x.1… then the ship x.x.0.
   same pick line must name them for their jobs (the current line never
   mentions repos/GitHub at all).
 
-## PHASE v1.64.1 — THE SPEAKING HEADER (asks 1+3, one mechanism)
+## PHASE v1.65.1 — THE SPEAKING HEADER (asks 1+3, one mechanism)
 
 chatpanel.js:
 
@@ -96,7 +96,7 @@ Pins: a Go-free PWA pin set in the rig (the derivation function exercised
 through the real chatpanel.js in the harness: singles, compounds, quoted
 pipes, `$(ls | head)` paren-skip, 4+ segments cap, assignment prefixes).
 
-## PHASE v1.64.2 — THE LOUD INJECTION (ask 2)
+## PHASE v1.65.2 — THE LOUD INJECTION (ask 2)
 
 Engine (llm):
 1. `EmitInjected(ch, text)` — the one law: ChatChunk{Type: "injected",
@@ -140,7 +140,7 @@ Pins: llm pins (the dynamic directive, the proceed tail, the sites emit),
 server pins (the chunk stamp, the persist shape, the replay lift, the export
 row), the rig's live UI leg.
 
-## PHASE v1.64.3 — THE OPEN SHELF (ask 4)
+## PHASE v1.65.3 — THE OPEN SHELF (ask 4)
 
 ocservetools.go toolsBlockFor — the pick line rewrites:
 - Web search → doomalay_web_search FIRST (keyless: the DuckDuckGo/Bing
@@ -152,9 +152,9 @@ ocservetools.go toolsBlockFor — the pick line rewrites:
 The catalog itself needs no change — hublib/web_search/workspace are already
 registered + armed on sessionMcpTurn.
 
-## PHASE v1.64.4 — THE REDTEAM + THE SHIP
+## PHASE v1.65.4 — THE REDTEAM + THE SHIP
 
-- scripts/v1640-loud-system-rig.mjs — the live proof:
+- scripts/v1650-loud-system-rig.mjs — the live proof:
   §A the header law (the real chatpanel.js derivation: singles, compounds,
   quotes, parens, the cap),
   §B the injection law LIVE (a real engine turn whose proceed/nudge/seam

@@ -1,6 +1,6 @@
 package server
 
-// injected_v1642_test.go — v1.64.2 THE LOUD INJECTION, server side (PLAN-V164 §2).
+// injected_v1642_test.go — v1.65.2 THE LOUD INJECTION, server side (PLAN-V165 §2).
 //
 // The wire law end-to-end: a system-injected prompt persists as an
 // "injected" chat event carrying {message, code:"injected"} (the replay
@@ -21,10 +21,10 @@ import (
 	"github.com/ScoobyBaby1999/doomalay/engine/internal/store"
 )
 
-// TestV1642_InjectedRow_PersistsAndLifts — emitInjectedRow persists the
+// TestV1652_InjectedRow_PersistsAndLifts — emitInjectedRow persists the
 // {message, code} payload exactly like the notice law; the PWA's replay
 // lift reads message back out.
-func TestV1642_InjectedRow_PersistsAndLifts(t *testing.T) {
+func TestV1652_InjectedRow_PersistsAndLifts(t *testing.T) {
 	s := newV074TestServer(t, "http://unused.test")
 	if err := s.db.CreateSession(&store.Session{ID: "inj-chat", Title: "Inj Chat", Provider: "nvidia"}); err != nil {
 		t.Fatalf("create session: %v", err)
@@ -57,11 +57,11 @@ func TestV1642_InjectedRow_PersistsAndLifts(t *testing.T) {
 	}
 }
 
-// TestV1642_TailRead_SkipsInjectedRows — an injected row is the PROMPT'S
+// TestV1652_TailRead_SkipsInjectedRows — an injected row is the PROMPT'S
 // COPY, not a conversational turn: continueTailIsAssistant must skip it
 // (an injected row sitting on top of an assistant row still reads the
 // CUT shape — the seam nudge rides).
-func TestV1642_TailRead_SkipsInjectedRows(t *testing.T) {
+func TestV1652_TailRead_SkipsInjectedRows(t *testing.T) {
 	events := []*store.Event{
 		{EventType: "user", Content: "go"},
 		{EventType: "assistant_delta", Content: "the reply was cut mid-str"},
@@ -102,9 +102,9 @@ func seedInjectedExportSession(t *testing.T) (*Server, string) {
 	return s, "inj-export"
 }
 
-// TestV1642_ExportCarriesInjectedRows — every export format speaks the
+// TestV1652_ExportCarriesInjectedRows — every export format speaks the
 // injected rows ("system injected:" verbatim — never a silent injection).
-func TestV1642_ExportCarriesInjectedRows(t *testing.T) {
+func TestV1652_ExportCarriesInjectedRows(t *testing.T) {
 	s, sid := seedInjectedExportSession(t)
 	get := func(format string) string {
 		req := httptest.NewRequest("GET", "/api/sessions/"+sid+"/export."+format, nil)
@@ -130,14 +130,14 @@ func TestV1642_ExportCarriesInjectedRows(t *testing.T) {
 	_ = http.StatusOK
 }
 
-// TestV1642_ExportFoldSurvivesDeltaClobber — THE REGRESSION PIN (the live
+// TestV1652_ExportFoldSurvivesDeltaClobber — THE REGRESSION PIN (the live
 // rig's conviction): the delta case overwrites rows[len(rows)-1] with the
 // accumulator, so an injected row riding BETWEEN assistant deltas was
 // CLOBBERED the moment the next delta landed (the fold ate the injection).
 // The injected case breaks the accumulator (the tool row's law) — the
 // injected row survives and the post-injection deltas open a NEW assistant
 // row (an injected prompt is a user-side row; it ends the reply run).
-func TestV1642_ExportFoldSurvivesDeltaClobber(t *testing.T) {
+func TestV1652_ExportFoldSurvivesDeltaClobber(t *testing.T) {
 	events := []*store.Event{
 		{Seq: 1, EventType: "user", Content: "patch the timers please"},
 		{Seq: 2, EventType: "status", Content: `{"state":"running"}`},

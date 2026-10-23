@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// v1640-loud-system-rig.mjs — v1.64 THE LOUD SYSTEM battery (PLAN-V164 §proof).
+// v1650-loud-system-rig.mjs — v1.65 THE LOUD SYSTEM battery (PLAN-V165 §proof).
 //
 // §A source pins: the header law (commandTitleParts + the compound scan +
 //    the opencode shell branch), the injection law (EmitInjected at every
@@ -38,8 +38,8 @@ const require2 = createRequire(import.meta.url);
 const ENGINE_PORT = 8640;
 const ENGINE = 'http://127.0.0.1:' + ENGINE_PORT;
 const FAKE_PORT = 8641;
-const ENGINE_BIN = '/tmp/v1640-rig-engine';
-const DATA_DIR = '/tmp/v1640-rig-data';
+const ENGINE_BIN = '/tmp/v1650-rig-engine';
+const DATA_DIR = '/tmp/v1650-rig-data';
 
 let n = 0;
 const fails = [];
@@ -76,7 +76,7 @@ section('§A the loud system lives in the source');
   catch (e) { ok('chatpanel.js parses', false, e.message); }
   ok('THE SPEAKING HEADER: commandTitleParts is the one shared derivation (the termux exec law widened)',
     /function commandTitleParts\(cmd\)/.test(cp) &&
-    /v1\.64\.1 THE SPEAKING HEADER — ONE shared derivation/.test(cp));
+    /v1\.65\.1 THE SPEAKING HEADER — ONE shared derivation/.test(cp));
   ok('the COMPOUND SCAN: && || ; | & outside quotes + the $( ) paren skip',
     /two === '&&' \|\| two === '\|\|'/.test(cp) &&
     /ch === ';' \|\| ch === '\|' \|\| ch === '&'/.test(cp) &&
@@ -444,6 +444,6 @@ try { ab(['close', '--all']); } catch (e) {}
 try { fakeSrv.close(); } catch (e) {}
 try { execSync(`pkill -9 -f '${ENGINE_BIN}' || true`); } catch (e) {}
 
-console.log('\n' + (fails.length === 0 ? '★ v1640 ALL GREEN — ' + n + ' pins' :
-  '✗ v1640: ' + fails.length + ' FAILED of ' + n + ' — ' + fails.join(' | ')));
+console.log('\n' + (fails.length === 0 ? '★ v1650 ALL GREEN — ' + n + ' pins' :
+  '✗ v1650: ' + fails.length + ' FAILED of ' + n + ' — ' + fails.join(' | ')));
 process.exit(fails.length === 0 ? 0 : 1);

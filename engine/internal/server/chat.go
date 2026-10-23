@@ -2374,7 +2374,7 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, pipe *chatPipe, sess
                 // only for the cut shape (the history ends mid-assistant).
                 if cont.nudge != "" {
                         history = append(history, llm.Message{Role: "user", Content: cont.nudge})
-                        // v1.64.2 THE LOUD INJECTION: the continue nudge is a
+                        // v1.65.2 THE LOUD INJECTION: the continue nudge is a
                         // system-injected prompt — persist + forward the row (the
                         // hiccup box's injected state renders it; the transcript
                         // keeps it). Never a silent injection.
@@ -2684,7 +2684,7 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, pipe *chatPipe, sess
                                 ev["code"] = "tool-hiccup"
                                 ev["message"] = chunk.Text
                         }
-                        // v1.64.2 THE LOUD INJECTION: a system-injected
+                        // v1.65.2 THE LOUD INJECTION: a system-injected
                         // prompt arrives as its OWN event type; the wire
                         // shape mirrors notice's (message + the injected
                         // code) so the PWA renders it through the hiccup
@@ -3054,7 +3054,7 @@ func (s *Server) forwardEvents(ctx context.Context, pipe *chatPipe, sessionID st
                                 content = string(b)
                         }
                 case "injected":
-                        // v1.64.2 THE LOUD INJECTION: the system-injected
+                        // v1.65.2 THE LOUD INJECTION: the system-injected
                         // prompt rows persist {message, code:"injected"} —
                         // byte-identical to the notice law so the replay
                         // lift reads them back.
@@ -3276,7 +3276,7 @@ func (s *Server) emit(pipe *chatPipe, sessionID, evType, content, toolUseID stri
                         out["message"] = content
                 }
         case "injected":
-                // v1.64.2 THE LOUD INJECTION: injected rows persist {message,
+                // v1.65.2 THE LOUD INJECTION: injected rows persist {message,
                 // code:"injected"} — the same lift-onto-the-frame law the
                 // notice rows ride, so the PWA's replay + live paths read
                 // ev.message and the hiccup box renders the injected state.
@@ -3354,7 +3354,7 @@ func (s *Server) emitNotice(pipe *chatPipe, sessionID, message, code string) {
         s.emit(pipe, sessionID, "notice", string(payload), "")
 }
 
-// emitInjectedRow (v1.64.2 THE LOUD INJECTION) — persist + forward ONE
+// emitInjectedRow (v1.65.2 THE LOUD INJECTION) — persist + forward ONE
 // system-injected prompt row (the server-side sites — the continue nudge —
 // speak through here; the llm-internal sites ride the ChatChunk). The
 // event type + the code mirror the notice law; the PWA renders it

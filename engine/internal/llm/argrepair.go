@@ -61,7 +61,7 @@ import (
 // model's cheapest path is the retry, never the downgrade.
 const RetrySameCallDirective = "Retry the SAME call with this fix — do not simplify, downgrade, or switch strategy."
 
-// RetryDirectiveFor — v1.64.2 THE VERBATIM LAW (PLAN-V164 §2, the user's
+// RetryDirectiveFor — v1.65.2 THE VERBATIM LAW (PLAN-V165 §2, the user's
 // ask: "Instead of don't downgrade or simplify we can keep that and add
 // the tool it did verbatim back to it"): the anti-simplification order
 // carries the call VERBATIM — the model sees exactly what it sent and

@@ -345,7 +345,7 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
                         history = append(history,
                                 Message{Role: "assistant", Content: roundText},
                                 Message{Role: "user", Content: SeamNudgeText})
-                        // v1.64.2 THE LOUD INJECTION: the seam nudge is a system-injected
+                        // v1.65.2 THE LOUD INJECTION: the seam nudge is a system-injected
                         // prompt — speak it (the hiccup box's injected state renders it;
                         // the transcript keeps it).
                         EmitInjected(ch, SeamNudgeText)
@@ -413,7 +413,7 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
                                 if strings.TrimSpace(roundText) != "" {
                                         history = append(history, Message{Role: "assistant", Content: roundText})
                                 }
-                                // v1.64.2 THE LOUD INJECTION + THE DYNAMIC TEXT: the proceed
+                                // v1.65.2 THE LOUD INJECTION + THE DYNAMIC TEXT: the proceed
                                 // nudge carries the announcement's tail for context (the user's
                                 // ask: "proceed and print the tail of the message for context")
                                 // and the injected row renders it (never a silent injection).
@@ -431,7 +431,7 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
                                 nudged = true
                                 obs.EmitS(ctx, obs.Notice, "round", round, "text", "reasoning ended without a reply — nudge round armed (thinking off)")
                                 ch <- ChatChunk{Type: "progress", Text: "reasoning ended without a reply — asking again with thinking off…"}
-                                // v1.64.2 THE LOUD INJECTION: the answer-force nudge is
+                                // v1.65.2 THE LOUD INJECTION: the answer-force nudge is
                                 // generic-simple by design (the ask's first arm) — and now it
                                 // renders (the injected row) instead of riding silently.
                                 answerForceText := "(system: your last reply ended after its reasoning without a visible answer. Reply NOW with your FINAL answer as plain text — no tool calls, no more reasoning.)"
@@ -497,7 +497,7 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
                                 // simplification path (the old "or split the work" taught
                                 // the exact downgrade the user's law kills).
                                 if _, stillIn, _ := RepairJSONQuotes(args); stillIn {
-                                        // v1.64.2 THE VERBATIM LAW: the anti-simplification order
+                                        // v1.65.2 THE VERBATIM LAW: the anti-simplification order
                                         // carries the call VERBATIM — the model retries THAT.
                                         fault := "error: your " + c.Name + " arguments arrived CUT OFF mid-JSON (the provider's output token cap likely ate the tail). The call was NOT executed. Re-send the COMPLETE call with the same intent. " + RetryDirectiveFor(c.Name, args)
                                         obs.EmitS(ctx, obs.ToolFault, "round", round, "name", c.Name, "call_id", c.ID, "fault", "arguments cut mid-JSON")
@@ -521,7 +521,7 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
                                 } else {
                                         // unrecoverable — tell the model via the tool result
                                         // (v1.13.6: Skip carries the verdict — no execution)
-                                        // v1.64.2 THE VERBATIM LAW: the call rides the order verbatim.
+                                        // v1.65.2 THE VERBATIM LAW: the call rides the order verbatim.
                                         fault := "error: arguments arrived malformed — re-emit the call with the same intent and the same arguments, corrected. " + RetryDirectiveFor(c.Name, args)
                                         ch <- ChatChunk{Type: "tool_use", Name: c.Name, Summary: "(malformed arguments)"}
                                         ch <- ChatChunk{Type: "tool_result", Text: fault, Name: c.Name}
@@ -645,7 +645,7 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
 
         // Budget exhausted — force a final answer without tools.
         history = append(history, Message{Role: "user", Content: "Tool budget reached. Write your FINAL answer now."})
-        // v1.64.2 THE LOUD INJECTION: the budget verdict renders too (never a silent injection).
+        // v1.65.2 THE LOUD INJECTION: the budget verdict renders too (never a silent injection).
         EmitInjected(ch, "Tool budget reached. Write your FINAL answer now.")
         finalReq := req
         finalReq.Messages = history
