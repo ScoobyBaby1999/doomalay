@@ -191,7 +191,13 @@ async function legC() {
     { opId: 'g:3', kind: 'icon.set', id: 'i1', props: { x: 2 } }
   ] });
   r = await api('GET', '/api/collab/cv_gate/ops?since=2');
-  ok('inclusive replay from since=2', r.status === 200 && (r.body.ops || []).length === 1 && r.body.ops[0].seq === 2, r.body);
+  // v1.71.2 THE NEVER-REWINDING CLOCK (re-anchored): the void left fold_seq=1,
+  // so the fresh batch lands at seqs 2..3 (NOT a rewound 1..2 — a rewind would
+  // strand every reader whose cursor sat at 1: ?since=1 would miss the new
+  // op). The replay stays INCLUSIVE of the cursor.
+  ok('inclusive replay from since=2 (the seq never rewinds past fold_seq)', r.status === 200 && (r.body.ops || []).length === 2 && r.body.ops[0].seq === 2 && r.body.ops[1].seq === 3, r.body);
+  r = await api('GET', '/api/collab/cv_gate/ops?since=3');
+  ok('since=3 → the tail alone', (r.body.ops || []).length === 1 && r.body.ops[0].seq === 3, r.body);
   r = await api('GET', '/api/collab/cv_gate/ops?since=0');
   ok('since=0 replays the whole live journal', (r.body.ops || []).length === 2, r.body);
   // (the GC trim itself is a maintain-wave concern — the store pin covers it)

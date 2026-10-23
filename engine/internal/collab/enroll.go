@@ -61,6 +61,11 @@ type PairStore interface {
         // the live set.
         GetCollabInviteByCode(code string) (*store.CollabInvite, error)
         CollabInviteCodeTaken(code, exceptCanvasID string) (bool, error)
+        // v1.71.1: THE ONE-LIVE-INVITE LAW at the DB level — the mint
+        // clears the canvas's every prior row BEFORE the upsert (the PK
+        // is (canvas_id, code); a new-code mint would otherwise orphan
+        // the old claimed row beside the fresh one).
+        DeleteCollabInvites(canvasID string) error
         ClaimCollabInvite(canvasID, deviceName string) error
         ApproveCollabInvite(canvasID string) error
         DenyCollabInvite(canvasID string) error
@@ -137,6 +142,12 @@ func (e *Enroller) MintInvite(canvasID string) (*store.CollabInvite, error) {
         }
         deviceCode := randToken(32)
         expires := float64(time.Now().Add(InviteTTL).UnixMilli()) / 1000.0
+        // v1.71.1: clear the canvas's every prior invite row FIRST — the
+        // ONE-LIVE-INVITE law (a fresh mint replaces the old, whatever the
+        // old code was; the pair/approve lookups stay unambiguous).
+        if err := e.store.DeleteCollabInvites(canvasID); err != nil {
+                return nil, err
+        }
         if err := e.store.UpsertCollabInvite(canvasID, code, deviceCode, expires); err != nil {
                 return nil, err
         }

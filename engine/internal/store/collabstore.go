@@ -187,6 +187,17 @@ func (db *DB) UpsertCollabInvite(canvasID, code, deviceCode string, expiresAt fl
         return err
 }
 
+// DeleteCollabInvites kills EVERY invite row for a canvas (v1.71.1: THE
+// ONE-LIVE-INVITE LAW, made true at the DB level — the PK is
+// (canvas_id, code), so a second mint with a NEW code would otherwise
+// leave the old claimed row alive beside the fresh one, racing the
+// approve/pair lookups and breaking "a fresh mint replaces the old").
+// MintInvite calls this BEFORE the upsert.
+func (db *DB) DeleteCollabInvites(canvasID string) error {
+        _, err := db.Exec(`DELETE FROM collab_invites WHERE canvas_id=?`, canvasID)
+        return err
+}
+
 // GetCollabInvite reads the canvas's live invite.
 func (db *DB) GetCollabInvite(canvasID string) (*CollabInvite, error) {
         inv := &CollabInvite{}

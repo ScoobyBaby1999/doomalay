@@ -303,8 +303,17 @@
         var local = self.adapter.getDoc();
         var catchup = self.codec.diffDocs(local, self.baseline, function () { return 'adopt:' + (++self.opCounter); });
         for (var i = 0; i < catchup.length; i++) self.adapter.applyOp(catchup[i]);
-        // my own un-synced drift (local edits the server never saw):
-        var drift = self.codec.diffDocs(self.baseline, local, function () { return self.device + ':' + (++self.opCounter); });
+        // my own un-synced drift (local edits the server never saw).
+        // v1.71.2 THE POST-CATCHUP DRIFT LAW (the rig's live conviction):
+        // the drift MUST be derived from the world AS IT IS AFTER the
+        // catch-up — the stale PRE-catchup snapshot would derive the
+        // exact REVERSE of the catch-up (removing everything the world
+        // just materialized: a fresh guest's catch-up icon.adds came back
+        // as icon.removes and gutted the shared doc server-side). The
+        // shipped rigs never caught it — their mocks pre-seeded local ==
+        // baseline, so the catch-up path never ran.
+        var caughtUp = self.adapter.getDoc();
+        var drift = self.codec.diffDocs(self.baseline, caughtUp, function () { return self.device + ':' + (++self.opCounter); });
         if (drift.length) self.submit(drift);
         return self.connect();
       });
