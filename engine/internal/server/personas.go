@@ -595,8 +595,6 @@ func (s *Server) runPersonaTool(sessID, name, argJSON string) string {
 				return "OBSERVATION:\nerror: no persona with id '" + id + "' — persona_list shows the real ids; edit one of those, or omit id entirely to create a new persona"
 			}
 		}
-			}
-		}
 		// v0.73: THE PERSONA HAND — "from" imports a hub persona the
 		// bot DOWNLOADED (a library item; the UI's importPersona
 		// twin, bot-side). Lib-gated like every library use (the
