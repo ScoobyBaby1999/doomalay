@@ -1570,3 +1570,21 @@ Work Log:
 
 Stage Summary:
 - v1.67.0 THE PATIENT CANVAS SHIPPED: the stuck turn dies honestly at the ceiling (the interrupt + the honest pill closes + the lock releases + the zombie guard), the lost result re-emits from the durable record (and the turn-end belt closes every residual pill), every 429 arms the sentinel VISIBLY (the frame + the wall + the arm line + the error text naming the listener), the stars are negligible (2× slower base, exponential zoom band, frozen below 0.45 with zero frames, the cadence law, the pixi quantized clock), and the canvas is finite (8k–128k, no infinite rung). PROOF: the v1670 rig 34/34 + the v1672 pins + go ALL + vet + the cross-compiles + the real-browser redteam (zero errors, the law live, a real provider turn). The parallel bot shipped nothing during the wave (clean push, no rebase needed).
+
+---
+Task ID: v171-wave (the honest reconcile: the device export conviction → the rig → the anchor + the recycle → ship)
+Agent: Main orchestrator (Z.ai Code, session web-b99ac3b8, continued)
+Task: The user's pocket-bridge conviction — "we have major tooling issues, a lot of tools never finish the output" — with the device export doomalay-sky-6adbbb21 (the opencode provider on the real phone, the pre-v1.70 engine).
+
+Work Log:
+- Dissected the export's raw event stream: 14 logical tool calls but 93 tool events — every prior turn's tool_use/tool_result pair REPLAYED into each new turn (2, then 6, then 7, then 9, then 12 pairs — quadratic growth), all landing on the silence-probe cadence with the serve's own "Tool execution interrupted" text; plus the oc_stalled death loop (the conviction interrupted the turn, the auto-retry's continuation on the SAME serve session answered `git log` in 0s then hung FOREVER on `ls -d */`).
+- Root-caused both: (1) v1.67.2's mid-turn reconcile trims its window by the newest IDLE marker — the pocket serve (live-verified against the harness's real 2.1.2 + its SQLite) writes NO idle rows for interrupted turns, so the trim saw the WHOLE session as the window and every fresh pump (per-turn dedupe maps) re-emitted all prior pills; (2) v1.67.1's stall ceiling interrupts but never recycles the session — the wedged bash state survives into every later turn.
+- Wrote scripts/v1710-replay-rig.mjs (the fake 2.1.2 serve + the real binary, four legs: the pocket replay shape, the idle belt, the stall recycle, the turn anchor) — CONVICTED the pre-fix build 17/22 with the device's exact signatures reproduced byte-for-byte.
+- THE FIXES: v1.71.1 THE TURN ANCHOR (ocAnchorTurnWindow — the reconcile window is time-anchored to the turn's own start, ZERO grace on the same-host clock law; the idle trim stays as the belt within the window; a no-stamp message drops safely) + v1.71.2 THE STALL RECYCLE (the oc_stalled conviction DELETEs the wedged serve session + forgets the binding; the next message starts a FRESH serve session; the honest message says so).
+- Re-ran the rig 22/22 ALL GREEN; the v1670 rig re-proven 34/34; TestV1710 x4; go build + vet; the ocserve + llm suites; the server suite chunked green (the full-process run OOMs in this sandbox — the dev stack's memory, environmental, the same note as the v1.70 ship); the linux/amd64 + android/arm64 cross-compiles.
+- Shipped buildinfo 1.71.0 (ONE past v1.70.0) + the README v1.71 section + this record.
+
+Stage Summary:
+- The replay is dead: a prior turn's tool part can NEVER re-emit (the time anchor is immune to the idle-marker situation entirely); the missed-result recovery within the turn keeps working (the rig's LEG D + the v1670 rig's LEG B both hold).
+- The death loop is dead: a stall conviction costs the wedged serve session (by design — the honest message says so) and the next turn rides a fresh bash.
+- The rig convicted FIRST (17/22 with the exact device signatures) and passes 22/22 after — the evidence chain is reproducible against any build.
