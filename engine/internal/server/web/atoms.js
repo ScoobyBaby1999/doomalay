@@ -398,7 +398,12 @@
   // counts: {sessionId → n}; colors: {accent, accent2, ring} triplets;
   // t: seconds (the host clock — worker frames arrive with their own).
   function paintCore(ctx, W, H, offsetX, offsetY, scale, icons, counts, colors, t) {
-    t = t * MOTION_TEMPO;   // v0.97: the global slow-down (both hosts call this one function)
+    // v0.97: the global slow-down (both hosts call this one function) —
+    // v1.67.4: × THE ZOOM TEMPO FACTOR (the freeze law: at far zoom the
+    // factor is 0 and every star holds its static phase-only pose — the
+    // paint is deterministic, idempotent, and the caller stops posting
+    // frames entirely).
+    t = t * MOTION_TEMPO * starTempoFactor(scale);
     if (!ctx) return { chats: 0, stars: 0, shells: 0 };
     var list = Array.isArray(icons) ? icons : [];
     if (!list.length) return { chats: 0, stars: 0, shells: 0 };
@@ -536,7 +541,40 @@
   // world clock multiplies it for the tempo parity (its stars used to
   // orbit at 2× the DOM twin's speed — the v0.97 slow-down never rode
   // the world layer's own clock).
-  var MOTION_TEMPO = 0.5;
+  // v1.67.4 THE ZOOM TEMPO LAW (the user's order, verbatim intent: "make
+  // them orbit much slower so they render less, and we can make it so once
+  // the user passes a certain zoom out threshold they slow down
+  // exponentially then freeze"). ONE truth in AtomCore — the DOM twin, the
+  // worker twin and the pixi world layer all read starTempoFactor:
+  //   · scale ≥ 0.75  → factor 1 (full tempo);
+  //   · 0.45…0.75     → EXPONENTIAL slowdown — e^(−k·(0.75−s)) with k set so
+  //                      the edge of the band is 10× slower (factor 0.1);
+  //   · scale < 0.45  → factor 0 — FROZEN. The stars hold their static,
+  //                      deterministic pose (phase-only) and the atom frame
+  //                      machinery posts NOTHING (the last raster persists;
+  //                      a camera move repaints one static frame). Zoomed
+  //                      out the stars are sub-pixel dust — freezing them
+  //                      is visually lossless and the cost is exactly zero.
+  var TEMPO_FULL_SCALE = 0.75;
+  var TEMPO_FREEZE_SCALE = 0.45;
+  var TEMPO_K = Math.log(10) / (TEMPO_FULL_SCALE - TEMPO_FREEZE_SCALE);
+  function starTempoFactor(scale) {
+    var s = (typeof scale === 'number' && isFinite(scale) && scale > 0) ? scale : 1;
+    if (s >= TEMPO_FULL_SCALE) return 1;
+    if (s <= TEMPO_FREEZE_SCALE) return 0;
+    return Math.exp(-TEMPO_K * (TEMPO_FULL_SCALE - s));
+  }
+  // v1.67.4 THE CADENCE LAW's twin: the atom-only frame's max frame rate at
+  // a given tempo factor — 30fps at full tempo, proportionally slower down
+  // to a 250ms floor (4fps) in the slow band, never anything when frozen.
+  function starFrameCadenceMS(factor) {
+    var f = (typeof factor === 'number' && factor > 0) ? factor : 1;
+    if (f >= 1) return 33;
+    return Math.min(250, Math.max(66, Math.round(33 / Math.max(0.132, f))));
+  }
+  var MOTION_TEMPO = 0.25; // v1.67.4: 0.5 → 0.25 — the user's "orbit much
+                           // slower" (an orbit is now 31–72s; the paint
+                           // machinery's cost halves with it)
 
   ROOT.AtomCore = {
     paintCore: paintCore,
@@ -545,6 +583,10 @@
     starPos: starPos,
     starFieldsOf: starFieldsOf,       // v1.37.1: the flat [omega, phase, r] per (icon, n)
     MOTION_TEMPO: MOTION_TEMPO,       // v1.37.1: the world layer's tempo parity rides it
+    starTempoFactor: starTempoFactor,       // v1.67.4: the zoom tempo law (1 → 0)
+    starFrameCadenceMS: starFrameCadenceMS, // v1.67.4: the atom frame's cadence (ms)
+    TEMPO_FULL_SCALE: TEMPO_FULL_SCALE,     // v1.67.4: the slow-band's top edge
+    TEMPO_FREEZE_SCALE: TEMPO_FREEZE_SCALE, // v1.67.4: the freeze threshold
     SHELL_CAP: SHELL_CAP,
     SHELL_R: SHELL_R,
     SHELL_TILT: SHELL_TILT,

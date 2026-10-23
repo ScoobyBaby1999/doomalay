@@ -855,6 +855,7 @@
   // driverWants (keep driving) — stars/pulses/motion keep it alive; a
   // fully rested world returns false and the driver sleeps until a poke.
   var lastCam = { ox: 0, oy: 0, sc: 1 };
+  var lastStarStepMs = -1;   // v1.67.4: the quantized atom clock's last step
   function updateWorld() {
     if (!S.app || !S.stageRoot) return false;
     var cam = window.DoomalayDebug && window.DoomalayDebug.camera;
@@ -883,6 +884,24 @@
         wants = true; dirty = true; break;
       }
     }
+    // v1.67.4 THE STAR STEP: ONE global quantized clock for every rec's
+    // stars — the tempo factor at the current camera scale, the cadence it
+    // implies, and whether the step ADVANCED this pass (between steps the
+    // star positions are identical → no writes → no dirty → the driver
+    // self-parks; frozen → zero frames forever).
+    var starTempo = (AC && typeof AC.starTempoFactor === 'function') ? AC.starTempoFactor(sc) : 1;
+    var starStepChanged = false;
+    if (starTempo > 0) {
+      wants = true;   // the stars are ALIVE — the driver keeps ticking between steps
+      var cadMS = (AC && typeof AC.starFrameCadenceMS === 'function') ? AC.starFrameCadenceMS(starTempo) : 33;
+      var stepMs = Math.floor(nowMs / cadMS) * cadMS;
+      if (stepMs !== lastStarStepMs) {
+        lastStarStepMs = stepMs;
+        starStepChanged = true;
+      }
+    } else {
+      lastStarStepMs = -1;   // frozen — the step clock resets (unfreeze repaints fresh)
+    }
     S.chats.forEach(function (rec) {
       var icon = rec.icon;
       var sx = (icon.x - ox) * sc, sy = (icon.y - oy) * sc;
@@ -909,9 +928,19 @@
       // v1.37.3 THE TEMPO PARITY: the world clock × AtomCore.MOTION_TEMPO
       // — the world stars used to orbit at 2x the DOM twin's speed (the
       // v0.97 slow-down never rode this clock; the rig pins the parity).
-      if (rec.stars && rec.stars.length && AC) {
-        wants = true; dirty = true;        // stars orbit — keep driving
-        var tw = t * (AC.MOTION_TEMPO || 1);
+      // v1.67.4 THE ZOOM TEMPO + CADENCE LAW: × starTempoFactor(sc) — the
+      // world stars slow exponentially in the zoom-out band and FREEZE
+      // below the threshold; the atom clock QUANTIZES to the cadence (a
+      // step only every starFrameCadenceMS) so the on-demand driver's own
+      // dirty check naturally self-parks between steps (frozen → the
+      // positions never change → ZERO frames; the GPU keeps the last
+      // raster). The library answer to the user's ask IS this layer — the
+      // vendored Pixi v8's flat batching (the research: ~1K tiny sprites
+      // is ~7% of one frame's fill rate on mobile GL; the stars were
+      // never the GPU's problem, the 60fps CPU paint was).
+      if (rec.stars && rec.stars.length && AC && starTempo > 0 && starStepChanged) {
+        var tw = (lastStarStepMs / 1000) * (AC.MOTION_TEMPO || 1) * starTempo;
+        wants = true; dirty = true;        // stars stepped — drive one render
         for (var q = 0; q < rec.stars.length; q++) {
           var st = rec.stars[q];
           var ang = tw * st.omega + st.phase;
@@ -927,6 +956,8 @@
           }
         }
       }
+      // tempoF === 0 (frozen) or between cadence steps: no writes, no
+      // wants, no dirty — the driver renders nothing and self-parks.
     });
     driverWants = wants;
     return dirty;

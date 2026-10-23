@@ -1200,7 +1200,19 @@
     // v0.88.2: the collision-dot ORBITS keep the loop alive too (the
     // grouped tabs swirl forever — VERY slowly, but alive)
     if (window.TabGroups && window.TabGroups.active()) return true;
-    return !!(window.Atoms && window.Atoms.active(world.entities));
+    // v1.67.4 THE FREEZE: the atom stars at a frozen zoom (scale below
+    // AtomCore.TEMPO_FREEZE_SCALE) are STATIC — they hold no frame budget
+    // at all (the user's law: "they cannot take up any performance
+    // whatsoever"). The rAF loop dies; the frozen raster persists on the
+    // canvas; any camera move rides update() → renderGrid() (ONE static
+    // repaint) → this check again (a zoom back in re-arms the orbit).
+    if (window.Atoms && window.Atoms.active(world.entities)) {
+      if (window.AtomCore && typeof window.AtomCore.starTempoFactor === 'function') {
+        return window.AtomCore.starTempoFactor(scale) > 0;
+      }
+      return true;
+    }
+    return false;
   }
   // ── v0.92.3: the trim state + the resume contract ───────────────
   // Native call: window.__doomalayTrim(level) — levels per Android's
@@ -1421,14 +1433,20 @@
   // fits the viewport at max zoom-out on any phone — the bounds are
   // VISIBLE, the world a finite plate (the user: "as if it is still
   // infinite"). The user's dial, not a wall: Settings → Sizing
-  // (8k / 16k / 32k / 64k / 128k / ∞-off). 0 = the legacy infinite
-  // world. settings.js migrates the old 65,536 default once
-  // (the worldSizeV157 flag — a deliberate re-pick survives forever).
+  // (8k / 16k / 32k / 64k / 128k). v1.67.5 THE FINITE PLATE: the ∞
+  // rung is DEAD (the user's order: "No infinite grid") — the ladder is
+  // 8k→128k and settings.js migrates the old 65,536 default and any
+  // saved 0 (the infinite pick) each once (the worldSizeV157 /
+  // worldSizeV167 flags — a deliberate re-pick survives forever).
   var WORLD_SIZE = 16384;
   function applyWorldSize(sz) {
     var n = Number(sz);
-    if (!isFinite(n) || n < 0) n = 16384;
-    var sizes = [8192, 16384, 32768, 65536, 131072, 0];
+    if (!isFinite(n) || n <= 0) n = 16384;
+    // v1.67.5 THE FINITE PLATE: the sanctioned ladder is 8k→128k — the
+    // infinite rung (0) is DEAD (the user's order: "No infinite grid").
+    // A saved 0 or any stray value falls to the default; a deliberate
+    // re-pick of a real rung survives every load untouched.
+    var sizes = [8192, 16384, 32768, 65536, 131072];
     // snap to the sanctioned ladder (settings carry the exact values;
     // a stray value falls to the default)
     if (sizes.indexOf(n) < 0) n = 16384;
@@ -1542,6 +1560,7 @@
   // instead of getting literally heavier (the audit's F3).
   var lastStepAt = 0;
   var lastAmbientFull = 0;   // v0.97: the ambient cadence gate's clock
+  var lastAtomFrameAt = 0;   // v1.67.4 THE CADENCE LAW: the atom-only frame's own clock (tempo-scaled)
   // v1.57.3 THE ONE FRAME (PLAN-V157 §3): the input-recency clock — the
   // coalesced update() (poked by every pointermove via scheduleUpdate)
   // owns the frame while the finger is ACTIVELY moving; the tick defers
@@ -1620,10 +1639,10 @@
     }
     if (!covered && inputState !== 'PANNING' &&
         !(inputState === 'ICON_DRAG' && (now - lastInputMoveAt) < 48)) {   // v0.94.1 + v1.57.3: during an active pan OR drag the coalesced update() owns the render (the double full-paint during icon drags with ambient on dies here)
-      var atomsOnly = !moving && !ambientGridActive() &&
-                      ((window.Atoms && window.Atoms.active(world.entities) &&
-                        !(window.World3D && window.World3D.atomsOwned())) ||   // v0.85.4: the world layer owns the stars
-                       (window.TabGroups && window.TabGroups.active()));   // v0.88.2: the ORBITS' resting frame is CHEAP — the members are DOM (their transforms update below), the dots + rings are stable painted furniture (full frames only on camera moves + topology changes)
+      var tabActive = !!(window.TabGroups && window.TabGroups.active());
+      var atomsOn = !!(window.Atoms && window.Atoms.active(world.entities) &&
+                       !(window.World3D && window.World3D.atomsOwned()));  // v0.85.4: the world layer owns the stars
+      var atomsOnly = !moving && !ambientGridActive() && (atomsOn || tabActive);   // v0.88.2: the ORBITS' resting frame is CHEAP — the members are DOM (their transforms update below), the dots + rings are stable painted furniture (full frames only on camera moves + topology changes)
       if (atomsOnly) {
         // v0.84.1: THE ATOM-ONLY FRAME — nothing else is moving (no pan
         // momentum, no physics drift, no grid animate), so the grid and
@@ -1632,7 +1651,26 @@
         // near-free instead of re-running the full lattice paint per frame.
         // v0.85.2: the cheap frame rides the same paintGridFrame funnel —
         // worker mode posts {atomsOnly:true}, main mode clears + paints.
-        paintGridFrame(true);
+        //
+        // v1.67.4 THE CADENCE LAW: the atom frame runs at the TEMPO's own
+        // cadence — 30fps at full zoom (half the old 60fps cost), the
+        // slow band's proportional cadence (down to 4fps), and NOTHING
+        // when frozen (the user's "they cannot take up any performance
+        // whatsoever" — a frozen star field posts zero frames; the static
+        // raster persists until a camera move repaints it once). The
+        // cadence clock is time-based with drift correction (the SO
+        // canonical pattern — never frame-modulo, 90/120Hz screens break it).
+        var tempoF = (atomsOn && window.AtomCore && typeof window.AtomCore.starTempoFactor === 'function')
+          ? window.AtomCore.starTempoFactor(scale) : 1;
+        var moversRide = tabActive;   // the orbit dots' own drift keeps the 33ms cadence
+        if (moversRide || tempoF > 0) {
+          var cad = 33;
+          if (!moversRide && tempoF < 1) cad = window.AtomCore.starFrameCadenceMS(tempoF);
+          if (!lastAtomFrameAt || (now - lastAtomFrameAt) >= cad) {
+            lastAtomFrameAt = now - ((now - lastAtomFrameAt) % cad); // drift correction
+            paintGridFrame(true);
+          }
+        }
       } else {
         // v0.97 THE AMBIENT CADENCE GATE — v1.06.3: 66ms → 33ms (~30fps).
         // The one-object lattice + the fill diet made full frames cheap;
@@ -3356,7 +3394,7 @@
     window.Settings.onChange(function (st) {
       // the select stores a string — coerce (the ladder snaps strays)
       var sz = Number(st && st.worldSize !== undefined ? st.worldSize : 16384);
-      if (!isFinite(sz) || sz < 0) sz = 16384;
+      if (!isFinite(sz) || sz <= 0) sz = 16384; // v1.67.5: 0 is not a rung — the plate is finite
       if (sz !== WORLD_SIZE) applyWorldSize(sz);
     });
     // Settings names override config names if the user has edited them.
