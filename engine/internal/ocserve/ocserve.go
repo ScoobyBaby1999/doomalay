@@ -963,6 +963,169 @@ func (m *Manager) SessionIdleSince(serveSess string, sinceMs int64) (ended, fail
         return true, false, "", "", at
 }
 
+// InterruptSession cancels an in-flight turn serve-side — v1.67.1 THE
+// INTERRUPT HAND (PLAN-V167 §v1.67.1). Researched against the v2 API
+// (opencode.ai/v2/docs/api, sst/opencode v2.1.4 packages/protocol/src/
+// groups/session.ts): POST /api/session/{id}/interrupt, empty body, answers
+// 200 {"interrupted":bool} — the v2 abort (v1's /abort route does not exist
+// here). The interrupt only works on turns owned by THIS serve process and
+// resolves once the interruption is ACCEPTED (cleanup settles async); the
+// durable session.execution.interrupted event rides the feed right after.
+// Best-effort by contract: the caller logs the verdict, never blocks the
+// recovery on it (a session whose interrupt fails is recycled instead —
+// DeleteSession + a fresh birth).
+func (m *Manager) InterruptSession(serveSess string) (bool, error) {
+        if serveSess == "" {
+                return false, errors.New("ocserve: empty session id")
+        }
+        m.mu.Lock()
+        base, pw := m.baseURL, m.serverPassword
+        m.mu.Unlock()
+        if base == "" {
+                return false, errors.New("ocserve: not running")
+        }
+        ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+        defer cancel()
+        req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/api/session/"+serveSess+"/interrupt", nil)
+        if err != nil {
+                return false, err
+        }
+        req.Header.Set("Accept", "application/json")
+        req.Header.Set("Authorization", "Basic "+basicAuth("opencode", pw))
+        resp, err := http.DefaultClient.Do(req)
+        if err != nil {
+                return false, err
+        }
+        defer resp.Body.Close()
+        body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+        if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+                var out struct {
+                        Interrupted bool `json:"interrupted"`
+                }
+                _ = json.Unmarshal(body, &out) // the 200 body carries the verdict
+                return out.Interrupted, nil
+        }
+        msg := string(body)
+        if len(msg) > 120 {
+                msg = msg[:120]
+        }
+        return false, fmt.Errorf("ocserve interrupt session: HTTP %d, body %q", resp.StatusCode, msg)
+}
+
+// SessionTailToolStates answers, for the session's most recent
+// still-unresolved tools, the durable record's own verdict per call ID —
+// v1.67.2 THE UNLOST MID-TURN's probe half: which call IDs the transcript
+// holds (name + status + the joined text) so the pump can diff its live
+// emission against the serve's truth. Newest-first walk, bounded by the
+// newest idle marker: the current turn's window only.
+func (m *Manager) SessionTailToolStates(serveSess string) map[string]ServeToolState {
+        out := map[string]ServeToolState{}
+        if serveSess == "" {
+                return out
+        }
+        msgs, err := m.ListSessionMessages(serveSess, 4)
+        if err != nil {
+                return out
+        }
+        // chronological (oldest-first): walk BACK from the newest, stop at
+        // the newest idle marker — everything above it is THIS turn's window
+        for i := len(msgs) - 1; i >= 0; i-- {
+                msg := msgs[i]
+                if msg.Type == "idle" {
+                        break
+                }
+                for _, part := range msg.Content {
+                        if part.Type != "tool" || part.ID == "" {
+                                continue
+                        }
+                        st := ServeToolState{ID: part.ID, Name: part.Name, Status: "pending"}
+                        if part.State != nil {
+                                st.Status = part.State.Status
+                                for _, c := range part.State.Content {
+                                        st.Text += c.Text
+                                        if st.Text != "" {
+                                                st.Text += "\n"
+                                        }
+                                }
+                                if part.State.Error != nil {
+                                        st.ErrType = part.State.Error.Type
+                                        st.ErrMsg = part.State.Error.Message
+                                }
+                                if part.State.Metadata != nil && part.State.Metadata.Truncated != nil {
+                                        st.Truncated = *part.State.Metadata.Truncated
+                                }
+                                st.Input = string(part.State.Input)
+                        }
+                        out[part.ID] = st
+                }
+        }
+        return out
+}
+
+// ServeToolState — the durable record's verdict for ONE tool call
+// (v1.67.2): the ID, the bare name, the status (running|pending|
+// completed|error), the joined result text, the error shape, the serve's
+// own truncated flag, and the raw input JSON (the re-emit path's args).
+type ServeToolState struct {
+        ID        string
+        Name      string
+        Status    string
+        Text      string
+        ErrType   string
+        ErrMsg    string
+        Truncated bool
+        Input     string
+}
+
+// SessionNewestAt answers the durable record's newest message stamp
+// (created ms; 0 = unreadable/empty) — v1.67.1's stall-ceiling half: the
+// record itself moving (a message landing) is LIFE, exactly like a live
+// frame; absolute silence (neither feed nor record) is the zombie's
+// signature.
+func (m *Manager) SessionNewestAt(serveSess string) int64 {
+        if serveSess == "" {
+                return 0
+        }
+        msgs, err := m.ListSessionMessages(serveSess, 1)
+        if err != nil || len(msgs) == 0 {
+                return 0
+        }
+        newest := msgs[len(msgs)-1]
+        at := newest.Time.Created
+        if newest.Time.Completed > at {
+                at = newest.Time.Completed
+        }
+        if at <= 0 {
+                at = newest.Time.Created
+        }
+        return at
+}
+
+// SessionInFlight answers whether the session's durable tail is a
+// still-unterminated turn (newest message is NOT an idle marker) and that
+// newest message's stamp — v1.67.1 THE ZOMBIE GUARD's probe: a previous
+// turn whose pump died engine-side (a restart, a cancel, an off-wire
+// terminal) leaves the serve-side turn running; a NEW prompt on the same
+// session queues behind it forever ("the chat throttled and halted").
+func (m *Manager) SessionInFlight(serveSess string) (bool, int64) {
+        if serveSess == "" {
+                return false, 0
+        }
+        msgs, err := m.ListSessionMessages(serveSess, 1)
+        if err != nil || len(msgs) == 0 {
+                return false, 0
+        }
+        newest := msgs[len(msgs)-1]
+        if newest.Type == "idle" {
+                return false, newest.Time.Created
+        }
+        at := newest.Time.Created
+        if at <= 0 {
+                at = newest.Time.Completed
+        }
+        return true, at
+}
+
 // DeleteSession removes a serve-side session (v1.59.2: the chat-delete
 // path's best-effort cleanup — a deleted app chat must not leave its serve
 // twin behind). LIVE-PROBED against the pinned 2.1.2: DELETE
@@ -1528,7 +1691,11 @@ type toolContent struct {
 
 // IsTerminal reports the turn's terminal frames.
 func (e Event) IsTerminal() bool {
-        return e.Type == "session.execution.succeeded" || e.Type == "session.execution.failed"
+        // v1.67.1: session.execution.interrupted is a TERMINAL too (the
+        // documented durable trio succeeded|failed|interrupted — the stall
+        // ceiling's interrupt and every serve-side stop end the turn here).
+        return e.Type == "session.execution.succeeded" || e.Type == "session.execution.failed" ||
+                e.Type == "session.execution.interrupted"
 }
 
 // IsFreeTierError reports whether a terminal frame carries OpenCode's
