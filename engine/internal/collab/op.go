@@ -57,6 +57,12 @@ const MaxOpBytes = 256 << 10
 // a pathological world; the room folds batches, not oceans).
 const MaxOpsPerBatch = 256
 
+// MaxDocBytes — the in-memory doc's size ceiling (the checkpoint row's
+// 4MB cap minus 64KB headroom for the personal view slice that rides
+// the same row). The room's over-cap guard refuses a batch whose
+// marginal size would push the doc past it — BEFORE anything lands.
+const MaxDocBytes = 4<<20 - 64<<10
+
 // Op is the wire frame. Client→server carries opId/kind/id + the
 // kind-specific payload; server→clients is the same frame stamped with
 // seq/device/at (the ack, the ordering, and the fan-out are ONE

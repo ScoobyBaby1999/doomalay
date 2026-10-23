@@ -142,6 +142,15 @@ func (db *DB) SetCanvasFoldSeq(canvasID string, seq int) error {
 	return err
 }
 
+// UpsertCanvasState writes a whole state (the room's CHECKPOINT write —
+// a state-only upsert that keeps the row's name/sort, the v1.42.7
+// no-clobber law). Thin wrapper over UpsertCanvas for the RoomIO
+// interface.
+func (db *DB) UpsertCanvasState(id, state string) error {
+	_, err := db.UpsertCanvas(id, nil, nil, &state)
+	return err
+}
+
 // CanvasJournalStats is the idle sweep's census of one canvas's journal
 // (row count + the seq span) — the GC decision input.
 func (db *DB) CanvasJournalStats(canvasID string) (count int64, minSeq, maxSeq int, err error) {

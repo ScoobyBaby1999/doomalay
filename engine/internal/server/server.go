@@ -23,6 +23,7 @@ import (
 
 	"github.com/ScoobyBaby1999/doomalay/engine/internal/brain"
 	"github.com/ScoobyBaby1999/doomalay/engine/internal/buildinfo"
+	"github.com/ScoobyBaby1999/doomalay/engine/internal/collab"
 	"github.com/ScoobyBaby1999/doomalay/engine/internal/config"
 	"github.com/ScoobyBaby1999/doomalay/engine/internal/forge"
 	"github.com/ScoobyBaby1999/doomalay/engine/internal/hub"
@@ -187,6 +188,11 @@ type Server struct {
 	// (v1.69.2) becomes the hot path's single writer; the HTTP plane
 	// keeps this lock as the durable truth's serializer.
 	collabMu sync.Mutex
+
+	// v1.69.2 THE ROOM: the live room registry (nil only in tests
+	// that construct Server{} without New — every collab handler
+	// guards and answers 503 honestly).
+	collabHub *collab.Hub
 }
 
 // New constructs the server and registers all routes.
@@ -206,6 +212,17 @@ func New(cfg *config.Config, db *store.DB, br *brain.Brain) *Server {
 	}
 
 	s := &Server{cfg: cfg, db: db, vault: vault, brain: br, mux: http.NewServeMux(), remotes: map[string]*brain.RemoteBrain{}}
+	// v1.69.2 THE SHARED CANVAS: the room hub — every op (WS hot path or
+	// HTTP dependency path) folds through the canvas's ONE room goroutine;
+	// the scoped serializer shares collabMu with the whole-state PUT gate
+	// so a checkpoint can never interleave a PUT's read-modify-write.
+	if db != nil {
+		s.collabHub = collab.NewHub(db, func(do func()) {
+			s.collabMu.Lock()
+			do()
+			s.collabMu.Unlock()
+		})
+	}
 	// v1.55.3 THE LIVING CATALOG: the two engine-side hooks — the
 	// models.dev registry's disk cache rides the engine's own data dir
 	// (a cold boot loads instantly instead of re-downloading 6MB), and the
@@ -535,6 +552,11 @@ func (s *Server) routes() {
 	// v1.69.3's handshake and get their own route comments then.
 	s.mux.HandleFunc("GET /api/collab/{canvas}/ops", s.handleCollabOpsList)
 	s.mux.HandleFunc("POST /api/collab/{canvas}/ops", s.handleCollabOpsPost)
+	// v1.69.2 THE ROOM: the live door + the authoritative doc read +
+	// the census (the rig's dormancy pins).
+	s.mux.HandleFunc("GET /api/collab/live", s.handleCollabLive)
+	s.mux.HandleFunc("GET /api/collab/{canvas}/doc", s.handleCollabDoc)
+	s.mux.HandleFunc("GET /api/collab/rooms", s.handleCollabRooms)
 	// v1.39.2 THE AWAKE ENGINE: the busy gauge — Kotlin's 5s poll rides it
 	// (PARTIAL_WAKE_LOCK acquire/release + the live notification text).
 	s.mux.HandleFunc("GET /api/engine/busy", s.handleEngineBusy)

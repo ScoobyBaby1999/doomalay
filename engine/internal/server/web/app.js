@@ -1048,6 +1048,12 @@
       scheduleSave();
     },
     saveNow: saveNow,
+    // v1.69.2 THE ROOM: the collab seam's public surface — the share
+    // sheet (v1.69.3) + the rigs drive activate/deactivate; status feeds
+    // the UI + the perf pins.
+    collabActivate: collabActivate,
+    collabDeactivate: collabDeactivate,
+    collabStatus: collabStatus,
     startAnimation: startAnimation,
     worldsProbe: function () {
       // v1.42.8: the publishers' CANVAS_KEYS mirror this app's
@@ -3030,6 +3036,14 @@
     const body = stateBody(state);
     if (body === lastSavedBody) return;
     lastSavedBody = body;
+    // v1.69.2 THE ROOM: the collab seam — a SHARED canvas stamps its
+    // cursor (the whole-state PUT's staleness gate) and derives +
+    // submits the doc diff. INERT for a solo canvas (collabSession is
+    // null — the exact v1.67 path, byte-for-byte).
+    if (collabSession) {
+      state.syncSeq = collabSession.cursor;
+      try { collabSession.capture(state); } catch (e) { console.warn('doomalay: collab capture failed', e); }
+    }
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
     catch (e) { console.warn('doomalay: save failed', e); }
     // v1.42.4 THE LEDGER: the calm engine sync — the localStorage write
@@ -3056,6 +3070,185 @@
   // v1.42.8: the provenance of the CURRENT world (null = born here).
   // applyWorldState reads it from the loaded state; saveNow re-emits it.
   var worldProvenance = null;
+
+  // ▀▀ v1.69.2 THE ROOM (PLAN-V169 §v1.69.2): the collab seam ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+  // The OOP wiring: the SharedDocSession (collabcore.js) owns the sync
+  // logic; THIS module provides the adapter — the live-world apply hooks
+  // (adds/removes/sets/dots/family/plate-size) and the fetchers. Every
+  // remote apply is save-free (the server already holds the truth — a
+  // remote change must never trigger a local PUT, the perf law); the
+  // session's baseline absorbs remote ops so saveNow's diff never echoes
+  // them back. INERT until collabActivate() — a solo canvas runs the
+  // exact v1.67 path, byte-for-byte.
+  var collabSession = null;
+  var collabDotsModel = null;
+  var collabDotsTimer = 0;
+
+  function collabDeviceId() {
+    try {
+      var k = 'doomalay.collab.device';
+      var v = localStorage.getItem(k);
+      if (!v) { v = 'dev_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10); localStorage.setItem(k, v); }
+      return v;
+    } catch (e) { return 'dev_anon'; }
+  }
+
+  var collabAPI = {
+    fetchDoc: function (canvas) {
+      return fetch('/api/collab/' + encodeURIComponent(canvas) + '/doc').then(function (r) {
+        if (!r.ok) throw new Error('doc ' + r.status);
+        return r.json();
+      });
+    },
+    fetchOps: function (canvas, since) {
+      return fetch('/api/collab/' + encodeURIComponent(canvas) + '/ops?since=' + (since || 0)).then(function (r) {
+        if (!r.ok) throw new Error('ops ' + r.status);
+        return r.json();
+      });
+    },
+    postOps: function (canvas, device, ops) {
+      return fetch('/api/collab/' + encodeURIComponent(canvas) + '/ops', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ device: device, ops: ops })
+      }).then(function (r) {
+        if (!r.ok) throw new Error('post ' + r.status);
+        return r.json();
+      });
+    },
+    wsURL: function (canvas, since, device, name) {
+      var proto = (location.protocol === 'https:') ? 'wss:' : 'ws:';
+      return proto + '//' + location.host + '/api/collab/live?canvas=' + encodeURIComponent(canvas) +
+        '&since=' + (since || 0) + '&device=' + encodeURIComponent(device) + '&name=' + encodeURIComponent(name || '');
+    }
+  };
+
+  // the remote-apply hooks — the adapter the SharedDocSession drives
+  function collabApplyProps(ent, props) {
+    for (var k in (props || {})) {
+      if (!Object.prototype.hasOwnProperty.call(props, k)) continue;
+      var v = props[k];
+      if (k === 'name' && typeof ent.setName === 'function') { ent.setName(v); continue; }
+      ent[k] = v;
+      if (k === 'pinned' && typeof ent.refreshPinBadge === 'function') ent.refreshPinBadge();
+    }
+  }
+
+  function collabDotsApply(op) {
+    // dots ride a model + a debounced re-bind (deserialize is the restore
+    // path — a burst, never a tax; dot ops are rare)
+    if (!collabDotsModel) {
+      collabDotsModel = (window.TabGroups) ? window.TabGroups.serialize() : [];
+    }
+    window.DoomCollab.applyOpToDoc({ icons: [], dots: collabDotsModel, currentFamily: '', worldSize: 0 }, op);
+    if (collabDotsTimer) return;
+    collabDotsTimer = setTimeout(function () {
+      collabDotsTimer = 0;
+      try { if (window.TabGroups) window.TabGroups.deserialize(collabDotsModel); } catch (e) {}
+    }, 200);
+  }
+
+  function collabApplyOp(op) {
+    if (!op || !op.kind) return;
+    try {
+      switch (op.kind) {
+        case 'icon.add': {
+          var data = op.icon;
+          if (!data || !data.id || world.get(data.id)) return; // never double-add
+          var icon = window.GridIcon.create(data);
+          if (icon) {
+            if (data.pinned) { icon.pinned = true; if (typeof icon.refreshPinBadge === 'function') icon.refreshPinBadge(); }
+            world.add(icon);
+            iconLayer.appendChild(icon.el);
+            updateIconBudget();
+          }
+          return;
+        }
+        case 'icon.remove': {
+          var ent = world.get(op.id);
+          if (!ent) return;
+          try { if (window.TabGroups && window.TabGroups.isGrouped) window.TabGroups.release(ent); } catch (e) {}
+          world.remove(ent.id);
+          if (ent.el && ent.el.parentNode) ent.el.parentNode.removeChild(ent.el);
+          if (window.World3D && window.World3D.sync) window.World3D.sync();
+          hideCanvasEmpty();
+          return;
+        }
+        case 'icon.set': {
+          var e2 = world.get(op.id);
+          if (e2) collabApplyProps(e2, op.props);
+          return;
+        }
+        case 'dot.add': case 'dot.set': case 'dot.remove': {
+          collabDotsApply(op);
+          return;
+        }
+        case 'doc.set': {
+          if (op.path === 'currentFamily') { setFamily(op.value); }
+          else if (op.path === 'worldSize') { applyWorldSize(Number(op.value)); }
+          return;
+        }
+      }
+    } catch (e) { console.warn('doomalay: collab apply failed', e); }
+  }
+
+  function collabAdapter() {
+    return {
+      getDoc: function () {
+        return {
+          icons: world.entities.map(function (c) { return c.serialize(); }),
+          dots: (window.TabGroups) ? window.TabGroups.serialize() : [],
+          currentFamily: currentFamily,
+          worldSize: WORLD_SIZE
+        };
+      },
+      applyOp: collabApplyOp,
+      afterRebase: function () { try { scheduleSave(); } catch (e) {} },
+      onMembers: function (m) {
+        try { window.dispatchEvent(new CustomEvent('doomalay:collab-members', { detail: { members: m } })); } catch (e) {}
+      },
+      onPresence: function (p) {
+        try { window.dispatchEvent(new CustomEvent('doomalay:collab-presence', { detail: p })); } catch (e) {}
+      }
+    };
+  }
+
+  // collabActivate() — the share-sheet (v1.69.3) and the rig drive this;
+  // the session adopts the current doc, catches the world up, submits
+  // local drift, and goes LIVE.
+  function collabActivate() {
+    if (collabSession) return Promise.resolve(collabSession);
+    if (!window.DoomCollab) return Promise.reject(new Error('collab core not loaded'));
+    var id = (window.Worlds && window.Worlds.activeId) ? window.Worlds.activeId() : null;
+    if (!id) return Promise.reject(new Error('no active canvas'));
+    collabDotsModel = null;
+    collabSession = new window.DoomCollab.SharedDocSession({
+      canvas: id,
+      device: collabDeviceId(),
+      name: 'This device',
+      api: collabAPI,
+      adapter: collabAdapter()
+    });
+    return collabSession.activate().then(function () {
+      try { window.dispatchEvent(new CustomEvent('doomalay:collab-activated', { detail: { canvas: id } })); } catch (e) {}
+      return collabSession;
+    });
+  }
+
+  function collabDeactivate() {
+    if (collabSession) { collabSession.close(); collabSession = null; }
+  }
+
+  function collabStatus() {
+    if (!collabSession) return { active: false };
+    return {
+      active: true,
+      canvas: collabSession.canvas,
+      cursor: collabSession.cursor,
+      pending: collabSession.pending.length,
+      connected: !!(collabSession.transport && collabSession.transport.ws && collabSession.transport.ws.readyState === 1)
+    };
+  }
 
   function loadState() {
     try {
@@ -3306,6 +3499,10 @@
   // world-agnostic (§3.2.6, zero turn-lifecycle changes).
   let switching = false;
   function switchTo(id) {
+    // v1.69.2 THE ROOM: the outgoing canvas's live session dies FIRST —
+    // a session never straddles worlds (the incoming canvas re-activates
+    // through its own share surface).
+    collabDeactivate();
     if (!window.Worlds || !id) return Promise.resolve({ ok: false, error: 'no registry' });
     if (switching) return Promise.resolve({ ok: false, error: 'a switch is already in flight' });
     var currentId = window.Worlds.activeId();

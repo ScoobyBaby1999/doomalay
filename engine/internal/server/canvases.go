@@ -211,11 +211,16 @@ func (s *Server) handleCanvasUpdate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !syncSeq.Valid && latest > 0 {
-			// old-shape PUT over a journal: the journal is void.
+			// old-shape PUT over a journal: the journal is void —
+			// and the live room (if any) dies with it (its
+			// in-memory doc just became someone else's truth).
 			if _, terr := s.db.TrimCanvasOps(id, latest); terr != nil {
 				s.collabMu.Unlock()
 				writeError(w, 500, "trim: "+terr.Error())
 				return
+			}
+			if s.collabHub != nil {
+				s.collabHub.Drop(id)
 			}
 		}
 		out, uerr := s.db.UpsertCanvas(id, namePtr, req.Sort, statePtr)
@@ -249,6 +254,12 @@ func (s *Server) handleCanvasDelete(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
 		writeError(w, http.StatusServiceUnavailable, "no database")
 		return
+	}
+	// v1.69.2 THE ROOM: a deleted canvas's live room dies FIRST — a
+	// live room would checkpoint-resurrect the row on its next fold
+	// (UpsertCanvas re-creates deleted rows).
+	if s.collabHub != nil {
+		s.collabHub.Drop(r.PathValue("id"))
 	}
 	if err := s.db.DeleteCanvas(r.PathValue("id")); err != nil {
 		writeError(w, 500, "delete: "+err.Error())

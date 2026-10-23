@@ -134,7 +134,24 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(fields || {})
       }).then(function (r) {
-        if (!r.ok) throw new Error('upsert ' + r.status);
+        if (!r.ok) {
+          var err = new Error('upsert ' + r.status);
+          err.status = r.status;
+          if (r.status === 409) {
+            // v1.69.2 THE ROOM: the stale-doc gate's truth (ops_since /
+            // latest) must ride the error — the flush's catch dispatches
+            // the rebase event from it. The body resolves BEFORE the
+            // throw (the promise chain, never a race).
+            return r.json().then(function (b) {
+              err.body = b;
+              throw err;
+            }).catch(function (e) {
+              if (e === err) throw e;
+              throw err; // a body-parse failure still carries the 409
+            });
+          }
+          throw err;
+        }
         return r.json();
       });
     },
@@ -218,7 +235,22 @@
     lastSync = Date.now();
     syncLog.push({ at: lastSync, id: id, savedAt: st && st.savedAt, icons: st && st.icons ? st.icons.length : -1, theme: st && st.settings ? st.settings.theme : null });
     if (syncLog.length > 64) syncLog.shift();
-    CanvasStore.upsert(id, { state: st }).catch(function () {
+    CanvasStore.upsert(id, { state: st }).catch(function (err) {
+      if (err && err.status === 409) {
+        // v1.69.2 THE ROOM: a stale whole-state PUT is NOT a network
+        // failure — the payload must NOT re-arm (it would 409-loop
+        // forever). The collab session owns the recovery: the rebase
+        // applies the missed ops, then a FRESH save re-derives the
+        // payload with the advanced cursor and the calm cadence reflushes.
+        syncLog.push({ at: Date.now(), id: id, stale: true, ops_since: err.body && err.body.ops_since, latest: err.body && err.body.latest });
+        if (syncLog.length > 64) syncLog.shift();
+        try {
+          window.dispatchEvent(new CustomEvent('doomalay:doc-stale', {
+            detail: { id: id, ops_since: err.body && err.body.ops_since, latest: err.body && err.body.latest }
+          }));
+        } catch (e) {}
+        return;
+      }
       // the PUT failed — restore the payload for the next flush; the
       // crash-window heal covers the rest at boot.
       if (!dirty || (st.savedAt || 0) >= (dirty.state.savedAt || 0)) dirty = { state: st, id: id };

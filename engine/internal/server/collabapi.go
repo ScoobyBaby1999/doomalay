@@ -107,13 +107,13 @@ func (s *Server) handleCollabOpsList(w http.ResponseWriter, r *http.Request) {
 
 // handleCollabOpsPost is POST /api/collab/{canvas}/ops {device, ops:[…]}.
 //
-// THE ONE-CLOCK LAW: the append assigns the seqs (the order IS the
-// seq); the fold replays the batch in that same order onto the
-// checkpoint; the checkpoint write carries $.syncSeq = the folded-through
-// seq. The fold is checked BEFORE anything lands — an over-cap batch is
-// refused whole (no half-accepted batch, no journal rollback).
+// v1.69.2 THE ONE-WRITER LAW: the batch reroutes through the canvas's
+// ROOM — the same goroutine the WS hot path folds through (journal →
+// in-memory doc → broadcast → checkpoint). The HTTP path checkpoints
+// NOW (the dependency path's honest row); the WS path rides the calm
+// 2s debounce inside the room.
 func (s *Server) handleCollabOpsPost(w http.ResponseWriter, r *http.Request) {
-	if s.db == nil {
+	if s.db == nil || s.collabHub == nil {
 		writeError(w, http.StatusServiceUnavailable, "no database")
 		return
 	}
@@ -140,35 +140,8 @@ func (s *Server) handleCollabOpsPost(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "no ops")
 		return
 	}
-	if len(req.Ops) > collab.MaxOpsPerBatch {
-		writeError(w, http.StatusRequestEntityTooLarge, "too many ops in one batch")
-		return
-	}
 	if req.Device == "" {
 		req.Device = "host"
-	}
-	// Validate the whole batch BEFORE anything lands, stripping any
-	// client-sent server stamps (the client never names its own seq).
-	rawOps := make([]string, 0, len(req.Ops))
-	for i := range req.Ops {
-		op := req.Ops[i]
-		if len(op.Icon) > collab.MaxOpBytes || len(op.Dot) > collab.MaxOpBytes || len(op.Props) > collab.MaxOpBytes || len(op.Value) > collab.MaxOpBytes {
-			writeError(w, http.StatusRequestEntityTooLarge, "op over size cap")
-			return
-		}
-		op.Seq = 0
-		op.Device = ""
-		op.At = 0
-		if err := collab.ValidateOp(op); err != nil {
-			writeError(w, http.StatusBadRequest, "op "+strconv.Itoa(i)+": "+err.Error())
-			return
-		}
-		jb, err := json.Marshal(op)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "op "+strconv.Itoa(i)+": marshal: "+err.Error())
-			return
-		}
-		rawOps = append(rawOps, string(jb))
 	}
 	// the canvas must exist — a shared doc is born from a host row,
 	// never minted by a bare op submit.
@@ -180,71 +153,19 @@ func (s *Server) handleCollabOpsPost(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "get: "+err.Error())
 		return
 	}
-	// ▀▀ the write serializer: gate + fold + checkpoint are ONE critical
-	// section against the whole-state PUT path (collabMu in both).
-	s.collabMu.Lock()
-	defer s.collabMu.Unlock()
-	c, err := s.db.GetCanvas(id)
+	room, err := s.collabHub.Room(id)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "get: "+err.Error())
+		writeError(w, http.StatusInternalServerError, "room: "+err.Error())
 		return
 	}
-	stateObj, err := collab.StateObject(c.State)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "fold: "+err.Error())
+	sub := room.Submit(req.Device, req.Ops, true)
+	if sub.HTTP != 200 {
+		writeError(w, sub.HTTP, "ops: "+sub.Err.Error())
 		return
 	}
-	// the TENTATIVE fold — FoldOp is seq-agnostic (the laws key on id);
-	// if the folded doc can't fit the checkpoint cap, nothing lands.
-	for i := range req.Ops {
-		if err := collab.FoldOp(stateObj, req.Ops[i]); err != nil {
-			writeError(w, http.StatusInternalServerError, "fold: "+err.Error())
-			return
-		}
+	out := make([]any, 0, len(sub.Frames))
+	for _, fr := range sub.Frames {
+		out = append(out, fr)
 	}
-	folded, err := json.Marshal(stateObj)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "fold: marshal: "+err.Error())
-		return
-	}
-	// 64B headroom for the $.syncSeq stamp the final write adds.
-	if len(folded) > canvasStateMaxBytes-64 {
-		writeError(w, http.StatusRequestEntityTooLarge, "folded state over 4MB cap")
-		return
-	}
-	appended, err := s.db.AppendCanvasOps(id, req.Device, rawOps)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "append: "+err.Error())
-		return
-	}
-	lastSeq := 0
-	for _, row := range appended {
-		lastSeq = row.Seq
-	}
-	stateObj["syncSeq"] = lastSeq
-	final, err := json.Marshal(stateObj)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "fold: marshal: "+err.Error())
-		return
-	}
-	finalStr := string(final)
-	if _, err := s.db.UpsertCanvas(id, nil, nil, &finalStr); err != nil {
-		writeError(w, http.StatusInternalServerError, "checkpoint: "+err.Error())
-		return
-	}
-	if err := s.db.SetCanvasFoldSeq(id, lastSeq); err != nil {
-		writeError(w, http.StatusInternalServerError, "foldseq: "+err.Error())
-		return
-	}
-	// the ack: the stamped frames (the same objects the room broadcasts).
-	out := make([]any, 0, len(appended))
-	for _, row := range appended {
-		frame, err := collab.StampedFrame(row.Op, row.Seq, row.DeviceID, row.At)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "ack: corrupt journal row")
-			return
-		}
-		out = append(out, frame)
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"ops": out, "latest": lastSeq})
+	writeJSON(w, http.StatusOK, map[string]any{"ops": out, "latest": sub.Latest})
 }
