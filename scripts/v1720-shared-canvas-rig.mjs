@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// v1710-shared-canvas-rig.mjs — v1.71.2 THE SHARED CANVAS · THE LIVE
+// v1720-shared-canvas-rig.mjs — v1.72.0 (authored as v1.71.2 before the parallel v1.71.0 landed — the +1 renumber) THE SHARED CANVAS · THE LIVE
 // PROOF (PLAN-V169 §v1.69.5, renumbered by the +1 law over the parallel
 // v1.70.0): the FULL two-device arc against the REAL engine binary —
 // the REAL SharedDocSession clients (collabcore.js), the code-only
@@ -52,10 +52,10 @@ import { createRequire } from 'node:module';
 const require2 = createRequire(import.meta.url);
 
 const __ROOT = path.resolve(path.dirname(process.argv[1] || ''), '..');
-const PORT = 8710;
+const PORT = 8720;
 const ENGINE = 'http://127.0.0.1:' + PORT;
-const DATA = '/tmp/v1710-data';
-const CFG = '/tmp/v1710-config.yaml';
+const DATA = '/tmp/v1720-data';
+const CFG = '/tmp/v1720-config.yaml';
 const OWNER_BEARER = 'rig-owner-secret-token';
 
 const Codec = (await import('file://' + path.join(__ROOT, 'engine/internal/server/web/collabcore.js').replace(/\\/g, '/'))).default;
@@ -143,11 +143,11 @@ function iconMap(doc) {
 }
 
 async function main() {
-  console.log('v1.71.2 THE SHARED CANVAS — THE LIVE PROOF');
-  execSync(`cd ${__ROOT}/engine && go build -o /tmp/v1710-engine ./cmd/doomalay 2>&1`, { stdio: 'inherit', env: { ...process.env, PATH: '/home/z/sdk/go/bin:' + process.env.PATH } });
+  console.log('v1.72.0 THE SHARED CANVAS — THE LIVE PROOF');
+  execSync(`cd ${__ROOT}/engine && go build -o /tmp/v1720-engine ./cmd/doomalay 2>&1`, { stdio: 'inherit', env: { ...process.env, PATH: '/home/z/sdk/go/bin:' + process.env.PATH } });
   fs.rmSync(DATA, { recursive: true, force: true });
   fs.writeFileSync(CFG, `port: ${PORT}\ndata_dir: ${DATA}\nauth_token: "${OWNER_BEARER}"\n`);
-  const engine = spawn('/tmp/v1710-engine', ['--config', CFG], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const engine = spawn('/tmp/v1720-engine', ['--config', CFG], { stdio: ['ignore', 'pipe', 'pipe'] });
   const engineErr = [];
   engine.stderr.on('data', (d) => engineErr.push(String(d)));
   try {
