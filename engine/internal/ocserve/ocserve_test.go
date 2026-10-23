@@ -445,3 +445,36 @@ func TestStablePasswordLaw(t *testing.T) {
                 t.Fatalf("the derived password must be a clean full HMAC hex (got %q)", m1.ServerPassword())
         }
 }
+
+// TestV1703_FreeTierWallShapes pins THE STALE WALL MATCHER fix (the
+// campaign's live conviction, 2026-10-23): zen's wall message is now
+// "Free usage limit reached. Connect a provider or subscribe to OpenCode
+// Go to keep going, or switch models." — the old matcher ("free tier"
+// only) never fired, so THE WALL WALK was dead and every walled turn
+// died on the raw oc_bridge_error path. Every live phrasing matches.
+func TestV1703_FreeTierWallShapes(t *testing.T) {
+        walls := []string{
+                "Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models.",
+                "You've hit the free tier limit for this model",
+                "free usage limit reached",
+                "usage limit reached — subscribe to continue",
+        }
+        for _, msg := range walls {
+                ev := Event{Type: "session.execution.failed", Data: eventData{Error: &eventError{Type: "provider.free-limit", Message: msg, Status: 429}}}
+                if !ev.IsFreeTierError() {
+                        t.Fatalf("wall message must match: %q", msg)
+                }
+        }
+        // non-walls stay non-walls
+        for _, msg := range []string{"connection refused", "model not found", ""} {
+                ev := Event{Type: "session.execution.failed", Data: eventData{Error: &eventError{Message: msg}}}
+                if ev.IsFreeTierError() {
+                        t.Fatalf("non-wall must not match: %q", msg)
+                }
+        }
+        // a success frame never matches
+        ev := Event{Type: "session.execution.succeeded", Data: eventData{Error: &eventError{Message: "free usage limit"}}}
+        if ev.IsFreeTierError() {
+                t.Fatalf("a succeeded frame must never be the wall")
+        }
+}

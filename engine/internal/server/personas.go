@@ -576,6 +576,25 @@ func (s *Server) runPersonaTool(sessID, name, argJSON string) string {
 					target = &specs[i]
 					break
 				}
+				// v1.70.4 THE NAME-AS-ID CATCH (the campaign's
+				// conviction): the model addressed a persona by its
+				// NAME because the stale census hid the real id —
+				// set silently CREATED a duplicate (generic name
+				// "Persona") instead of refusing. A name match on
+				// an explicit id is unambiguous intent to EDIT —
+				// honor it; anything else is the honest teach.
+				if strings.EqualFold(specs[i].Name, id) {
+					target = &specs[i]
+					break
+				}
+			}
+			// v1.70.4: an id that matches NOTHING refuses loudly —
+			// never a silent duplicate create (the campaign's
+			// duplicate-"Persona" conviction).
+			if target == nil {
+				return "OBSERVATION:\nerror: no persona with id '" + id + "' — persona_list shows the real ids; edit one of those, or omit id entirely to create a new persona"
+			}
+		}
 			}
 		}
 		// v0.73: THE PERSONA HAND — "from" imports a hub persona the

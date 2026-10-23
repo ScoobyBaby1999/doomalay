@@ -113,8 +113,11 @@ type Gates struct {
 	Workspace bool
 	// Termux arms the device-shell hand (v1.20.3 THE ARM) — the
 	// chat's bound termux workspaces through the bridge.
-	Termux    bool
-	Delegate  bool
+	Termux   bool
+	Delegate bool
+	// Template arms the method-template library (v1.70.1 THE TRUTHFUL
+	// MANIFEST) — the chat's template pill.
+	Template bool
 }
 
 // Specs returns the OpenAI-style tools[] manifest for the armed gates —
@@ -162,6 +165,10 @@ func SpecsFor(g Gates) []map[string]any {
 			}
 		case GateDelegate:
 			if !g.Delegate {
+				continue
+			}
+		case GateTemplate:
+			if !g.Template {
 				continue
 			}
 		}
@@ -325,6 +332,10 @@ func (b *Bus) armedToolList(t *Turn) string {
 			}
 		case GateDelegate:
 			if t.Delegate == nil {
+				continue
+			}
+		case GateTemplate:
+			if !t.TemplateAuto {
 				continue
 			}
 		}

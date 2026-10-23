@@ -113,3 +113,58 @@ func FlagToolFault(ctx context.Context, ch chan<- ChatChunk, toolName, observati
 	}
 	return rep
 }
+
+// failedObservation reports whether a tool observation means THE CALL DID
+// NOT SUCCEED (v1.70.1 THE UNDEUPED RETRY): an error line, a refusal, a
+// timeout, or the bus's own failure. The native-tools repeat-cache refuses
+// to cache these — an identical re-fire after a failure must RE-EXECUTE,
+// never serve the stale failure back (the campaign's mkdir conviction).
+// Narrow on purpose: a truncated-but-successful result is still a success
+// (a re-run would truncate identically); prose that merely contains the
+// word "error" inside output text does not count — only the honest marker
+// shapes the tool layer writes.
+func failedObservation(observation string) bool {
+	text := strings.TrimPrefix(observation, "OBSERVATION:\n")
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "error:") ||
+			strings.HasPrefix(line, "REFUSED —") ||
+			strings.HasPrefix(line, "JAIL REFUSED") ||
+			strings.HasPrefix(line, "TIMEOUT —") ||
+			strings.HasPrefix(line, "exec rate cap") ||
+			strings.Contains(line, "failed internally") ||
+			strings.Contains(line, "bus failed to execute") {
+			return true
+		}
+	}
+	return false
+}
+
+// mutableReadTools are the census verbs whose answer reflects MUTABLE
+// state (v1.70.4 THE STALE CENSUS): a re-fire after any other successful
+// call must re-execute, never serve the cached pre-mutation answer.
+var mutableReadTools = map[string]bool{
+	"persona_list":  true, // persona_set/activate mutate the roster
+	"persona_set":   true, // its own output (the list tail) mutates with state
+	"fleet":         true, // sibling chats change state constantly
+	"djournal":      true, // entries append mid-turn
+	"skills":        true, // load/bootstrap change the armed set
+	"hublib":        true, // downloads land mid-turn
+	"workspace":     true, // list/tree reflect commits + the session binds
+	"template_list": true,
+	"termux":        true, // session_list/ls reflect the filesystem + sessions
+}
+
+// evictMutableReads drops every cached census-verb entry so the next
+// identical read re-executes against the CURRENT state (called after any
+// successful tool call — the conservative law: a mutation may have landed).
+func evictMutableReads(seen map[string]string) {
+	for k := range seen {
+		if i := strings.IndexByte(k, 0); i >= 0 && mutableReadTools[k[:i]] {
+			delete(seen, k)
+		}
+	}
+}

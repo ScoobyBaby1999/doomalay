@@ -49,6 +49,13 @@ const (
 	GateWorkspace Gate = "workspace"
 	GateTermux    Gate = "termux"
 	GateDelegate  Gate = "delegate"
+	// GateTemplate — v1.70.1 THE TRUTHFUL MANIFEST (the campaign's
+	// conviction): template_list/template_show were ALWAYS advertised in
+	// the manifest but the closure refused whenever the chat's template
+	// pill was off — a tool the model can see and never use. The gate
+	// arms them exactly when the pill is on; the closure's honest
+	// refusal stays as the belt for calls remembered from earlier turns.
+	GateTemplate Gate = "template"
 )
 
 // Def is the single source of truth for one tool: it builds BOTH the
@@ -157,8 +164,8 @@ var defs = []Def{
 		str("url", "The absolute https:// URL.", true),
 	}},
 	// ── the method-template library ─────────────────────────────────
-	{Name: "template_list", Desc: "List the app's method-template library (ids, names, stage counts).", Props: nil},
-	{Name: "template_show", Desc: "Show one method template's full methodology (stages with instructions, or the markdown discipline).", Props: []PropDef{
+	{Name: "template_list", Gate: GateTemplate, Desc: "List the app's method-template library (ids, names, stage counts).", Props: nil},
+	{Name: "template_show", Gate: GateTemplate, Desc: "Show one method template's full methodology (stages with instructions, or the markdown discipline).", Props: []PropDef{
 		str("id", "The template id from template_list.", true),
 	}},
 	// ── the public hub library (gated on the Hublib closure) ────────
