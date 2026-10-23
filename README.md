@@ -234,4 +234,14 @@ make dev  # 3 terminals: engine, brain, PWA hot-reload
 | macOS | CI | GitHub Releases (.dmg) |
 | HF Space | `make build-hf-space` | Docker image |
 
-See `docs/` for platform-specific setup guides.
+See `docs/` for platform-specific setup guides.## v1.67.0 — THE PATIENT CANVAS (2026-10-23)
+
+The user's four-list, all live-proven (the v1670 rig 34/34 + the real-browser redteam):
+
+- **v1.67.1 THE INTERRUPT HAND** — a complex shell command that never returns no longer parks the chat forever: the researched opencode v2 abort (`POST /api/session/{id}/interrupt`) + THE STALL CEILING (5 min absolute silence → the zombie turn is interrupted serve-side, every pending pill closes honestly, the chat's lock releases) + THE ZOMBIE GUARD (an orphaned in-flight turn never queues the next prompt — "a new chat works" without the new chat).
+- **v1.67.2 THE UNLOST MID-TURN** — the volatile event feed loses frames in reconnect gaps BY DESIGN; the pump now reconciles the serve's durable transcript every quiet tick: a tool result the feed lost re-emits from the record and its pill closes in place. THE TURN-END BELT: any pill still pending at a terminal closes honestly — live and on replay.
+- **v1.67.3 THE LOUD 429** — three arms: OpenRouter's mid-stream SSE error frame (`data:{"error":{"code":429}}`) surfaces WITH the sentinel class (it used to die as a silent empty shell); the free-wall exhaustion arms the auto-retry; the arm rides a visible progress line and the error bubble itself names the listener ("auto-retry armed — the timer probes and CONTINUES this conversation itself").
+- **v1.67.4 THE NEGLIGIBLE STARS** — the orbiting stars now orbit 2× slower, slow EXPONENTIALLY through the zoom-out band (0.75→0.45), and FREEZE below 0.45 — the atom frame machinery posts zero frames when frozen. The cadence law caps the atom frame at the tempo's own rate (30fps → 4fps). The library answer: the vendored Pixi v8.21 is the right renderer (researched — no new dependency beats it on Android WebView).
+- **v1.67.5 THE FINITE PLATE** — the World Size dial loses the "Off — infinite" rung: 8k/16k/32k/64k/128k only. No infinite grid.
+
+
