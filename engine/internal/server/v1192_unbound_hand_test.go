@@ -18,11 +18,11 @@ import (
 
 func TestPublicWorkspaceRefMatrix(t *testing.T) {
 	cases := []struct {
-		ref    string
-		want   string // "" = nil
-		kind   string
-		owner  string
-		repo   string
+		ref   string
+		want  string // "" = nil
+		kind  string
+		owner string
+		repo  string
 	}{
 		{"mark3labs/mcp-go", "public:mark3labs/mcp-go", "github", "mark3labs", "mcp-go"},
 		{"https://github.com/ScoobyBaby1999/doomalay", "public:ScoobyBaby1999/doomalay", "github", "ScoobyBaby1999", "doomalay"},
@@ -30,10 +30,10 @@ func TestPublicWorkspaceRefMatrix(t *testing.T) {
 		{"https://git.sr.ht/~sircmpwn/scdoc", "public:~sircmpwn/scdoc", "sourcehut", "~sircmpwn", "scdoc"},
 		// NOT repo refs — bound-row lookups and the teach text own these
 		{"", "", "", "", ""},
-		{"fullrepo", "", "", "", ""},               // a bare name = a bound-row ref
+		{"fullrepo", "", "", "", ""},                    // a bare name = a bound-row ref
 		{"https://example.invalid/a/b", "", "", "", ""}, // unknown forge
-		{"docs/file.txt", "", "", "", ""},          // a path is not a repo
-		{"o/r/s", "", "", "", ""},                  // three segments, no dot → not a URL, not owner/repo
+		{"docs/file.txt", "", "", "", ""},               // a path is not a repo
+		{"o/r/s", "", "", "", ""},                       // three segments, no dot → not a URL, not owner/repo
 	}
 	for _, c := range cases {
 		ws := publicWorkspaceRef(c.ref)

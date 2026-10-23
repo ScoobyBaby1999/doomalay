@@ -155,6 +155,7 @@ type Room struct {
 	submits chan *submitReq
 	joins   chan *joinReq
 	leaves  chan *Member
+	evicts  chan string   // device ids to evict (the revoke path)
 	ckpt    chan struct{} // the calm-checkpoint tick (buffered 1)
 	drops   chan struct{}
 	exited  chan struct{} // closed when Run returns (tests await a clean drop)
@@ -186,6 +187,7 @@ func NewRoom(canvasID string, rio RoomIO, serialize func(do func())) (*Room, err
 		submits:   make(chan *submitReq, 64),
 		joins:     make(chan *joinReq, 16),
 		leaves:    make(chan *Member, 16),
+		evicts:    make(chan string, 16),
 		ckpt:      make(chan struct{}, 1),
 		drops:     make(chan struct{}, 1),
 		exited:    make(chan struct{}),
@@ -247,6 +249,8 @@ func (r *Room) Run() {
 			r.handleSubmit(req)
 		case m := <-r.leaves:
 			r.handleLeave(m)
+		case dev := <-r.evicts:
+			r.handleEvict(dev)
 		case <-r.ckpt:
 			r.mu.Lock()
 			r.checkpointArmed = false
@@ -324,6 +328,53 @@ func (r *Room) Leave(m *Member) {
 	select {
 	case r.leaves <- m:
 	default: // the room is dropping; the leave is moot
+	}
+}
+
+// EvictDevice removes EVERY member connection of a device (the revoke
+// path — a revoked token must kill its live sockets mid-stream). The
+// room's own loop does the surgery (the one-writer law).
+func (r *Room) EvictDevice(deviceID string) {
+	r.mu.Lock()
+	dropped := r.dropped
+	r.mu.Unlock()
+	if dropped {
+		return
+	}
+	select {
+	case r.evicts <- deviceID:
+	default: // the room is busy dropping; its exit closes the sockets anyway
+	}
+}
+
+func (r *Room) handleEvict(deviceID string) {
+	r.mu.Lock()
+	var gone []*Member
+	for m := range r.members {
+		if m.ID == deviceID {
+			gone = append(gone, m)
+			delete(r.members, m)
+		}
+	}
+	stillLive := false
+	for m := range r.members {
+		if m.ID == deviceID {
+			stillLive = true
+		}
+	}
+	if !stillLive {
+		delete(r.presence, deviceID)
+	}
+	empty := len(r.members) == 0
+	r.mu.Unlock()
+	for _, m := range gone {
+		m.shutdown()
+	}
+	r.broadcastMembers()
+	if empty {
+		r.checkpointNow()
+		r.stopPresenceLoop()
+		r.Drop()
 	}
 }
 

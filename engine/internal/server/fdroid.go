@@ -72,8 +72,8 @@ type fdroidAPIEntry struct {
 
 // fdroidAPIResp is the response shape of the package endpoint.
 type fdroidAPIResp struct {
-	PackageName          string          `json:"packageName"`
-	SuggestedVersionCode int             `json:"suggestedVersionCode"`
+	PackageName          string           `json:"packageName"`
+	SuggestedVersionCode int              `json:"suggestedVersionCode"`
 	Packages             []fdroidAPIEntry `json:"packages"`
 }
 

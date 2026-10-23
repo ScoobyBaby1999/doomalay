@@ -72,6 +72,19 @@ func (s *Server) handleCollabLive(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "get: "+err.Error())
 		return
 	}
+	// v1.69.3 THE HANDSHAKE: the joiner is the owner OR a member device
+	// — the credential names the device (never the query param).
+	dev, ok := s.collabAuthorized(r, canvasID)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "not a member of this canvas")
+		return
+	}
+	if dev != nil {
+		device = dev.ID
+		if name == "" || name == device {
+			name = dev.Name
+		}
+	}
 	room, err := s.collabHub.Room(canvasID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "room: "+err.Error())
@@ -187,8 +200,20 @@ func (s *Server) handleCollabDoc(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "canvas id required")
 		return
 	}
+	// v1.69.3 THE HANDSHAKE: THE GATE — the owner OR a member device of
+	// THIS canvas; the same verdict drives THE GATED PORTALS filter (a
+	// member sees only the portals it may jump to; the owner never
+	// filtered).
+	dev, ok := s.collabAuthorized(r, id)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "not a member of this canvas")
+		return
+	}
 	if room := s.collabHub.Get(id); room != nil {
 		doc, seq := room.DocSnapshot()
+		if dev != nil {
+			filterDocForDevice(doc, s.visibleCanvases(r, dev))
+		}
 		writeJSON(w, http.StatusOK, map[string]any{"doc": doc, "seq": seq, "live": true, "canvas": id})
 		return
 	}
@@ -236,11 +261,20 @@ func (s *Server) handleCollabDoc(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	// v1.69.3 THE GATED PORTALS (the durable path filters too).
+	if dev != nil {
+		filterDocForDevice(doc, s.visibleCanvases(r, dev))
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"doc": doc, "seq": latest, "fold_seq": c.FoldSeq, "live": false, "canvas": id})
 }
 
-// handleCollabRooms is GET /api/collab/rooms — the census.
+// handleCollabRooms is GET /api/collab/rooms — the census. OWNER-ONLY
+// (the census names canvases + devices — a guest's business never).
 func (s *Server) handleCollabRooms(w http.ResponseWriter, r *http.Request) {
+	if !s.ownerRequest(r) {
+		writeError(w, http.StatusUnauthorized, "owner only")
+		return
+	}
 	if s.collabHub == nil {
 		writeJSON(w, http.StatusOK, map[string]any{"rooms": []any{}})
 		return

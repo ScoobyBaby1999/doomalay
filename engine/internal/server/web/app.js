@@ -2009,6 +2009,16 @@
       // create. The overlay owns jump / browse / create / rename.
       hideMenu();
       if (window.WorldsManager) window.WorldsManager.open();
+    } else if (btn.dataset.action === 'share-canvas') {
+      // v1.69.3 THE HANDSHAKE: the owner's share sheet (Overlay screen)
+      // — mint the code, watch the claim, THE ALLOW/DENY TAP, revoke.
+      hideMenu();
+      if (window.DoomCollabUI) window.DoomCollabUI.share();
+    } else if (btn.dataset.action === 'join-canvas') {
+      // v1.69.3 THE HANDSHAKE: the joiner's pair sheet — the code + the
+      // device name, then the approval poll.
+      hideMenu();
+      if (window.DoomCollabUI) window.DoomCollabUI.join();
     } else if (btn.dataset.action === 'icon-pin') {
       // v1.36.2 THE HELD THING: the pin row — the flag rides the icon
       // (serialize → localStorage), the themed badge wears/leaves, the
@@ -3050,6 +3060,10 @@
     // above keeps its 200ms shape (the drag law: scheduleSave fires per
     // tick mid-drag, and a PUT per tick would hammer SQLite); Worlds.save
     // debounces the engine side to ≥2s + trailing + the teardown flush.
+    // v1.69.3 THE GUEST LAW: a guest device NEVER whole-state PUTs — the
+    // room owns the doc (a guest PUT would 401/void; the guest's writes
+    // ride ops alone, the local scratch keeps its view).
+    if (collabSession && collabSession.guest) return;
     if (window.Worlds && typeof window.Worlds.save === 'function') window.Worlds.save(state);
   }
   // v1.42.8 THE VESSEL: getWorldStateForExport() — the FRESH world
@@ -3213,24 +3227,49 @@
     };
   }
 
-  // collabActivate() — the share-sheet (v1.69.3) and the rig drive this;
-  // the session adopts the current doc, catches the world up, submits
-  // local drift, and goes LIVE.
-  function collabActivate() {
+  // collabActivate(opts) — the share sheet (v1.69.3: the owner path),
+  // the join sheet's approval (the GUEST path: the stored token + the
+  // guest flag — a guest never whole-state PUTs; the room owns the
+  // doc, the local scratch keeps the view), and the rig drive this.
+  function collabActivate(opts) {
+    opts = opts || {};
     if (collabSession) return Promise.resolve(collabSession);
     if (!window.DoomCollab) return Promise.reject(new Error('collab core not loaded'));
-    var id = (window.Worlds && window.Worlds.activeId) ? window.Worlds.activeId() : null;
+    var id = opts.canvas || (window.Worlds && window.Worlds.activeId ? window.Worlds.activeId() : null);
     if (!id) return Promise.reject(new Error('no active canvas'));
     collabDotsModel = null;
+    var token = opts.token || '';
+    var guest = !!opts.guest;
+    var api = collabAPI;
+    if (token) {
+      api = {
+        fetchDoc: function (c) { return fetch('/api/collab/' + encodeURIComponent(c) + '/doc?token=' + encodeURIComponent(token)).then(function (r) { if (!r.ok) throw new Error('doc ' + r.status); return r.json(); }); },
+        fetchOps: function (c, since) { return fetch('/api/collab/' + encodeURIComponent(c) + '/ops?since=' + (since || 0) + '&token=' + encodeURIComponent(token)).then(function (r) { if (!r.ok) throw new Error('ops ' + r.status); return r.json(); }); },
+        postOps: function (c, dev, ops) {
+          return fetch('/api/collab/' + encodeURIComponent(c) + '/ops?token=' + encodeURIComponent(token), {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ device: dev, ops: ops })
+          }).then(function (r) { if (!r.ok) throw new Error('post ' + r.status); return r.json(); });
+        },
+        wsURL: function (c, since, dev, name) {
+          var proto = (location.protocol === 'https:') ? 'wss:' : 'ws:';
+          return proto + '//' + location.host + '/api/collab/live?canvas=' + encodeURIComponent(c) +
+            '&since=' + (since || 0) + '&device=' + encodeURIComponent(dev) + '&name=' + encodeURIComponent(name || '') +
+            '&token=' + encodeURIComponent(token);
+        }
+      };
+    }
     collabSession = new window.DoomCollab.SharedDocSession({
       canvas: id,
-      device: collabDeviceId(),
-      name: 'This device',
-      api: collabAPI,
-      adapter: collabAdapter()
+      device: opts.device || collabDeviceId(),
+      name: opts.name || 'This device',
+      api: api,
+      adapter: collabAdapter(),
+      guest: guest
     });
+    collabSession.guest = guest; // the save-path flag (a guest never PUTs)
     return collabSession.activate().then(function () {
-      try { window.dispatchEvent(new CustomEvent('doomalay:collab-activated', { detail: { canvas: id } })); } catch (e) {}
+      try { window.dispatchEvent(new CustomEvent('doomalay:collab-activated', { detail: { canvas: id, guest: guest } })); } catch (e) {}
       return collabSession;
     });
   }
@@ -3615,6 +3654,14 @@
         // v1.42.5 law); worldSize is the one structural key that saves NOW.
         scheduleSave();
       }
+    });
+    // v1.69.3 THE HANDSHAKE: the join sheet's approval hands the stored
+    // token to the session — the guest activation (the canvas goes live
+    // with the credential).
+    window.addEventListener('doomalay:collab-join-approved', function (ev) {
+      var d = (ev && ev.detail) || {};
+      var tk = d.token || (window.DoomCollabUI ? window.DoomCollabUI.storedToken() : '');
+      collabActivate({ token: tk, device: d.device, name: d.deviceName, guest: true, canvas: d.canvas });
     });
     // Settings names override config names if the user has edited them.
     const settingsNames = window.Settings.getState().names;

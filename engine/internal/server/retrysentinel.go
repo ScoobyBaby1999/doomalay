@@ -29,9 +29,9 @@ package server
 
 import (
 	"context"
-	"io"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"

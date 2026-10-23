@@ -108,7 +108,7 @@ func TestV1295_Redaction_UserAndToolEventsPersistRedacted(t *testing.T) {
 	s.db.CreateSession(&store.Session{ID: "red1", Title: "t"})
 
 	// the user event (emit path)
-	s.emit(nil, "red1", "user", "Here is a GitHub pat to make pushing easier: " + testToken() + "", "")
+	s.emit(nil, "red1", "user", "Here is a GitHub pat to make pushing easier: "+testToken()+"", "")
 	evs, _ := s.db.ListEvents("red1", 0)
 	if len(evs) == 0 {
 		t.Fatalf("the user event never persisted")

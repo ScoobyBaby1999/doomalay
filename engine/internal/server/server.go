@@ -193,6 +193,12 @@ type Server struct {
 	// that construct Server{} without New — every collab handler
 	// guards and answers 503 honestly).
 	collabHub *collab.Hub
+
+	// v1.69.3 THE HANDSHAKE: the pairing state machine + the per-IP
+	// pairing rate limiter (the online-guess ceiling — 10 claims/min).
+	collabEnroll   *collab.Enroller
+	collabPairMu   sync.Mutex
+	collabPairHits map[string][]time.Time
 }
 
 // New constructs the server and registers all routes.
@@ -222,6 +228,10 @@ func New(cfg *config.Config, db *store.DB, br *brain.Brain) *Server {
 			do()
 			s.collabMu.Unlock()
 		})
+		// v1.69.3 THE HANDSHAKE: the enrollment state machine over
+		// the same store (the deterministic token mint + the
+		// owner-tap gate live in collab.Enroller).
+		s.collabEnroll = collab.NewEnroller(db)
 	}
 	// v1.55.3 THE LIVING CATALOG: the two engine-side hooks — the
 	// models.dev registry's disk cache rides the engine's own data dir
@@ -557,6 +567,20 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/collab/live", s.handleCollabLive)
 	s.mux.HandleFunc("GET /api/collab/{canvas}/doc", s.handleCollabDoc)
 	s.mux.HandleFunc("GET /api/collab/rooms", s.handleCollabRooms)
+	// v1.69.3 THE HANDSHAKE: the pairing surface. EVERY /api/collab/
+	// path sits OUTSIDE the global gate (authMiddleware exempts the
+	// prefix) and behind its own: pair is code-gated + rate-limited;
+	// my is token-gated; invite/members/revoke are OWNER-only; the
+	// ops/live/doc surfaces answer the owner OR a member device.
+	s.mux.HandleFunc("POST /api/collab/pair", s.handleCollabPair)
+	s.mux.HandleFunc("GET /api/collab/pair", s.handleCollabPairStatus)
+	s.mux.HandleFunc("POST /api/collab/{canvas}/invite", s.handleCollabInviteMint)
+	s.mux.HandleFunc("GET /api/collab/{canvas}/invite", s.handleCollabInviteGet)
+	s.mux.HandleFunc("POST /api/collab/{canvas}/invite/approve", s.handleCollabInviteApprove)
+	s.mux.HandleFunc("POST /api/collab/{canvas}/invite/deny", s.handleCollabInviteDeny)
+	s.mux.HandleFunc("GET /api/collab/{canvas}/members", s.handleCollabMembers)
+	s.mux.HandleFunc("POST /api/collab/{canvas}/members/{device}/revoke", s.handleCollabMemberRevoke)
+	s.mux.HandleFunc("GET /api/collab/my", s.handleCollabMy)
 	// v1.39.2 THE AWAKE ENGINE: the busy gauge — Kotlin's 5s poll rides it
 	// (PARTIAL_WAKE_LOCK acquire/release + the live notification text).
 	s.mux.HandleFunc("GET /api/engine/busy", s.handleEngineBusy)
@@ -1094,6 +1118,25 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Health + capabilities are public (needed for onboarding discovery).
 		if r.URL.Path == "/api/health" || r.URL.Path == "/api/capabilities" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		// v1.69.3 THE HANDSHAKE: the ENTIRE /api/collab/ prefix sits
+		// outside the global gate — a joining device has NO global
+		// credential; every collab handler enforces its own gate
+		// (owner-or-member / owner-only / code+rate / token).
+		if strings.HasPrefix(r.URL.Path, "/api/collab/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		// v1.69.3 THE HANDSHAKE: the PWA's STATIC SHELL is public —
+		// a guest pointed at the host engine (e.g. through the
+		// owner's tunnel) must be able to LOAD the app at all; the
+		// shell is embedded static bytes (traversal-guarded), every
+		// datum lives behind the gated /api + the collab gates. The
+		// MCP surfaces stay gated (their own auth).
+		if r.Method == "GET" && !strings.HasPrefix(r.URL.Path, "/api/") &&
+			!strings.HasPrefix(r.URL.Path, "/mcp") && !strings.HasPrefix(r.URL.Path, "/api") {
 			next.ServeHTTP(w, r)
 			return
 		}

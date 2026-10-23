@@ -30,18 +30,18 @@ package server
 //              chat's placeholder map; numeric values also feed triggers).
 
 import (
-        "encoding/json"
-        "fmt"
-        "math/rand"
-        "net/http"
-        "strconv"
-        "strings"
-        "sync"
-        "time"
+	"encoding/json"
+	"fmt"
+	"math/rand"
+	"net/http"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
 
-        "github.com/ScoobyBaby1999/doomalay/engine/internal/hub"
-        "github.com/ScoobyBaby1999/doomalay/engine/internal/llm"
-        "github.com/ScoobyBaby1999/doomalay/engine/internal/store"
+	"github.com/ScoobyBaby1999/doomalay/engine/internal/hub"
+	"github.com/ScoobyBaby1999/doomalay/engine/internal/llm"
+	"github.com/ScoobyBaby1999/doomalay/engine/internal/store"
 )
 
 // PersonaTrigger is the active-by-trigger condition.
@@ -52,55 +52,55 @@ import (
 // ("anthropic") or a number (10). Older sessions stored numeric JSON
 // values; UnmarshalJSON below converts them so nothing breaks.
 type PersonaTrigger struct {
-        Key   string `json:"key"`   // built-in / global / local placeholder key
-        Op    string `json:"op"`    // "=" | "<" | ">" | "!=" (<=, >= tolerated)
-        Value string `json:"value"` // string or numeric threshold
+	Key   string `json:"key"`   // built-in / global / local placeholder key
+	Op    string `json:"op"`    // "=" | "<" | ">" | "!=" (<=, >= tolerated)
+	Value string `json:"value"` // string or numeric threshold
 }
 
 // UnmarshalJSON accepts value as string OR number (legacy personas stored
 // {"value": 10}); numbers become their shortest decimal string.
 func (t *PersonaTrigger) UnmarshalJSON(b []byte) error {
-        var raw struct {
-                Key   string `json:"key"`
-                Op    string `json:"op"`
-                Value any    `json:"value"`
-        }
-        if err := json.Unmarshal(b, &raw); err != nil {
-                return err
-        }
-        t.Key = raw.Key
-        t.Op = raw.Op
-        switch v := raw.Value.(type) {
-        case nil:
-                t.Value = ""
-        case string:
-                t.Value = v
-        case float64:
-                t.Value = strconv.FormatFloat(v, 'g', -1, 64)
-        case bool:
-                t.Value = strconv.FormatBool(v)
-        default:
-                t.Value = fmt.Sprintf("%v", v)
-        }
-        return nil
+	var raw struct {
+		Key   string `json:"key"`
+		Op    string `json:"op"`
+		Value any    `json:"value"`
+	}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	t.Key = raw.Key
+	t.Op = raw.Op
+	switch v := raw.Value.(type) {
+	case nil:
+		t.Value = ""
+	case string:
+		t.Value = v
+	case float64:
+		t.Value = strconv.FormatFloat(v, 'g', -1, 64)
+	case bool:
+		t.Value = strconv.FormatBool(v)
+	default:
+		t.Value = fmt.Sprintf("%v", v)
+	}
+	return nil
 }
 
 // PersonaSpec is ONE persona of a chat (stored as a JSON array on the
 // session's `personas` column).
 type PersonaSpec struct {
-        ID      string          `json:"id"`
-        Name    string          `json:"name"`
-        Text    string          `json:"text"`
-        Mode    string          `json:"mode"`    // always | shuffle | trigger
-        Trigger *PersonaTrigger `json:"trigger"` // mode == trigger
-        // v0.84.2: THE BADGE — the ring this persona paints around its
-        // chat's icon disc while it is the active persona. nil = no badge
-        // (the default; "By default a persona has no badge"). Rides the
-        // personas JSON verbatim, so every client round-trip AND the
-        // engine's own persona_set/persona_activate re-serialization keep
-        // it (a struct without this field would silently DROP badges on
-        // every bot-side persona edit).
-        Badge *PersonaBadge `json:"badge,omitempty"`
+	ID      string          `json:"id"`
+	Name    string          `json:"name"`
+	Text    string          `json:"text"`
+	Mode    string          `json:"mode"`    // always | shuffle | trigger
+	Trigger *PersonaTrigger `json:"trigger"` // mode == trigger
+	// v0.84.2: THE BADGE — the ring this persona paints around its
+	// chat's icon disc while it is the active persona. nil = no badge
+	// (the default; "By default a persona has no badge"). Rides the
+	// personas JSON verbatim, so every client round-trip AND the
+	// engine's own persona_set/persona_activate re-serialization keep
+	// it (a struct without this field would silently DROP badges on
+	// every bot-side persona edit).
+	Badge *PersonaBadge `json:"badge,omitempty"`
 }
 
 // PersonaBadge (v0.84.2) — "it may be a basic solid color outline around
@@ -110,13 +110,13 @@ type PersonaSpec struct {
 // badge's bytes live engine-side (the rev'd kv row behind
 // GET /api/sessions/{id}/personabadge/{pid}) or in the hub repo (File).
 type PersonaBadge struct {
-        Kind  string `json:"kind"`            // "solid" | "gradient" | "image"
-        Token string `json:"token,omitempty"` // solid: the theme token ("accent")
-        From  string `json:"from,omitempty"`  // gradient: the starting token
-        To    string `json:"to,omitempty"`    // gradient: the ending token
-        Angle int    `json:"angle,omitempty"` // gradient: 0-359
-        File  string `json:"file,omitempty"`  // image: the in-repo path (hub transport)
-        Rev   int    `json:"rev,omitempty"`   // image: the engine row's rev (local render)
+	Kind  string `json:"kind"`            // "solid" | "gradient" | "image"
+	Token string `json:"token,omitempty"` // solid: the theme token ("accent")
+	From  string `json:"from,omitempty"`  // gradient: the starting token
+	To    string `json:"to,omitempty"`    // gradient: the ending token
+	Angle int    `json:"angle,omitempty"` // gradient: 0-359
+	File  string `json:"file,omitempty"`  // image: the in-repo path (hub transport)
+	Rev   int    `json:"rev,omitempty"`   // image: the engine row's rev (local render)
 }
 
 // personaBadgeTokens is the THEME TOKEN whitelist — every solid/gradient
@@ -124,123 +124,123 @@ type PersonaBadge struct {
 // the list never survives sanitization (no hard-coded colors, no CSS
 // injection through the personas JSON).
 var personaBadgeTokens = map[string]bool{
-        "accent": true, "accent-2": true, "accent-3": true, "accent-4": true,
-        "ok": true, "warn": true, "err": true, "notice": true,
-        "text-1": true, "text-2": true, "text-3": true,
-        "surface-3": true, "border-strong": true,
+	"accent": true, "accent-2": true, "accent-3": true, "accent-4": true,
+	"ok": true, "warn": true, "err": true, "notice": true,
+	"text-1": true, "text-2": true, "text-3": true,
+	"surface-3": true, "border-strong": true,
 }
 
 // SanitizePersonaBadge normalizes a badge spec: the kind whitelist, the
 // theme-token whitelist, the angle clamp, the image file path shape. nil
 // and unusable specs return nil ("no badge" — never a half-painted ring).
 func SanitizePersonaBadge(b *PersonaBadge) *PersonaBadge {
-        if b == nil {
-                return nil
-        }
-        out := &PersonaBadge{Kind: strings.ToLower(strings.TrimSpace(b.Kind))}
-        switch out.Kind {
-        case "solid":
-                t := strings.TrimSpace(b.Token)
-                if !personaBadgeTokens[t] {
-                        return nil
-                }
-                out.Token = t
-        case "gradient":
-                f, t := strings.TrimSpace(b.From), strings.TrimSpace(b.To)
-                if !personaBadgeTokens[f] || !personaBadgeTokens[t] {
-                        return nil
-                }
-                out.From, out.To = f, t
-                out.Angle = ((b.Angle % 360) + 360) % 360
-        case "image":
-                out.File = strings.Trim(strings.TrimSpace(b.File), "/")
-                if out.File != "" && (len(out.File) > 200 || strings.Contains(out.File, "..") ||
-                        strings.ContainsAny(out.File, "\\?#") || strings.Contains(out.File, "//")) {
-                        return nil
-                }
-                if out.File == "" && b.Rev <= 0 {
-                        return nil // neither an engine rev nor a repo file — unusable
-                }
-                out.Rev = b.Rev
-        default:
-                return nil
-        }
-        return out
+	if b == nil {
+		return nil
+	}
+	out := &PersonaBadge{Kind: strings.ToLower(strings.TrimSpace(b.Kind))}
+	switch out.Kind {
+	case "solid":
+		t := strings.TrimSpace(b.Token)
+		if !personaBadgeTokens[t] {
+			return nil
+		}
+		out.Token = t
+	case "gradient":
+		f, t := strings.TrimSpace(b.From), strings.TrimSpace(b.To)
+		if !personaBadgeTokens[f] || !personaBadgeTokens[t] {
+			return nil
+		}
+		out.From, out.To = f, t
+		out.Angle = ((b.Angle % 360) + 360) % 360
+	case "image":
+		out.File = strings.Trim(strings.TrimSpace(b.File), "/")
+		if out.File != "" && (len(out.File) > 200 || strings.Contains(out.File, "..") ||
+			strings.ContainsAny(out.File, "\\?#") || strings.Contains(out.File, "//")) {
+			return nil
+		}
+		if out.File == "" && b.Rev <= 0 {
+			return nil // neither an engine rev nor a repo file — unusable
+		}
+		out.Rev = b.Rev
+	default:
+		return nil
+	}
+	return out
 }
 
 // personaMetrics are the live numbers triggers evaluate against.
 type personaMetrics struct {
-        Messages int // folded messages in the model-visible history
-        Turns    int // user turns
+	Messages int // folded messages in the model-visible history
+	Turns    int // user turns
 }
 
 // shufflePicks caches this engine process's shuffle roll per session
 // (re-rolled on restart — "selected at random every time the chat is
 // re-established or the app is restarted").
 var (
-        shuffleMu    sync.Mutex
-        shufflePicks = map[string]string{} // sessionID → persona ID
+	shuffleMu    sync.Mutex
+	shufflePicks = map[string]string{} // sessionID → persona ID
 )
 
 // countUserTurns counts the user messages in a history slice (the
 // incoming message is appended by the caller, hence the +1 there).
 func countUserTurns(history []llm.Message) int {
-        n := 0
-        for i := range history {
-                if history[i].Role == "user" {
-                        n++
-                }
-        }
-        return n
+	n := 0
+	for i := range history {
+		if history[i].Role == "user" {
+			n++
+		}
+	}
+	return n
 }
 
 // parsePersonas decodes the session's personas JSON; empty/legacy sessions
 // with a single persona text degrade to one "Default" always-active persona.
 func parsePersonas(sess *store.Session) []PersonaSpec {
-        raw := strings.TrimSpace(sess.Personas)
-        if raw != "" {
-                var specs []PersonaSpec
-                if err := json.Unmarshal([]byte(raw), &specs); err == nil && len(specs) > 0 {
-                        for i := range specs {
-                                normalizeSpec(&specs[i])
-                        }
-                        enforceSingleActive(specs) // v0.28: one always-active persona, max
-                        return specs
-                }
-        }
-        // Legacy single-persona migration: the v0.19 `persona` column.
-        if p := strings.TrimSpace(sess.Persona); p != "" {
-                return []PersonaSpec{{
-                        ID:   "p_default",
-                        Name: "Default",
-                        Text: p,
-                        Mode: "always",
-                }}
-        }
-        return nil
+	raw := strings.TrimSpace(sess.Personas)
+	if raw != "" {
+		var specs []PersonaSpec
+		if err := json.Unmarshal([]byte(raw), &specs); err == nil && len(specs) > 0 {
+			for i := range specs {
+				normalizeSpec(&specs[i])
+			}
+			enforceSingleActive(specs) // v0.28: one always-active persona, max
+			return specs
+		}
+	}
+	// Legacy single-persona migration: the v0.19 `persona` column.
+	if p := strings.TrimSpace(sess.Persona); p != "" {
+		return []PersonaSpec{{
+			ID:   "p_default",
+			Name: "Default",
+			Text: p,
+			Mode: "always",
+		}}
+	}
+	return nil
 }
 
 func normalizeSpec(s *PersonaSpec) {
-        s.ID = strings.TrimSpace(s.ID)
-        if s.ID == "" {
-                s.ID = fmt.Sprintf("p_%d", rand.Intn(1<<24))
-        }
-        s.Name = strings.TrimSpace(s.Name)
-        if s.Name == "" {
-                s.Name = "Persona"
-        }
-        switch s.Mode {
-        case "always", "shuffle", "trigger", "inactive":
-        default:
-                s.Mode = "always"
-        }
-        if s.Mode == "trigger" && s.Trigger == nil {
-                // a trigger persona without a condition can never fire — treat as always
-                s.Mode = "always"
-        }
-        // v0.84.2: the badge rides every normalization (stored lists
-        // migrate lazily — an invalid spec degrades to no badge).
-        s.Badge = SanitizePersonaBadge(s.Badge)
+	s.ID = strings.TrimSpace(s.ID)
+	if s.ID == "" {
+		s.ID = fmt.Sprintf("p_%d", rand.Intn(1<<24))
+	}
+	s.Name = strings.TrimSpace(s.Name)
+	if s.Name == "" {
+		s.Name = "Persona"
+	}
+	switch s.Mode {
+	case "always", "shuffle", "trigger", "inactive":
+	default:
+		s.Mode = "always"
+	}
+	if s.Mode == "trigger" && s.Trigger == nil {
+		// a trigger persona without a condition can never fire — treat as always
+		s.Mode = "always"
+	}
+	// v0.84.2: the badge rides every normalization (stored lists
+	// migrate lazily — an invalid spec degrades to no badge).
+	s.Badge = SanitizePersonaBadge(s.Badge)
 }
 
 // enforceSingleActive keeps the v0.28 user rule — exactly ONE persona is
@@ -248,29 +248,29 @@ func normalizeSpec(s *PersonaSpec) {
 // to inactive (a fresh persona defaults to inactive; activating one demotes
 // the previous). Runs on every parse so stored lists migrate lazily.
 func enforceSingleActive(specs []PersonaSpec) {
-        seen := false
-        for i := range specs {
-                if specs[i].Mode == "always" {
-                        if seen {
-                                specs[i].Mode = "inactive"
-                        }
-                        seen = true
-                }
-        }
+	seen := false
+	for i := range specs {
+		if specs[i].Mode == "always" {
+			if seen {
+				specs[i].Mode = "inactive"
+			}
+			seen = true
+		}
+	}
 }
 
 // parsePlaceholders decodes the chat's LOCAL custom placeholder map
 // ({"mood":"playful","level":"7"}). Malformed → empty map.
 func parsePlaceholders(sess *store.Session) map[string]string {
-        raw := strings.TrimSpace(sess.Placeholders)
-        if raw == "" {
-                return map[string]string{}
-        }
-        m := map[string]string{}
-        if err := json.Unmarshal([]byte(raw), &m); err != nil {
-                return map[string]string{}
-        }
-        return m
+	raw := strings.TrimSpace(sess.Placeholders)
+	if raw == "" {
+		return map[string]string{}
+	}
+	m := map[string]string{}
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		return map[string]string{}
+	}
+	return m
 }
 
 // sanitizeLocalPlaceholders (v1.27.1 THE HARD REFUSE, the PATCH door) —
@@ -279,29 +279,29 @@ func parsePlaceholders(sess *store.Session) map[string]string {
 // entries (existing shadowers die on the chat's next write — the user's
 // no-backward-compat call); everything else rides untouched.
 func sanitizeLocalPlaceholders(raw string) string {
-        trimmed := strings.TrimSpace(raw)
-        if trimmed == "" {
-                return trimmed
-        }
-        m := map[string]string{}
-        if err := json.Unmarshal([]byte(trimmed), &m); err != nil {
-                return trimmed // not a map — leave it for parsePlaceholders to degrade
-        }
-        dropped := false
-        for k := range m {
-                if _, bad := isReservedPlaceholderKey(k); bad {
-                        delete(m, k)
-                        dropped = true
-                }
-        }
-        if !dropped {
-                return trimmed
-        }
-        b, err := json.Marshal(m)
-        if err != nil {
-                return trimmed
-        }
-        return string(b)
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return trimmed
+	}
+	m := map[string]string{}
+	if err := json.Unmarshal([]byte(trimmed), &m); err != nil {
+		return trimmed // not a map — leave it for parsePlaceholders to degrade
+	}
+	dropped := false
+	for k := range m {
+		if _, bad := isReservedPlaceholderKey(k); bad {
+			delete(m, k)
+			dropped = true
+		}
+	}
+	if !dropped {
+		return trimmed
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return trimmed
+	}
+	return string(b)
 }
 
 // globalPlaceholderKey is the app_settings row that holds the GLOBAL
@@ -337,70 +337,70 @@ var placeholderBlocks = []string{"tools", "repo_access", "artifacts", "library",
 // isReservedPlaceholderKey — the hard-refuse law: built-ins + block names
 // are never custom keys. The class string names the collision honestly.
 func isReservedPlaceholderKey(k string) (string, bool) {
-        for _, b := range placeholderBuiltins {
-                if k == b {
-                        return "built-in", true
-                }
-        }
-        for _, b := range placeholderBlocks {
-                if k == b {
-                        return "a live preamble block", true
-                }
-        }
-        return "", false
+	for _, b := range placeholderBuiltins {
+		if k == b {
+			return "built-in", true
+		}
+	}
+	for _, b := range placeholderBlocks {
+		if k == b {
+			return "a live preamble block", true
+		}
+	}
+	return "", false
 }
 
 // globalPlaceholders reads the engine-wide custom placeholder map.
 // Nil-DB safe (unit tests construct Servers without one).
 func (s *Server) globalPlaceholders() map[string]string {
-        if s == nil || s.db == nil {
-                return map[string]string{}
-        }
-        raw, err := s.db.GetSetting(globalPlaceholderKey)
-        if err != nil || strings.TrimSpace(raw) == "" {
-                return map[string]string{}
-        }
-        m := map[string]string{}
-        if err := json.Unmarshal([]byte(raw), &m); err != nil {
-                return map[string]string{}
-        }
-        return m
+	if s == nil || s.db == nil {
+		return map[string]string{}
+	}
+	raw, err := s.db.GetSetting(globalPlaceholderKey)
+	if err != nil || strings.TrimSpace(raw) == "" {
+		return map[string]string{}
+	}
+	m := map[string]string{}
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		return map[string]string{}
+	}
+	return m
 }
 
 // setGlobalPlaceholder upserts one global placeholder (persisted).
 func (s *Server) setGlobalPlaceholder(key, value string) error {
-        ph := s.globalPlaceholders()
-        ph[key] = value
-        raw, err := json.Marshal(ph)
-        if err != nil {
-                return err
-        }
-        return s.db.SetSetting(globalPlaceholderKey, string(raw))
+	ph := s.globalPlaceholders()
+	ph[key] = value
+	raw, err := json.Marshal(ph)
+	if err != nil {
+		return err
+	}
+	return s.db.SetSetting(globalPlaceholderKey, string(raw))
 }
 
 // deleteGlobalPlaceholder removes one global placeholder (idempotent).
 func (s *Server) deleteGlobalPlaceholder(key string) error {
-        ph := s.globalPlaceholders()
-        if _, ok := ph[key]; !ok {
-                return nil
-        }
-        delete(ph, key)
-        raw, err := json.Marshal(ph)
-        if err != nil {
-                return err
-        }
-        return s.db.SetSetting(globalPlaceholderKey, string(raw))
+	ph := s.globalPlaceholders()
+	if _, ok := ph[key]; !ok {
+		return nil
+	}
+	delete(ph, key)
+	raw, err := json.Marshal(ph)
+	if err != nil {
+		return err
+	}
+	return s.db.SetSetting(globalPlaceholderKey, string(raw))
 }
 
 // mergedPlaceholders = the GLOBAL customs + this chat's LOCAL customs,
 // local winning on key collisions (the chat is the more specific scope).
 // This is the map that substitutes into personas AND feeds trigger keys.
 func (s *Server) mergedPlaceholders(sess *store.Session) map[string]string {
-        ph := s.globalPlaceholders()
-        for k, v := range parsePlaceholders(sess) {
-                ph[k] = v
-        }
-        return ph
+	ph := s.globalPlaceholders()
+	for k, v := range parsePlaceholders(sess) {
+		ph[k] = v
+	}
+	return ph
 }
 
 // resolveActivePersona picks THE persona in effect for this turn:
@@ -414,61 +414,61 @@ func (s *Server) mergedPlaceholders(sess *store.Session) map[string]string {
 //  4. else nil → the app default persona (v0.28: an all-inactive list is
 //     the user's explicit way of saying "run on the app default").
 func resolveActivePersona(sess *store.Session, m personaMetrics) *PersonaSpec {
-        return currentServer.resolveActivePersonaMerged(parsePersonas(sess), sess, m)
+	return currentServer.resolveActivePersonaMerged(parsePersonas(sess), sess, m)
 }
 
 // resolveActivePersonaMerged — v0.29: needs the Server for the GLOBAL
 // custom placeholders (trigger keys may live there).
 func (s *Server) resolveActivePersonaMerged(specs []PersonaSpec, sess *store.Session, m personaMetrics) *PersonaSpec {
-        if len(specs) == 0 {
-                return nil
-        }
-        ph := s.mergedPlaceholders(sess)
+	if len(specs) == 0 {
+		return nil
+	}
+	ph := s.mergedPlaceholders(sess)
 
-        // 1. trigger personas (in order).
-        for i := range specs {
-                if specs[i].Mode == "trigger" && s.triggerSatisfied(sess, specs[i].Trigger, ph, m) {
-                        return &specs[i]
-                }
-        }
-        // 2. always personas (first wins — deterministic).
-        for i := range specs {
-                if specs[i].Mode == "always" {
-                        return &specs[i]
-                }
-        }
-        // 3. shuffle pool.
-        var pool []*PersonaSpec
-        for i := range specs {
-                if specs[i].Mode == "shuffle" {
-                        pool = append(pool, &specs[i])
-                }
-        }
-        if len(pool) > 0 {
-                shuffleMu.Lock()
-                pick, ok := shufflePicks[sess.ID]
-                shuffleMu.Unlock()
-                if ok {
-                        for i := range pool {
-                                if pool[i].ID == pick {
-                                        return pool[i]
-                                }
-                        }
-                }
-                // (re-)roll — cached until the engine restarts or the pick vanishes.
-                chosen := pool[rand.Intn(len(pool))]
-                shuffleMu.Lock()
-                shufflePicks[sess.ID] = chosen.ID
-                shuffleMu.Unlock()
-                return chosen
-        }
-        // 4. v0.28: all-inactive (or all-trigger with nothing satisfied) —
-        // the app's built-in default persona takes over. Returning an
-        // INACTIVE persona here would silently ignore the user's off switch.
-        if specs[0].Mode == "inactive" {
-                return nil
-        }
-        return &specs[0]
+	// 1. trigger personas (in order).
+	for i := range specs {
+		if specs[i].Mode == "trigger" && s.triggerSatisfied(sess, specs[i].Trigger, ph, m) {
+			return &specs[i]
+		}
+	}
+	// 2. always personas (first wins — deterministic).
+	for i := range specs {
+		if specs[i].Mode == "always" {
+			return &specs[i]
+		}
+	}
+	// 3. shuffle pool.
+	var pool []*PersonaSpec
+	for i := range specs {
+		if specs[i].Mode == "shuffle" {
+			pool = append(pool, &specs[i])
+		}
+	}
+	if len(pool) > 0 {
+		shuffleMu.Lock()
+		pick, ok := shufflePicks[sess.ID]
+		shuffleMu.Unlock()
+		if ok {
+			for i := range pool {
+				if pool[i].ID == pick {
+					return pool[i]
+				}
+			}
+		}
+		// (re-)roll — cached until the engine restarts or the pick vanishes.
+		chosen := pool[rand.Intn(len(pool))]
+		shuffleMu.Lock()
+		shufflePicks[sess.ID] = chosen.ID
+		shuffleMu.Unlock()
+		return chosen
+	}
+	// 4. v0.28: all-inactive (or all-trigger with nothing satisfied) —
+	// the app's built-in default persona takes over. Returning an
+	// INACTIVE persona here would silently ignore the user's off switch.
+	if specs[0].Mode == "inactive" {
+		return nil
+	}
+	return &specs[0]
 }
 
 // currentServer is set by New() so the package-level resolveActivePersona
@@ -481,25 +481,25 @@ var currentServer *Server
 // against the persona library's downloaded rows. Mirrors the UI's
 // importPersona lookup convention.
 func (s *Server) findDownloadedPersona(ref string) *hub.LocalItem {
-        want := strings.ToLower(strings.TrimSpace(ref))
-        if want == "" {
-                return nil
-        }
-        rows, err := s.hub.Downloads("persona")
-        if err != nil {
-                return nil
-        }
-        for _, r := range rows { // exact pass
-                if strings.EqualFold(r.Item.Name, ref) || strings.EqualFold(r.Item.ID, ref) {
-                        return r
-                }
-        }
-        for _, r := range rows { // substring pass
-                if strings.Contains(strings.ToLower(r.Item.Name), want) || strings.Contains(strings.ToLower(r.Item.ID), want) {
-                        return r
-                }
-        }
-        return nil
+	want := strings.ToLower(strings.TrimSpace(ref))
+	if want == "" {
+		return nil
+	}
+	rows, err := s.hub.Downloads("persona")
+	if err != nil {
+		return nil
+	}
+	for _, r := range rows { // exact pass
+		if strings.EqualFold(r.Item.Name, ref) || strings.EqualFold(r.Item.ID, ref) {
+			return r
+		}
+	}
+	for _, r := range rows { // substring pass
+		if strings.Contains(strings.ToLower(r.Item.Name), want) || strings.Contains(strings.ToLower(r.Item.ID), want) {
+			return r
+		}
+	}
+	return nil
 }
 
 // runPersonaTool executes the persona_* local tools against a session —
@@ -507,239 +507,239 @@ func (s *Server) findDownloadedPersona(ref string) *hub.LocalItem {
 // should be able to [switch/create/edit its persona] easily").
 // Returns an OBSERVATION-shaped string; errors are observations too.
 func (s *Server) runPersonaTool(sessID, name, argJSON string) string {
-        sess, err := s.db.GetSession(sessID)
-        if err != nil || sess == nil {
-                return "OBSERVATION:\nerror: session not found"
-        }
-        var args map[string]any
-        if strings.TrimSpace(argJSON) != "" {
-                if err := json.Unmarshal([]byte(argJSON), &args); err != nil {
-                        return "OBSERVATION:\nerror: arguments must be a JSON object — " + err.Error()
-                }
-        }
-        if args == nil {
-                args = map[string]any{}
-        }
-        getStr := func(k string) string {
-                v, _ := args[k].(string)
-                return strings.TrimSpace(v)
-        }
+	sess, err := s.db.GetSession(sessID)
+	if err != nil || sess == nil {
+		return "OBSERVATION:\nerror: session not found"
+	}
+	var args map[string]any
+	if strings.TrimSpace(argJSON) != "" {
+		if err := json.Unmarshal([]byte(argJSON), &args); err != nil {
+			return "OBSERVATION:\nerror: arguments must be a JSON object — " + err.Error()
+		}
+	}
+	if args == nil {
+		args = map[string]any{}
+	}
+	getStr := func(k string) string {
+		v, _ := args[k].(string)
+		return strings.TrimSpace(v)
+	}
 
-        switch name {
-        case "persona_list":
-                specs := parsePersonas(sess)
-                out := make([]map[string]any, 0, len(specs))
-                for i := range specs {
-                        p := specs[i]
-                        entry := map[string]any{"id": p.ID, "name": p.Name, "mode": p.Mode}
-                        if p.Trigger != nil {
-                                entry["trigger"] = p.Trigger
-                        }
-                        if p.Text != "" {
-                                n := len(p.Text)
-                                if n > 80 {
-                                        entry["text_preview"] = p.Text[:80] + "…"
-                                } else {
-                                        entry["text_preview"] = p.Text
-                                }
-                                entry["text_chars"] = n
-                        }
-                        out = append(out, entry)
-                }
-                ph := parsePlaceholders(sess)
-                // v0.73: the hub personas the bot could import (persona_set
-                // {"from": …}) — name + id, clipped to the first 20.
-                var hubPersonas []map[string]any
-                if rows, err := s.hub.Downloads("persona"); err == nil {
-                        for i, r := range rows {
-                                if i >= 20 {
-                                        break
-                                }
-                                hubPersonas = append(hubPersonas, map[string]any{"name": r.Item.Name, "id": r.Item.ID})
-                        }
-                }
-                b, _ := json.Marshal(map[string]any{
-                        "personas":            out,
-                        "hub_personas":        hubPersonas,            // importable via persona_set {"from": name}
-                        "placeholders":        ph,                     // this chat's local customs
-                        "global_placeholders": s.globalPlaceholders(), // engine-wide customs
-                })
-                return "OBSERVATION:\n" + string(b)
+	switch name {
+	case "persona_list":
+		specs := parsePersonas(sess)
+		out := make([]map[string]any, 0, len(specs))
+		for i := range specs {
+			p := specs[i]
+			entry := map[string]any{"id": p.ID, "name": p.Name, "mode": p.Mode}
+			if p.Trigger != nil {
+				entry["trigger"] = p.Trigger
+			}
+			if p.Text != "" {
+				n := len(p.Text)
+				if n > 80 {
+					entry["text_preview"] = p.Text[:80] + "…"
+				} else {
+					entry["text_preview"] = p.Text
+				}
+				entry["text_chars"] = n
+			}
+			out = append(out, entry)
+		}
+		ph := parsePlaceholders(sess)
+		// v0.73: the hub personas the bot could import (persona_set
+		// {"from": …}) — name + id, clipped to the first 20.
+		var hubPersonas []map[string]any
+		if rows, err := s.hub.Downloads("persona"); err == nil {
+			for i, r := range rows {
+				if i >= 20 {
+					break
+				}
+				hubPersonas = append(hubPersonas, map[string]any{"name": r.Item.Name, "id": r.Item.ID})
+			}
+		}
+		b, _ := json.Marshal(map[string]any{
+			"personas":            out,
+			"hub_personas":        hubPersonas,            // importable via persona_set {"from": name}
+			"placeholders":        ph,                     // this chat's local customs
+			"global_placeholders": s.globalPlaceholders(), // engine-wide customs
+		})
+		return "OBSERVATION:\n" + string(b)
 
-        case "persona_set":
-                specs := parsePersonas(sess)
-                id := getStr("id")
-                var target *PersonaSpec
-                if id != "" {
-                        for i := range specs {
-                                if specs[i].ID == id {
-                                        target = &specs[i]
-                                        break
-                                }
-                        }
-                }
-                // v0.73: THE PERSONA HAND — "from" imports a hub persona the
-                // bot DOWNLOADED (a library item; the UI's importPersona
-                // twin, bot-side). Lib-gated like every library use (the
-                // Bot Library pill + the tweaks twin must be ON).
-                if from := getStr("from"); from != "" {
-                        if target != nil {
-                                return "OBSERVATION:\nerror: pass either id (edit) or from (import a hub persona), not both"
-                        }
-                        if !s.sessionLibOn(sess.ID) {
-                                return "OBSERVATION:\nerror: the chat's Bot Library is OFF — you can browse and recommend, but using downloaded personas is refused until the user flips the \U0001F6E0 lib pill (or ✦ tweaks → Bot Library) back on"
-                        }
-                        if !s.tweaksBotLibOn(sess.ID) {
-                                return "OBSERVATION:\nerror: the chat's Bot Library switch is OFF — flip ✦ tweaks → Bot Library back on to use downloaded personas"
-                        }
-                        row := s.findDownloadedPersona(from)
-                        if row == nil {
-                                return "OBSERVATION:\nerror: no downloaded persona '" + oneLine(from, 60) + "' — the hublib tool with {\"action\":\"search\",\"type\":\"persona\",\"q\":\"…" + oneLine(from, 30) + "\"} then {\"action\":\"download\",…} lands it first"
-                        }
-                        specs = append(specs, PersonaSpec{ID: fmt.Sprintf("p_%d", rand.Intn(1<<30)), Mode: "inactive", Name: row.Item.Name})
-                        target = &specs[len(specs)-1]
-                        target.Text = row.Payload
-                        if v := getStr("name"); v != "" {
-                                target.Name = v
-                        }
-                }
-                isNew := target == nil
-                if isNew {
-                        specs = append(specs, PersonaSpec{ID: fmt.Sprintf("p_%d", rand.Intn(1<<30)), Mode: "inactive"})
-                        target = &specs[len(specs)-1]
-                }
-                if v := getStr("name"); v != "" {
-                        target.Name = v
-                }
-                if v, ok := args["text"].(string); ok { // "" clears → app default text
-                        target.Text = v
-                }
-                // activate: true promotes it to THE always persona (single-active).
-                if act, _ := args["activate"].(bool); act {
-                        for i := range specs {
-                                if specs[i].Mode == "always" {
-                                        specs[i].Mode = "inactive"
-                                }
-                        }
-                        target.Mode = "always"
-                }
-                for i := range specs {
-                        normalizeSpec(&specs[i])
-                }
-                enforceSingleActive(specs)
-                raw, _ := json.Marshal(specs)
-                sess.Personas = string(raw)
-                if err := s.db.UpdateSession(sess); err != nil {
-                        return "OBSERVATION:\nerror: " + err.Error()
-                }
-                if target.Mode == "always" {
-                        // v0.73: the deterministic pill marker (the chatpanel's
-                        // turnBundleOf matches "PERSONA ACTIVE — <name>").
-                        return fmt.Sprintf("OBSERVATION:\nPERSONA ACTIVE — %s. It is now the always-active persona of this chat (any previous one was deactivated); every later turn follows it. List: %s", target.Name, personaNameList(specs))
-                }
-                verb := "updated"
-                if isNew {
-                        verb = "created (inactive — pass activate:true to make it the active one)"
-                }
-                return fmt.Sprintf("OBSERVATION:\npersona %s: %s. Current list: %s", target.Name, verb, personaNameList(specs))
+	case "persona_set":
+		specs := parsePersonas(sess)
+		id := getStr("id")
+		var target *PersonaSpec
+		if id != "" {
+			for i := range specs {
+				if specs[i].ID == id {
+					target = &specs[i]
+					break
+				}
+			}
+		}
+		// v0.73: THE PERSONA HAND — "from" imports a hub persona the
+		// bot DOWNLOADED (a library item; the UI's importPersona
+		// twin, bot-side). Lib-gated like every library use (the
+		// Bot Library pill + the tweaks twin must be ON).
+		if from := getStr("from"); from != "" {
+			if target != nil {
+				return "OBSERVATION:\nerror: pass either id (edit) or from (import a hub persona), not both"
+			}
+			if !s.sessionLibOn(sess.ID) {
+				return "OBSERVATION:\nerror: the chat's Bot Library is OFF — you can browse and recommend, but using downloaded personas is refused until the user flips the \U0001F6E0 lib pill (or ✦ tweaks → Bot Library) back on"
+			}
+			if !s.tweaksBotLibOn(sess.ID) {
+				return "OBSERVATION:\nerror: the chat's Bot Library switch is OFF — flip ✦ tweaks → Bot Library back on to use downloaded personas"
+			}
+			row := s.findDownloadedPersona(from)
+			if row == nil {
+				return "OBSERVATION:\nerror: no downloaded persona '" + oneLine(from, 60) + "' — the hublib tool with {\"action\":\"search\",\"type\":\"persona\",\"q\":\"…" + oneLine(from, 30) + "\"} then {\"action\":\"download\",…} lands it first"
+			}
+			specs = append(specs, PersonaSpec{ID: fmt.Sprintf("p_%d", rand.Intn(1<<30)), Mode: "inactive", Name: row.Item.Name})
+			target = &specs[len(specs)-1]
+			target.Text = row.Payload
+			if v := getStr("name"); v != "" {
+				target.Name = v
+			}
+		}
+		isNew := target == nil
+		if isNew {
+			specs = append(specs, PersonaSpec{ID: fmt.Sprintf("p_%d", rand.Intn(1<<30)), Mode: "inactive"})
+			target = &specs[len(specs)-1]
+		}
+		if v := getStr("name"); v != "" {
+			target.Name = v
+		}
+		if v, ok := args["text"].(string); ok { // "" clears → app default text
+			target.Text = v
+		}
+		// activate: true promotes it to THE always persona (single-active).
+		if act, _ := args["activate"].(bool); act {
+			for i := range specs {
+				if specs[i].Mode == "always" {
+					specs[i].Mode = "inactive"
+				}
+			}
+			target.Mode = "always"
+		}
+		for i := range specs {
+			normalizeSpec(&specs[i])
+		}
+		enforceSingleActive(specs)
+		raw, _ := json.Marshal(specs)
+		sess.Personas = string(raw)
+		if err := s.db.UpdateSession(sess); err != nil {
+			return "OBSERVATION:\nerror: " + err.Error()
+		}
+		if target.Mode == "always" {
+			// v0.73: the deterministic pill marker (the chatpanel's
+			// turnBundleOf matches "PERSONA ACTIVE — <name>").
+			return fmt.Sprintf("OBSERVATION:\nPERSONA ACTIVE — %s. It is now the always-active persona of this chat (any previous one was deactivated); every later turn follows it. List: %s", target.Name, personaNameList(specs))
+		}
+		verb := "updated"
+		if isNew {
+			verb = "created (inactive — pass activate:true to make it the active one)"
+		}
+		return fmt.Sprintf("OBSERVATION:\npersona %s: %s. Current list: %s", target.Name, verb, personaNameList(specs))
 
-        case "persona_activate":
-                id := getStr("id")
-                if id == "" {
-                        // no id → deactivate everything (back to the app default)
-                        specs := parsePersonas(sess)
-                        for i := range specs {
-                                specs[i].Mode = "inactive"
-                        }
-                        raw, _ := json.Marshal(specs)
-                        sess.Personas = string(raw)
-                        if err := s.db.UpdateSession(sess); err != nil {
-                                return "OBSERVATION:\nerror: " + err.Error()
-                        }
-                        return "OBSERVATION:\nall personas deactivated — the app's default persona is now in effect"
-                }
-                specs := parsePersonas(sess)
-                var target *PersonaSpec
-                for i := range specs {
-                        if specs[i].ID == id {
-                                target = &specs[i]
-                                break
-                        }
-                }
-                if target == nil {
-                        return "OBSERVATION:\nerror: no persona with id " + id + " — list them with persona_list"
-                }
-                for i := range specs {
-                        if specs[i].Mode == "always" {
-                                specs[i].Mode = "inactive"
-                        }
-                }
-                target.Mode = "always"
-                raw, _ := json.Marshal(specs)
-                sess.Personas = string(raw)
-                if err := s.db.UpdateSession(sess); err != nil {
-                        return "OBSERVATION:\nerror: " + err.Error()
-                }
-                // v0.73: the deterministic pill marker (twin of persona_set's).
-                return fmt.Sprintf("OBSERVATION:\nPERSONA ACTIVE — %s. It is now the always-active persona of this chat (any previous one was deactivated); every later turn follows it. List: %s", target.Name, personaNameList(specs))
+	case "persona_activate":
+		id := getStr("id")
+		if id == "" {
+			// no id → deactivate everything (back to the app default)
+			specs := parsePersonas(sess)
+			for i := range specs {
+				specs[i].Mode = "inactive"
+			}
+			raw, _ := json.Marshal(specs)
+			sess.Personas = string(raw)
+			if err := s.db.UpdateSession(sess); err != nil {
+				return "OBSERVATION:\nerror: " + err.Error()
+			}
+			return "OBSERVATION:\nall personas deactivated — the app's default persona is now in effect"
+		}
+		specs := parsePersonas(sess)
+		var target *PersonaSpec
+		for i := range specs {
+			if specs[i].ID == id {
+				target = &specs[i]
+				break
+			}
+		}
+		if target == nil {
+			return "OBSERVATION:\nerror: no persona with id " + id + " — list them with persona_list"
+		}
+		for i := range specs {
+			if specs[i].Mode == "always" {
+				specs[i].Mode = "inactive"
+			}
+		}
+		target.Mode = "always"
+		raw, _ := json.Marshal(specs)
+		sess.Personas = string(raw)
+		if err := s.db.UpdateSession(sess); err != nil {
+			return "OBSERVATION:\nerror: " + err.Error()
+		}
+		// v0.73: the deterministic pill marker (twin of persona_set's).
+		return fmt.Sprintf("OBSERVATION:\nPERSONA ACTIVE — %s. It is now the always-active persona of this chat (any previous one was deactivated); every later turn follows it. List: %s", target.Name, personaNameList(specs))
 
-        case "placeholder_set":
-                key := getStr("key")
-                if key == "" {
-                        return "OBSERVATION:\nerror: placeholder_set needs {\"key\": \"...\", \"value\": \"...\"}"
-                }
-                value, _ := args["value"].(string)
-                // v0.29: scope — "local" (this chat only, the default) or
-                // "global" (recognized by every chatbot).
-                scope := getStr("scope")
-                if scope == "" {
-                        scope = "local"
-                }
-                if scope != "local" && scope != "global" {
-                        return "OBSERVATION:\nerror: scope must be \"local\" or \"global\""
-                }
-                if err := s.setPlaceholder(sess, key, value, scope); err != nil {
-                        return "OBSERVATION:\nerror: " + err.Error()
-                }
-                where := "this chat"
-                if scope == "global" {
-                        where = "every chat (global)"
-                }
-                return "OBSERVATION:\nplaceholder {" + key + "} set for " + where + " — usable in personas and as a trigger key"
-        }
-        return "OBSERVATION:\nerror: unknown persona tool " + name
+	case "placeholder_set":
+		key := getStr("key")
+		if key == "" {
+			return "OBSERVATION:\nerror: placeholder_set needs {\"key\": \"...\", \"value\": \"...\"}"
+		}
+		value, _ := args["value"].(string)
+		// v0.29: scope — "local" (this chat only, the default) or
+		// "global" (recognized by every chatbot).
+		scope := getStr("scope")
+		if scope == "" {
+			scope = "local"
+		}
+		if scope != "local" && scope != "global" {
+			return "OBSERVATION:\nerror: scope must be \"local\" or \"global\""
+		}
+		if err := s.setPlaceholder(sess, key, value, scope); err != nil {
+			return "OBSERVATION:\nerror: " + err.Error()
+		}
+		where := "this chat"
+		if scope == "global" {
+			where = "every chat (global)"
+		}
+		return "OBSERVATION:\nplaceholder {" + key + "} set for " + where + " — usable in personas and as a trigger key"
+	}
+	return "OBSERVATION:\nerror: unknown persona tool " + name
 }
 
 // setPlaceholder writes one custom placeholder, local (the session's map)
 // or global (the engine-wide map). v1.27.1: the bot door obeys the same
 // hard-refuse law as the HTTP PUT — a reserved key never becomes a custom.
 func (s *Server) setPlaceholder(sess *store.Session, key, value, scope string) error {
-        key = strings.TrimSpace(strings.Trim(key, "{}"))
-        if key == "" || !validPlaceholderKey(key) {
-                return fmt.Errorf("key must be letters, numbers and _ (built-ins are reserved)")
-        }
-        if class, bad := isReservedPlaceholderKey(key); bad {
-                return fmt.Errorf("%s is %s — pick another key", key, class)
-        }
-        if scope == "global" {
-                return s.setGlobalPlaceholder(key, value)
-        }
-        ph := parsePlaceholders(sess)
-        ph[key] = value
-        raw, err := json.Marshal(ph)
-        if err != nil {
-                return err
-        }
-        sess.Placeholders = string(raw)
-        return s.db.UpdateSession(sess)
+	key = strings.TrimSpace(strings.Trim(key, "{}"))
+	if key == "" || !validPlaceholderKey(key) {
+		return fmt.Errorf("key must be letters, numbers and _ (built-ins are reserved)")
+	}
+	if class, bad := isReservedPlaceholderKey(key); bad {
+		return fmt.Errorf("%s is %s — pick another key", key, class)
+	}
+	if scope == "global" {
+		return s.setGlobalPlaceholder(key, value)
+	}
+	ph := parsePlaceholders(sess)
+	ph[key] = value
+	raw, err := json.Marshal(ph)
+	if err != nil {
+		return err
+	}
+	sess.Placeholders = string(raw)
+	return s.db.UpdateSession(sess)
 }
 
 func personaNameList(specs []PersonaSpec) string {
-        parts := make([]string, 0, len(specs))
-        for i := range specs {
-                parts = append(parts, specs[i].Name+" ("+specs[i].Mode+")")
-        }
-        return strings.Join(parts, ", ")
+	parts := make([]string, 0, len(specs))
+	for i := range specs {
+		parts = append(parts, specs[i].Name+" ("+specs[i].Mode+")")
+	}
+	return strings.Join(parts, ", ")
 }
 
 // triggerSatisfied evaluates {key op value}. v0.29 keys:
@@ -752,78 +752,78 @@ func personaNameList(specs []PersonaSpec) string {
 // Ordering ops on non-numeric values are false — never an error, the
 // persona simply doesn't fire.
 func (s *Server) triggerSatisfied(sess *store.Session, t *PersonaTrigger, ph map[string]string, m personaMetrics) bool {
-        if t == nil || strings.TrimSpace(t.Key) == "" {
-                return false
-        }
-        key := strings.TrimSpace(t.Key)
-        cur, isStr := "", false
-        switch key {
-        case "messages", "message_count":
-                cur = strconv.Itoa(m.Messages)
-        case "turns", "turn_count":
-                cur = strconv.Itoa(m.Turns)
-        case "name":
-                cur = strings.TrimSpace(sess.Title)
-                isStr = true
-        case "model":
-                cur = prettyModelName(sess.Model)
-                isStr = true
-        case "provider":
-                cur = providerLabel(sess.Provider)
-                isStr = true
-        case "date":
-                // v1.27.3 THE TRIGGER TIE: {date} was substitutable but never
-                // triggerable — a date trigger silently never fired. Now the
-                // weekday string ("Monday"…"Sunday") compares case-
-                // insensitively with = / != — the "activate on Monday"
-                // pattern. Ordering ops stay false (a weekday has no order).
-                cur = time.Now().Format("Monday")
-                isStr = true
-        default:
-                v, ok := ph[key]
-                if !ok {
-                        return false
-                }
-                cur = strings.TrimSpace(v)
-                if _, err := strconv.ParseFloat(cur, 64); err != nil {
-                        isStr = true // a text-valued custom placeholder
-                }
-        }
-        want := strings.TrimSpace(t.Value)
-        // Numeric comparison when BOTH sides are numbers.
-        if !isStr {
-                if cn, err1 := strconv.ParseFloat(cur, 64); err1 == nil {
-                        if wn, err2 := strconv.ParseFloat(want, 64); err2 == nil {
-                                return cmpNum(cn, t.Op, wn)
-                        }
-                }
-        }
-        // String comparison: = / != are case-insensitive; ordering is false.
-        switch t.Op {
-        case "=", "==":
-                return strings.EqualFold(cur, want)
-        case "!=", "<>":
-                return !strings.EqualFold(cur, want)
-        }
-        return false
+	if t == nil || strings.TrimSpace(t.Key) == "" {
+		return false
+	}
+	key := strings.TrimSpace(t.Key)
+	cur, isStr := "", false
+	switch key {
+	case "messages", "message_count":
+		cur = strconv.Itoa(m.Messages)
+	case "turns", "turn_count":
+		cur = strconv.Itoa(m.Turns)
+	case "name":
+		cur = strings.TrimSpace(sess.Title)
+		isStr = true
+	case "model":
+		cur = prettyModelName(sess.Model)
+		isStr = true
+	case "provider":
+		cur = providerLabel(sess.Provider)
+		isStr = true
+	case "date":
+		// v1.27.3 THE TRIGGER TIE: {date} was substitutable but never
+		// triggerable — a date trigger silently never fired. Now the
+		// weekday string ("Monday"…"Sunday") compares case-
+		// insensitively with = / != — the "activate on Monday"
+		// pattern. Ordering ops stay false (a weekday has no order).
+		cur = time.Now().Format("Monday")
+		isStr = true
+	default:
+		v, ok := ph[key]
+		if !ok {
+			return false
+		}
+		cur = strings.TrimSpace(v)
+		if _, err := strconv.ParseFloat(cur, 64); err != nil {
+			isStr = true // a text-valued custom placeholder
+		}
+	}
+	want := strings.TrimSpace(t.Value)
+	// Numeric comparison when BOTH sides are numbers.
+	if !isStr {
+		if cn, err1 := strconv.ParseFloat(cur, 64); err1 == nil {
+			if wn, err2 := strconv.ParseFloat(want, 64); err2 == nil {
+				return cmpNum(cn, t.Op, wn)
+			}
+		}
+	}
+	// String comparison: = / != are case-insensitive; ordering is false.
+	switch t.Op {
+	case "=", "==":
+		return strings.EqualFold(cur, want)
+	case "!=", "<>":
+		return !strings.EqualFold(cur, want)
+	}
+	return false
 }
 
 func cmpNum(cur float64, op string, want float64) bool {
-        switch op {
-        case "=", "==":
-                return cur == want
-        case "<":
-                return cur < want
-        case ">":
-                return cur > want
-        case "!=", "<>":
-                return cur != want
-        case "<=":
-                return cur <= want
-        case ">=":
-                return cur >= want
-        }
-        return false
+	switch op {
+	case "=", "==":
+		return cur == want
+	case "<":
+		return cur < want
+	case ">":
+		return cur > want
+	case "!=", "<>":
+		return cur != want
+	case "<=":
+		return cur <= want
+	case ">=":
+		return cur >= want
+	}
+	return false
 }
 
 // substituteAllVars replaces every placeholder in a persona text:
@@ -839,58 +839,58 @@ func cmpNum(cur float64, op string, want float64) bool {
 // only runs when some custom value carries a '{' at all (the unknown-
 // key-literal law stays byte-identical for everyone else).
 func substituteAllVars(text, chatName, model, provider string, ph map[string]string) string {
-        if !strings.Contains(text, "{") {
-                return text
-        }
-        out := substituteVarsOnePass(text, chatName, model, provider, ph)
-        templateCustom := false
-        for _, v := range ph {
-                if strings.Contains(v, "{") {
-                        templateCustom = true
-                        break
-                }
-        }
-        if templateCustom && strings.Contains(out, "{") {
-                out = substituteVarsOnePass(out, chatName, model, provider, ph)
-        }
-        return out
+	if !strings.Contains(text, "{") {
+		return text
+	}
+	out := substituteVarsOnePass(text, chatName, model, provider, ph)
+	templateCustom := false
+	for _, v := range ph {
+		if strings.Contains(v, "{") {
+			templateCustom = true
+			break
+		}
+	}
+	if templateCustom && strings.Contains(out, "{") {
+		out = substituteVarsOnePass(out, chatName, model, provider, ph)
+	}
+	return out
 }
 
 // substituteVarsOnePass — the original single pass (byte-identical math:
 // the fixed replacer + the longest-first custom keys).
 func substituteVarsOnePass(text, chatName, model, provider string, ph map[string]string) string {
-        m := prettyModelName(model)
-        if m == "" {
-                m = "an AI assistant"
-        }
-        r := strings.NewReplacer(
-                "{name}", strings.TrimSpace(chatName),
-                "{model}", m,
-                "{provider}", providerLabel(provider),
-                "{skills}", "(no skills attached yet)",
-                // v1.22.0 THE MIRROR: {date} joins the vocabulary (the
-                // default preamble's identity line; personas may use it too).
-                "{date}", time.Now().Format("Monday, 2 January 2006"),
-        )
-        out := r.Replace(text)
-        // custom placeholders — longest keys first (a {a} must not eat {ab}).
-        keys := make([]string, 0, len(ph))
-        for k := range ph {
-                if strings.TrimSpace(k) != "" {
-                        keys = append(keys, k)
-                }
-        }
-        for i := 0; i < len(keys); i++ {
-                for j := i + 1; j < len(keys); j++ {
-                        if len(keys[j]) > len(keys[i]) {
-                                keys[i], keys[j] = keys[j], keys[i]
-                        }
-                }
-        }
-        for _, k := range keys {
-                out = strings.ReplaceAll(out, "{"+k+"}", ph[k])
-        }
-        return out
+	m := prettyModelName(model)
+	if m == "" {
+		m = "an AI assistant"
+	}
+	r := strings.NewReplacer(
+		"{name}", strings.TrimSpace(chatName),
+		"{model}", m,
+		"{provider}", providerLabel(provider),
+		"{skills}", "(no skills attached yet)",
+		// v1.22.0 THE MIRROR: {date} joins the vocabulary (the
+		// default preamble's identity line; personas may use it too).
+		"{date}", time.Now().Format("Monday, 2 January 2006"),
+	)
+	out := r.Replace(text)
+	// custom placeholders — longest keys first (a {a} must not eat {ab}).
+	keys := make([]string, 0, len(ph))
+	for k := range ph {
+		if strings.TrimSpace(k) != "" {
+			keys = append(keys, k)
+		}
+	}
+	for i := 0; i < len(keys); i++ {
+		for j := i + 1; j < len(keys); j++ {
+			if len(keys[j]) > len(keys[i]) {
+				keys[i], keys[j] = keys[j], keys[i]
+			}
+		}
+	}
+	for _, k := range keys {
+		out = strings.ReplaceAll(out, "{"+k+"}", ph[k])
+	}
+	return out
 }
 
 // ── v0.29: the GLOBAL placeholders API ──────────────────────────────
@@ -903,67 +903,67 @@ func substituteVarsOnePass(text, chatName, model, provider string, ph map[string
 // the engine does the same on every turn (mergedPlaceholders).
 
 func (s *Server) handlePlaceholdersGet(w http.ResponseWriter, r *http.Request) {
-        // v1.27.2 THE TIE: the payload carries the WHOLE vocabulary — the
-        // global customs, the built-ins and the MIRROR blocks, all from
-        // the same shared slices the reserved law reads. The client caches
-        // both lists into PH_VOCAB and retires its hand-maintained copies.
-        writeJSON(w, 200, map[string]any{
-                "placeholders": s.globalPlaceholders(),
-                "builtin":      placeholderBuiltins,
-                "blocks":       placeholderBlocks,
-        })
+	// v1.27.2 THE TIE: the payload carries the WHOLE vocabulary — the
+	// global customs, the built-ins and the MIRROR blocks, all from
+	// the same shared slices the reserved law reads. The client caches
+	// both lists into PH_VOCAB and retires its hand-maintained copies.
+	writeJSON(w, 200, map[string]any{
+		"placeholders": s.globalPlaceholders(),
+		"builtin":      placeholderBuiltins,
+		"blocks":       placeholderBlocks,
+	})
 }
 
 func (s *Server) handlePlaceholdersSet(w http.ResponseWriter, r *http.Request) {
-        var req struct {
-                Key   string `json:"key"`
-                Value string `json:"value"`
-        }
-        if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-                writeError(w, 400, "bad JSON: "+err.Error())
-                return
-        }
-        req.Key = strings.TrimSpace(strings.Trim(req.Key, "{}"))
-        if req.Key == "" || !validPlaceholderKey(req.Key) {
-                writeError(w, 400, "key must be letters, numbers and _ (built-ins are reserved)")
-                return
-        }
-        // v1.27.1 THE HARD REFUSE: built-ins AND the five MIRROR block
-        // names are reserved — a custom {session} would shadow the live
-        // block (customs substitute first). One shared law, three doors.
-        if class, bad := isReservedPlaceholderKey(req.Key); bad {
-                writeError(w, 400, req.Key+" is "+class+" — pick another key")
-                return
-        }
-        if err := s.setGlobalPlaceholder(req.Key, req.Value); err != nil {
-                writeError(w, 500, err.Error())
-                return
-        }
-        writeJSON(w, 200, map[string]any{"ok": true, "key": req.Key, "value": req.Value})
+	var req struct {
+		Key   string `json:"key"`
+		Value string `json:"value"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, 400, "bad JSON: "+err.Error())
+		return
+	}
+	req.Key = strings.TrimSpace(strings.Trim(req.Key, "{}"))
+	if req.Key == "" || !validPlaceholderKey(req.Key) {
+		writeError(w, 400, "key must be letters, numbers and _ (built-ins are reserved)")
+		return
+	}
+	// v1.27.1 THE HARD REFUSE: built-ins AND the five MIRROR block
+	// names are reserved — a custom {session} would shadow the live
+	// block (customs substitute first). One shared law, three doors.
+	if class, bad := isReservedPlaceholderKey(req.Key); bad {
+		writeError(w, 400, req.Key+" is "+class+" — pick another key")
+		return
+	}
+	if err := s.setGlobalPlaceholder(req.Key, req.Value); err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "key": req.Key, "value": req.Value})
 }
 
 func (s *Server) handlePlaceholdersDelete(w http.ResponseWriter, r *http.Request) {
-        key := strings.TrimSpace(strings.Trim(r.PathValue("key"), "{}"))
-        if key == "" {
-                writeError(w, 400, "key is required")
-                return
-        }
-        if err := s.deleteGlobalPlaceholder(key); err != nil {
-                writeError(w, 500, err.Error())
-                return
-        }
-        writeJSON(w, 200, map[string]any{"ok": true})
+	key := strings.TrimSpace(strings.Trim(r.PathValue("key"), "{}"))
+	if key == "" {
+		writeError(w, 400, "key is required")
+		return
+	}
+	if err := s.deleteGlobalPlaceholder(key); err != nil {
+		writeError(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
 // validPlaceholderKey: [A-Za-z0-9_]+ (mirrors the web UI's add box).
 func validPlaceholderKey(k string) bool {
-        if k == "" {
-                return false
-        }
-        for _, c := range k {
-                if !(c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) {
-                        return false
-                }
-        }
-        return true
+	if k == "" {
+		return false
+	}
+	for _, c := range k {
+		if !(c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) {
+			return false
+		}
+	}
+	return true
 }

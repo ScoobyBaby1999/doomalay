@@ -56,18 +56,18 @@ const termuxStreamGCTTL = 5 * time.Minute
 
 // termuxStream is ONE live stream (a single exec/pkg call).
 type termuxStream struct {
-	mu       sync.Mutex
-	token    string
-	session  string
-	out      string // the stdout tail (capped)
-	errS     string // the stderr tail (capped)
-	disp     string // the display tail (out+err interleaved by arrival — the PM poll's source)
-	outSeen  int    // the TRUE total stdout bytes
-	errSeen  int    // the TRUE total stderr bytes
-	done     bool
-	ec       int
-	closed   bool // the engine gave up (timeout) — appends rejected
-	at       time.Time
+	mu      sync.Mutex
+	token   string
+	session string
+	out     string // the stdout tail (capped)
+	errS    string // the stderr tail (capped)
+	disp    string // the display tail (out+err interleaved by arrival — the PM poll's source)
+	outSeen int    // the TRUE total stdout bytes
+	errSeen int    // the TRUE total stderr bytes
+	done    bool
+	ec      int
+	closed  bool // the engine gave up (timeout) — appends rejected
+	at      time.Time
 }
 
 // termuxStreams is the engine-lifetime registry.

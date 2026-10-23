@@ -47,7 +47,7 @@ func TestV1523_HealAnswersDanglingToolUse(t *testing.T) {
 	db.AppendEvent("v1523", "tool_use", toolUseEv(t, "workspace", `{"action":"read","path":"big.go"}`), "")
 	// …engine dies HERE — no tool_result, no terminal…
 	db.AppendEvent("v1523", "tool_use", toolUseEv(t, "termux", `{"action":"exec","command":"go test"}`), "")
-	db.AppendEvent("v1523", "tool_result", toolResultEv(t, "termux", "EXEC DONE ok"), "") // answered before the second call
+	db.AppendEvent("v1523", "tool_result", toolResultEv(t, "termux", "EXEC DONE ok"), "")   // answered before the second call
 	db.AppendEvent("v1523", "tool_use", toolUseEv(t, "workspace", `{"action":"tree"}`), "") // dangling
 
 	s.healInterruptedTurns()

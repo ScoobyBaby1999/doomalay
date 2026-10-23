@@ -1,9 +1,9 @@
 package server
 
 import (
-        "net/http"
+	"net/http"
 
-        "github.com/ScoobyBaby1999/doomalay/engine/internal/store"
+	"github.com/ScoobyBaby1999/doomalay/engine/internal/store"
 )
 
 // handleChats is GET /api/chats — the ALL-CHATS INDEX.
@@ -15,17 +15,17 @@ import (
 // (delete / edit / regenerate) are excluded with the same semantics as
 // buildHistory — a deleted last message never previews.
 func (s *Server) handleChats(w http.ResponseWriter, r *http.Request) {
-        limit := 200
-        items, err := s.db.ListChats(limit)
-        if err != nil {
-                writeError(w, 500, "chats: "+err.Error())
-                return
-        }
-        for _, it := range items {
-                it.Preview = store.TrimPreview(it.Preview, 140)
-        }
-        if items == nil {
-                items = []*store.ChatListItem{}
-        }
-        writeJSON(w, 200, map[string]any{"chats": items})
+	limit := 200
+	items, err := s.db.ListChats(limit)
+	if err != nil {
+		writeError(w, 500, "chats: "+err.Error())
+		return
+	}
+	for _, it := range items {
+		it.Preview = store.TrimPreview(it.Preview, 140)
+	}
+	if items == nil {
+		items = []*store.ChatListItem{}
+	}
+	writeJSON(w, 200, map[string]any{"chats": items})
 }

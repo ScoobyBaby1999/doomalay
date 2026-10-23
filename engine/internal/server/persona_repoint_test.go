@@ -88,37 +88,37 @@ func TestPersonaRePointOnSandboxSwitch(t *testing.T) {
 // diverge from the engine consts today: the web quick template carries the
 // Library section inline). The extractor parses the embedded persona.js.
 func TestWebPersonaTemplateExtraction(t *testing.T) {
-        wq, wh := webPersonaTemplates()
-        if wq == "" || wh == "" {
-                t.Fatalf("extraction failed: quick=%d chars hf=%d chars", len(wq), len(wh))
-        }
-        // the known content markers
-       	if !strings.Contains(wq, "## Library") || !strings.Contains(wq, "## Artifacts") {
-                t.Errorf("web quick template must carry the Library + Artifacts sections")
-        }
-        if !strings.Contains(wh, "HARNESS.md") || !strings.Contains(wh, "{repo}") {
-                t.Errorf("web HF template must carry the HARNESS pointer + {repo} placeholder")
-        }
-        // escape decoding worked (no literal \n two-char sequences left)
-        if strings.Contains(wq, `\n`) || strings.Contains(wh, `\n`) {
-                t.Errorf("escapes must decode to real newlines")
-        }
+	wq, wh := webPersonaTemplates()
+	if wq == "" || wh == "" {
+		t.Fatalf("extraction failed: quick=%d chars hf=%d chars", len(wq), len(wh))
+	}
+	// the known content markers
+	if !strings.Contains(wq, "## Library") || !strings.Contains(wq, "## Artifacts") {
+		t.Errorf("web quick template must carry the Library + Artifacts sections")
+	}
+	if !strings.Contains(wh, "HARNESS.md") || !strings.Contains(wh, "{repo}") {
+		t.Errorf("web HF template must carry the HARNESS pointer + {repo} placeholder")
+	}
+	// escape decoding worked (no literal \n two-char sequences left)
+	if strings.Contains(wq, `\n`) || strings.Contains(wh, `\n`) {
+		t.Errorf("escapes must decode to real newlines")
+	}
 
-        // THE FROZEN WEB DEFAULT — a persona saved verbatim from the
-        // prefilled editor (web template) re-points on a sandbox switch.
-        list := []map[string]any{
-                {"id": "w1", "name": "FrozenWebQuick", "text": wq, "mode": "always"},
-        }
-        raw, _ := json.Marshal(list)
-        sess := &store.Session{ID: "w", Sandbox: "quick", Personas: string(raw)}
-        rePointUneditedPersonas(sess, "quick", "hf")
-        var out []map[string]any
-        if err := json.Unmarshal([]byte(sess.Personas), &out); err != nil {
-                t.Fatalf("re-point left invalid JSON: %v", err)
-        }
-        if txt, _ := out[0]["text"].(string); strings.TrimSpace(txt) != "" {
-                t.Errorf("the frozen WEB default must clear on switch (it is as unedited as the engine one)")
-        }
+	// THE FROZEN WEB DEFAULT — a persona saved verbatim from the
+	// prefilled editor (web template) re-points on a sandbox switch.
+	list := []map[string]any{
+		{"id": "w1", "name": "FrozenWebQuick", "text": wq, "mode": "always"},
+	}
+	raw, _ := json.Marshal(list)
+	sess := &store.Session{ID: "w", Sandbox: "quick", Personas: string(raw)}
+	rePointUneditedPersonas(sess, "quick", "hf")
+	var out []map[string]any
+	if err := json.Unmarshal([]byte(sess.Personas), &out); err != nil {
+		t.Fatalf("re-point left invalid JSON: %v", err)
+	}
+	if txt, _ := out[0]["text"].(string); strings.TrimSpace(txt) != "" {
+		t.Errorf("the frozen WEB default must clear on switch (it is as unedited as the engine one)")
+	}
 }
 
 // TestSessionPatchRePointsPersona — the END-TO-END wiring: a real PATCH

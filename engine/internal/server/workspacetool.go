@@ -265,11 +265,11 @@ func (s *Server) wsLastReadGet(sessionID string) (wsLastReadEntry, bool) {
 // not in scope inside the verb runner; the parsed map IS the call's
 // content — deterministic, programmatic, exactly what the model sent).
 func wsVerbatimArgs(args map[string]any) string {
-        b, err := json.Marshal(args)
-        if err != nil || len(b) == 0 {
-                return ""
-        }
-        return string(b)
+	b, err := json.Marshal(args)
+	if err != nil || len(b) == 0 {
+		return ""
+	}
+	return string(b)
 }
 
 func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace, args map[string]any) string {

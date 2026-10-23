@@ -133,6 +133,42 @@ CREATE TABLE IF NOT EXISTS canvas_ops (
 );
 CREATE INDEX IF NOT EXISTS idx_canvas_ops_canvas ON canvas_ops(canvas_id, seq);
 
+-- v1.69.3 THE HANDSHAKE (PLAN-V169 §v1.69.3): the per-canvas device
+-- authorization — "sandbox it per canvas and not per account". A DEVICE
+-- is a human-approved credential (opaque 256-bit token, stored
+-- sha256-HASHED — revocation is one UPDATE, nothing forgeable offline);
+-- a MEMBER row is one device's grant on ONE canvas (a portal's target
+-- never inherits the source's members); an INVITE is the RFC-8628-shaped
+-- pairing state (a 6-digit code the OWNER shows, a 256-bit device_code
+-- the joiner polls with, a ≤5min TTL, single-use claim, the owner's
+-- physical Allow tap completes it).
+CREATE TABLE IF NOT EXISTS collab_devices (
+  id         TEXT PRIMARY KEY,
+  name       TEXT NOT NULL DEFAULT 'Device',
+  token_hash TEXT NOT NULL UNIQUE,
+  created_at REAL NOT NULL,
+  last_seen  REAL NOT NULL DEFAULT 0,
+  revoked_at REAL
+);
+CREATE TABLE IF NOT EXISTS collab_members (
+  canvas_id  TEXT NOT NULL,
+  device_id  TEXT NOT NULL,
+  role       TEXT NOT NULL DEFAULT 'editor',
+  joined_at  REAL NOT NULL,
+  PRIMARY KEY (canvas_id, device_id)
+);
+CREATE TABLE IF NOT EXISTS collab_invites (
+  canvas_id   TEXT NOT NULL,
+  code        TEXT NOT NULL,
+  device_code TEXT NOT NULL,
+  expires_at  REAL NOT NULL,
+  claimed_name TEXT,
+  claimed_at  REAL,
+  approved_at REAL,
+  denied_at   REAL,
+  PRIMARY KEY (canvas_id, code)
+);
+
 CREATE TABLE IF NOT EXISTS provider_keys (
   env_var     TEXT PRIMARY KEY,
   provider    TEXT NOT NULL,

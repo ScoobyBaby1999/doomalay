@@ -2,11 +2,12 @@
 // (the model-facing surface, through the real tool runner).
 //
 // The laws under test:
-//   · EVERY hit in EVERY file is reported (the old fold: one hit per
-//     file).
-//   · the pattern is a REGEX (the old grep was a literal).
-//   · the globs and the context lines work.
-//   · the honest header (the engine, the count, the reason).
+//
+//	· EVERY hit in EVERY file is reported (the old fold: one hit per
+//	  file).
+//	· the pattern is a REGEX (the old grep was a literal).
+//	· the globs and the context lines work.
+//	· the honest header (the engine, the count, the reason).
 package server
 
 import (

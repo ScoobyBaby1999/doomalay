@@ -56,6 +56,12 @@ func (s *Server) handleCollabOpsList(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "get: "+err.Error())
 		return
 	}
+	// v1.69.3 THE HANDSHAKE: the owner OR a member device of THIS
+	// canvas (the per-canvas sandbox).
+	if _, ok := s.collabAuthorized(r, id); !ok {
+		writeError(w, http.StatusUnauthorized, "not a member of this canvas")
+		return
+	}
 	latest, err := s.db.LatestCanvasOpSeq(id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "oplog: "+err.Error())
@@ -152,6 +158,16 @@ func (s *Server) handleCollabOpsPost(w http.ResponseWriter, r *http.Request) {
 		}
 		writeError(w, http.StatusInternalServerError, "get: "+err.Error())
 		return
+	}
+	// v1.69.3 THE HANDSHAKE: the author must be the owner OR a member
+	// device (a guest writes through ops, never through the row PUT).
+	dev, ok := s.collabAuthorized(r, id)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "not a member of this canvas")
+		return
+	}
+	if dev != nil {
+		req.Device = dev.ID // the credential names the author — never the body
 	}
 	room, err := s.collabHub.Room(id)
 	if err != nil {

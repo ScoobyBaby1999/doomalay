@@ -26,7 +26,10 @@ func TestGuardFiresOnHeartbeatOnlyStream(t *testing.T) {
 
 	firedCancel := make(chan struct{})
 	out, fired := guardFirstByte(events, 1, func() { close(firedCancel) })
-	go func() { for range errs {} }() // drain like forwardEvents does
+	go func() {
+		for range errs {
+		}
+	}() // drain like forwardEvents does
 
 	var notice bool
 	deadline := time.After(5 * time.Second)

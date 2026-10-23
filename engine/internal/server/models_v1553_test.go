@@ -33,8 +33,8 @@ func TestV1553_ModelsAlwaysGoCatalog(t *testing.T) {
 		SyncStatus []struct {
 			Provider string `json:"provider"`
 		} `json:"syncStatus"`
-		Logical  []json.RawMessage `json:"logical"`
-		Partial  bool             `json:"partial"`
+		Logical []json.RawMessage `json:"logical"`
+		Partial bool              `json:"partial"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &cat); err != nil {
 		t.Fatalf("decode: %v", err)

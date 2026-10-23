@@ -3,8 +3,8 @@
 package server
 
 import (
-        "os/exec"
-        "syscall"
+	"os/exec"
+	"syscall"
 )
 
 // cmdSetupKillGroup — v0.62.4: the screenshot render runs chromium in
@@ -13,11 +13,11 @@ import (
 // observed live: a killed engine left a headless chrome burning CPU
 // forever. Unix only; windows gets the direct CommandContext kill.
 func cmdSetupKillGroup(cmd *exec.Cmd) {
-        cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-        cmd.Cancel = func() error {
-                if cmd.Process != nil {
-                        _ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-                }
-                return nil
-        }
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		if cmd.Process != nil {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
+		return nil
+	}
 }

@@ -31,18 +31,18 @@
 package server
 
 import (
-        "bytes"
-        "compress/gzip"
-        "crypto/sha256"
-        "encoding/hex"
-        "io/fs"
-        "mime"
-        "net/http"
-        "path"
-        "strconv"
-        "strings"
-        "sync"
-        "time"
+	"bytes"
+	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
+	"io/fs"
+	"mime"
+	"net/http"
+	"path"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
 )
 
 // ── validators ──────────────────────────────────────────────────────
@@ -51,8 +51,8 @@ import (
 // digest the OTA manifest pins (internal/ota) and the download verify runs —
 // one hash, three consumers.
 func sha256Hex(b []byte) string {
-        sum := sha256.Sum256(b)
-        return hex.EncodeToString(sum[:])
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
 }
 
 // etagIdentity — the strong validator for the identity representation.
@@ -67,24 +67,24 @@ func etagGzip(hexOfIdentity string) string { return `W/"` + hexOfIdentity + `-gz
 // are stripped on BOTH sides before comparing, "*" matches anything, and
 // the header is a comma-separated list.
 func inmMatch(header, etag string) bool {
-        header = strings.TrimSpace(header)
-        if header == "" {
-                return false
-        }
-        if header == "*" {
-                return true
-        }
-        ours := strings.TrimPrefix(etag, `W/`)
-        for _, part := range strings.Split(header, ",") {
-                part = strings.TrimSpace(part)
-                if part == "*" {
-                        return true
-                }
-                if strings.TrimPrefix(part, `W/`) == ours && part != "" {
-                        return true
-                }
-        }
-        return false
+	header = strings.TrimSpace(header)
+	if header == "" {
+		return false
+	}
+	if header == "*" {
+		return true
+	}
+	ours := strings.TrimPrefix(etag, `W/`)
+	for _, part := range strings.Split(header, ",") {
+		part = strings.TrimSpace(part)
+		if part == "*" {
+			return true
+		}
+		if strings.TrimPrefix(part, `W/`) == ours && part != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // ── gzip variants (lazy, cached) ────────────────────────────────────
@@ -101,52 +101,52 @@ var gzCache sync.Map // key string → []byte
 // dominate the PWA tree). Images/fonts/wasm already carry their own
 // compression; never double-pay.
 func compressible(ctype string) bool {
-        if strings.HasPrefix(ctype, "text/") {
-                return true
-        }
-        switch ctype {
-        case "application/javascript", "application/json", "image/svg+xml",
-                "application/xml", "application/wasm":
-                return true
-        }
-        return false
+	if strings.HasPrefix(ctype, "text/") {
+		return true
+	}
+	switch ctype {
+	case "application/javascript", "application/json", "image/svg+xml",
+		"application/xml", "application/wasm":
+		return true
+	}
+	return false
 }
 
 // gzipVariant returns the cached gzip bytes for the asset, or nil when the
 // type/size says don't bother.
 func gzipVariant(key string, ctype string, b []byte) []byte {
-        if len(b) < gzMinBytes || !compressible(ctype) {
-                return nil
-        }
-        if v, ok := gzCache.Load(key); ok {
-                return v.([]byte)
-        }
-        var buf bytes.Buffer
-        zw, err := gzip.NewWriterLevel(&buf, gzip.BestSpeed)
-        if err != nil {
-                return nil
-        }
-        if _, err := zw.Write(b); err != nil {
-                return nil
-        }
-        if err := zw.Close(); err != nil {
-                return nil
-        }
-        gz := buf.Bytes()
-        gzCache.Store(key, gz)
-        return gz
+	if len(b) < gzMinBytes || !compressible(ctype) {
+		return nil
+	}
+	if v, ok := gzCache.Load(key); ok {
+		return v.([]byte)
+	}
+	var buf bytes.Buffer
+	zw, err := gzip.NewWriterLevel(&buf, gzip.BestSpeed)
+	if err != nil {
+		return nil
+	}
+	if _, err := zw.Write(b); err != nil {
+		return nil
+	}
+	if err := zw.Close(); err != nil {
+		return nil
+	}
+	gz := buf.Bytes()
+	gzCache.Store(key, gz)
+	return gz
 }
 
 // ── the MIME table (the FileServer sniffed .mjs as text/plain) ──────
 
 func init() {
-        mime.AddExtensionType(".mjs", "text/javascript")
-        mime.AddExtensionType(".wasm", "application/wasm")
+	mime.AddExtensionType(".mjs", "text/javascript")
+	mime.AddExtensionType(".wasm", "application/wasm")
 }
 
 // staticCT — the content type for one asset ("" lets ServeContent sniff).
 func staticCT(name string) string {
-        return mime.TypeByExtension(path.Ext(name))
+	return mime.TypeByExtension(path.Ext(name))
 }
 
 // ── THE single gate every static byte passes ────────────────────────
@@ -157,44 +157,44 @@ func staticCT(name string) string {
 // The 200 body rides ServeContent (Range support preserved from the old
 // FileServer path).
 func serveAssetBytes(w http.ResponseWriter, r *http.Request, name string, data []byte) {
-        ctype := staticCT(name)
-        if ctype != "" {
-                w.Header().Set("Content-Type", ctype)
-        }
-        w.Header().Set("Cache-Control", "no-cache")
+	ctype := staticCT(name)
+	if ctype != "" {
+		w.Header().Set("Content-Type", ctype)
+	}
+	w.Header().Set("Cache-Control", "no-cache")
 
-        acceptsGzip := strings.Contains(r.Header.Get("Accept-Encoding"), "gzip")
-        var gz []byte
-        if acceptsGzip {
-                // the cache key carries the identity hash — the same bytes always
-                // yield the same variant, and different bytes can never collide
-                gz = gzipVariant(sha256Hex(data), ctype, data)
-        }
-        if gz != nil {
-                w.Header().Set("Vary", "Accept-Encoding")
-        }
+	acceptsGzip := strings.Contains(r.Header.Get("Accept-Encoding"), "gzip")
+	var gz []byte
+	if acceptsGzip {
+		// the cache key carries the identity hash — the same bytes always
+		// yield the same variant, and different bytes can never collide
+		gz = gzipVariant(sha256Hex(data), ctype, data)
+	}
+	if gz != nil {
+		w.Header().Set("Vary", "Accept-Encoding")
+	}
 
-        etag := etagIdentity(data)
-        if gz != nil {
-                etag = etagGzip(sha256Hex(data))
-        }
-        w.Header().Set("ETag", etag)
+	etag := etagIdentity(data)
+	if gz != nil {
+		etag = etagGzip(sha256Hex(data))
+	}
+	w.Header().Set("ETag", etag)
 
-        // THE GATE: our own weak comparison — a hit writes the bare 304
-        // (validators + cache policy, never a body, never a Content-Encoding).
-        if r.Method == http.MethodGet || r.Method == http.MethodHead {
-                if inmMatch(r.Header.Get("If-None-Match"), etag) {
-                        w.WriteHeader(http.StatusNotModified)
-                        return
-                }
-        }
+	// THE GATE: our own weak comparison — a hit writes the bare 304
+	// (validators + cache policy, never a body, never a Content-Encoding).
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		if inmMatch(r.Header.Get("If-None-Match"), etag) {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+	}
 
-        if gz != nil {
-                w.Header().Set("Content-Encoding", "gzip")
-                http.ServeContent(w, r, name, time.Time{}, bytes.NewReader(gz))
-                return
-        }
-        http.ServeContent(w, r, name, time.Time{}, bytes.NewReader(data))
+	if gz != nil {
+		w.Header().Set("Content-Encoding", "gzip")
+		http.ServeContent(w, r, name, time.Time{}, bytes.NewReader(gz))
+		return
+	}
+	http.ServeContent(w, r, name, time.Time{}, bytes.NewReader(data))
 }
 
 // ── the embedded tree handler ───────────────────────────────────────
@@ -206,27 +206,27 @@ func serveAssetBytes(w http.ResponseWriter, r *http.Request, name string, data [
 type staticHandler struct{ root fs.FS }
 
 func (h staticHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-        if r.Method != http.MethodGet && r.Method != http.MethodHead {
-                w.Header().Set("Allow", "GET, HEAD")
-                http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-                return
-        }
-        p := strings.TrimPrefix(r.URL.Path, "/")
-        if p == "" {
-                p = "index.html"
-        }
-        // the traversal guard: fs.ValidPath rejects ".", "..", empty and
-        // slash-anchored segments — the same law http.FileServer enforced.
-        if !fs.ValidPath(p) || strings.HasPrefix(p, "/") {
-                http.NotFound(w, r)
-                return
-        }
-        data, err := fs.ReadFile(h.root, p)
-        if err != nil {
-                http.NotFound(w, r)
-                return
-        }
-        serveAssetBytes(w, r, p, data)
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	p := strings.TrimPrefix(r.URL.Path, "/")
+	if p == "" {
+		p = "index.html"
+	}
+	// the traversal guard: fs.ValidPath rejects ".", "..", empty and
+	// slash-anchored segments — the same law http.FileServer enforced.
+	if !fs.ValidPath(p) || strings.HasPrefix(p, "/") {
+		http.NotFound(w, r)
+		return
+	}
+	data, err := fs.ReadFile(h.root, p)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	serveAssetBytes(w, r, p, data)
 }
 
 // ── the PrivateMode wasm route (its ETag; its max-age rule untouched) ──
@@ -236,17 +236,17 @@ func (h staticHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // v1.32.2 adds the ONE thing it was missing: a validator, so post-TTL
 // revalidations are 304s instead of full re-downloads.
 func serveWasmAsset(w http.ResponseWriter, r *http.Request, wasmGz []byte) {
-        etag := etagIdentity(wasmGz)
-        w.Header().Set("ETag", etag)
-        if inmMatch(r.Header.Get("If-None-Match"), etag) {
-                w.WriteHeader(http.StatusNotModified)
-                return
-        }
-        w.Header().Set("Content-Type", "application/wasm")
-        w.Header().Set("Content-Encoding", "gzip")
-        w.Header().Set("Cache-Control", "public, max-age=86400")
-        w.Header().Set("Content-Length", strconv.Itoa(len(wasmGz)))
-        if r.Method == http.MethodGet {
-                _, _ = w.Write(wasmGz)
-        }
+	etag := etagIdentity(wasmGz)
+	w.Header().Set("ETag", etag)
+	if inmMatch(r.Header.Get("If-None-Match"), etag) {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	w.Header().Set("Content-Type", "application/wasm")
+	w.Header().Set("Content-Encoding", "gzip")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	w.Header().Set("Content-Length", strconv.Itoa(len(wasmGz)))
+	if r.Method == http.MethodGet {
+		_, _ = w.Write(wasmGz)
+	}
 }
