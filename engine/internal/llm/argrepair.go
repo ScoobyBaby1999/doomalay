@@ -252,7 +252,13 @@ func RepairJSONQuotes(s string) (fixed string, stillInStr bool, reopened bool) {
                         for j < len(s) && (s[j] == ' ' || s[j] == '\t' || s[j] == '\n' || s[j] == '\r') {
                                 j++
                         }
-                        if j >= len(s) || s[j] == ',' || s[j] == ':' || s[j] == '}' || s[j] == ']' {
+                        // v1.74.4: a comment opener after the close is
+                        // structure-adjacent too — a value followed by
+                        // "// note" must CLOSE (the old peek reopened the
+                        // string, swallowed the comment + the closers, and
+                        // convicted a clean call as the cut).
+                        isComment := j+1 < len(s) && s[j] == '/' && (s[j+1] == '/' || s[j+1] == '*')
+                        if j >= len(s) || isComment || s[j] == ',' || s[j] == ':' || s[j] == '}' || s[j] == ']' {
                                 // v1.61.1 THE QUOTE DEBT: a reopened string whose value holds an
                                 // ODD quote count owes one back — the kenny conviction: the
                                 // model's closing quote (the -c argument's end) was BOTH the
@@ -374,6 +380,17 @@ func ParseToolArgs(raw string) (m map[string]any, notes []RepairNote, ok bool) {
                 if t4 := lenientJSON(t3); json.Valid([]byte(t4)) {
                         if mm, good := tryParse(t4); good {
                                 return mm, appendNotes(appendNotes(tagNotes, kind, desc), "lenient", "quote/key syntax relaxed"), true
+                        }
+                }
+                // rung 3b — v1.74.4 THE DEEP PARSE: the jsonrepair subset
+                // (the ISC algorithm ported in-house): unquoted
+                // keys/values, comments, json fences, trailing commas,
+                // Python None/True/False, NaN, string concatenation,
+                // missing colons. The cut verdict is stillIn's own —
+                // this rung never invents tail content.
+                if t5, cut := jsonRepairDeep(t3); !cut && json.Valid([]byte(t5)) {
+                        if mm, good := tryParse(t5); good {
+                                return mm, appendNotes(appendNotes(tagNotes, kind, desc), "jsonrepair", "unquoted keys/values, comments, fences, trailing commas or Python literals repaired"), true
                         }
                 }
         }

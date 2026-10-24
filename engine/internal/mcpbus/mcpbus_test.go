@@ -215,8 +215,10 @@ func TestCallToolWebSearchErrorText(t *testing.T) {
 func TestCallToolEmptyQuery(t *testing.T) {
         b, _ := newTestBus(t)
         res := b.CallTool(context.Background(), fakeTurn("s"), "web_search", args(t, map[string]any{"query": ""}))
-        if !res.IsError || res.Text != "error: empty query" {
-                t.Fatalf("want today-parity empty-query error, got %+v", res)
+        // v1.74.4 THE LOUD REQUIREMENT: the empty-arg error teaches the
+        // call shape (the bare "empty query" is dead).
+        if !res.IsError || !strings.Contains(res.Text, `web_search needs {"query":"the search text"}`) {
+                t.Fatalf("want the loud shape-teaching error, got %+v", res)
         }
 }
 

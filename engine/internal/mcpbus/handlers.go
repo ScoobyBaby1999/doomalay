@@ -102,7 +102,10 @@ func dispatchTool(ctx context.Context, t *Turn, d *Def, argJSON string) (*mcp.Ca
         case d.Name == "web_search":
                 q := argString(argJSON, "query")
                 if q == "" {
-                        return mcp.NewToolResultError("error: empty query"), nil
+                        // v1.74.4 THE LOUD REQUIREMENT (the v1.70 law reaches
+                        // the one family it missed): the error teaches the
+                        // call shape, never a bare "empty query".
+                        return mcp.NewToolResultError(`error: web_search needs {"query":"the search text"} — the query was empty or missing. Search terms work best as a few specific words, a name, or an error message.`), nil
                 }
                 if t.Search == nil {
                         return mcp.NewToolResultError("error: web search is not armed for this turn"), nil
@@ -126,7 +129,7 @@ func dispatchTool(ctx context.Context, t *Turn, d *Def, argJSON string) (*mcp.Ca
         case d.Name == "web_fetch":
                 u := argString(argJSON, "url")
                 if u == "" {
-                        return mcp.NewToolResultError("error: empty url"), nil
+                        return mcp.NewToolResultError(`error: web_fetch needs {"url":"https://the.page/path"} — the url was empty or missing.`), nil
                 }
                 if t.Fetch == nil {
                         return mcp.NewToolResultError("error: web fetch is not armed for this turn"), nil
