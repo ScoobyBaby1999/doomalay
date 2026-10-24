@@ -257,12 +257,12 @@ func (m *manager) DrainSettled(sessionID string) []Job {
 // (1) what happened + the handle, (2) keep working — anything that
 // doesn't depend on this, (3) do NOT poll — the completion lands in
 // this chat; job_status checks on demand, job_kill stops best-effort.
-func TicketText(j *Job, maxPerSession int) string {
+func TicketText(j *Job, grace time.Duration) string {
 	return fmt.Sprintf(
-		"JOB_STARTED — job %s (%s) is running in its own lane (capacity %d).\n"+
+		"JOB_STARTED — job %s (%s) is still running after %ds, so it moved to its own lane instead of blocking this chat.\n"+
 		"Keep working — do anything else that doesn't depend on this result.\n"+
 		"You do NOT need to poll: when it finishes, the result lands in this chat automatically. (job_status {\"id\":\"%s\"} checks on demand; job_kill {\"id\":\"%s\"} stops it — best-effort, the work may still finish quietly.)",
-		j.ID, j.Tool, maxPerSession, j.ID, j.ID)
+		j.ID, j.Tool, int(grace.Seconds()), j.ID, j.ID)
 }
 
 // Line is one settled job's delivery line — ONE shape on every surface
@@ -310,4 +310,24 @@ func randHex(n int) string {
 		return fmt.Sprintf("%x", time.Now().UnixNano())
 	}
 	return hex.EncodeToString(b)
+}
+
+// Grace is the lane window (DOOMALAY_JOB_GRACE_MS; default 10s).
+func Grace() time.Duration {
+	if v := strings.TrimSpace(os.Getenv("DOOMALAY_JOB_GRACE_MS")); v != "" {
+		var ms int
+		if _, err := fmt.Sscanf(v, "%d", &ms); err == nil {
+			return time.Duration(ms) * time.Millisecond
+		}
+	}
+	return 10 * time.Second
+}
+
+// GraceEnabled answers whether the layer is on.
+func GraceEnabled() bool { return Grace() > 0 }
+
+// WrapEnabled answers whether one tool name rides the layer.
+// The job_* tools never wrap (self-reference: job_status must answer while other jobs run).
+func WrapEnabled(tool string) bool {
+	return !strings.HasPrefix(tool, "job_")
 }

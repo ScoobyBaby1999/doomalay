@@ -606,7 +606,7 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
 				// served the old failure verbatim and the directory was
 				// never created). Only a SUCCESS is idempotently
 				// cacheable — a retry of a failure must re-execute.
-				if !failedObservation(observation) {
+				if !failedObservation(observation, false) {
 					seenCalls[dedupKey] = strings.TrimPrefix(observation, "OBSERVATION:\n")
 					// v1.70.4 THE STALE CENSUS: a successful call may
 					// have MUTATED state — every cached MUTABLE READ
@@ -634,7 +634,7 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
 				if hasSpan {
 					tsp.End(strings.HasPrefix(observation, "OBSERVATION:\n(error"), len(observation))
 				}
-				if !failedObservation(observation) {
+				if !failedObservation(observation, false) {
 					seenCalls[dedupKey] = strings.TrimPrefix(observation, "OBSERVATION:\n")
 					evictMutableReads(seenCalls) // v1.70.4 THE STALE CENSUS
 				}
