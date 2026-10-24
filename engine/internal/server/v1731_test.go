@@ -165,7 +165,9 @@ func TestV1731_SentinelAcceptsNetClass(t *testing.T) {
 	// the arming switch the events feed (source law — the live pin is the
 	// rig's LEG A: the probe succeeds → the auto-continue fires, no tap).
 	src := srcOf(t, "chat.go")
-	if !strings.Contains(src, `s.sentinelFor().Arm(sessionID, prov, rc, raMS, "")`) {
+	// v1.74.5 THE ORDER LAW renamed the locals (the arm moved below the
+	// error row's persist); the switch still feeds the generic arm.
+	if !strings.Contains(src, `s.sentinelFor().Arm(sessionID, armProv, armClass, armRA, "")`) {
 		t.Fatalf("the retry_class switch must feed the sentinel (the generic arm)")
 	}
 }

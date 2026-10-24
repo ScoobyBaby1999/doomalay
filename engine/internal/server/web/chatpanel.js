@@ -5725,9 +5725,19 @@
     return prov ? (base + ' · ' + prov) : base;
   }
   // retryCountdown — the M:SS remaining from the row's next_at.
+  // v1.74.5 THE COUNTDOWN HONESTY: at/below zero the answer is
+  // "probing…" (a probe is in flight or imminent — a frozen "0:00" read
+  // as a broken timer, the user's live conviction); an next_at more
+  // than 15 minutes stale (an orphaned row in an already-persisted
+  // device DB) renders the dim "timer ended" instead of ticking
+  // forever.
   function retryCountdown(nextAt) {
     var ms = Number(nextAt || 0) - Date.now();
-    if (ms <= 0 || !nextAt) return '0:00';
+    if (!nextAt) return 'probing…';
+    if (ms <= 0) {
+      if (Date.now() - Number(nextAt) > 15 * 60 * 1000) return 'timer ended';
+      return 'probing…';
+    }
     var s = Math.floor(ms / 1000);
     var m = Math.floor(s / 60);
     s = s % 60;

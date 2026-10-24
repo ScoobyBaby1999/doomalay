@@ -285,14 +285,27 @@ func (rs *retrySentinel) dropRow(sid string) {
 // Disarm removes one listener (manual continue/send/delete). The LAST
 // listener out kills the timer (the user's law: the dynamic timer dies
 // when its signal resolves or nobody listens).
+// v1.74.5 THE CLOSING ROW: the disarm emits the pill's closing row —
+// the live pill closes honestly ("continued without the timer"), live
+// AND on replay. The old shape dropped the timer + the durability row
+// and said NOTHING: the PWA's live pill orphaned at its stale next_at
+// and ticked 0:00 forever (the user's exact symptom).
 func (rs *retrySentinel) Disarm(sid string) {
+	type closedSig struct {
+		class, provider string
+		attempts        int
+		started         time.Time
+	}
+	var closers []closedSig
 	rs.mu.Lock()
-	defer rs.mu.Unlock()
 	for key, t := range rs.timers {
 		t.mu.Lock()
 		had := t.listeners[sid]
 		delete(t.listeners, sid)
 		empty := len(t.listeners) == 0
+		if had {
+			closers = append(closers, closedSig{t.class, t.provider, t.attempts, t.startedAt})
+		}
 		t.mu.Unlock()
 		if had {
 			rs.dropRow(sid)
@@ -302,6 +315,10 @@ func (rs *retrySentinel) Disarm(sid string) {
 			close(t.stop)
 			delete(rs.timers, key)
 		}
+	}
+	rs.mu.Unlock()
+	for _, c := range closers {
+		rs.pill(sid, "recovered", c.class, c.provider, c.attempts, 0, c.started.UnixMilli(), "continued without the timer (manual continue or a new prompt)")
 	}
 }
 
