@@ -1303,6 +1303,12 @@ func (s *Server) continueCore(sender *websocket.Conn, pipe *chatPipe, sessionID 
 	turnGaugeInc(sessionID)
 	defer turnGaugeDec(sessionID)
 
+	// Load persisted turn state for auto-resume
+	var turnState store.TurnState
+	if s.db != nil {
+		turnState, _ = s.db.LoadTurnState(sessionID)
+	}
+	
 	// NO user emit — the log already carries the conversation's truth.
 
 	// mask the trailing error rows (consecutive 'error' events from
@@ -1336,6 +1342,12 @@ func (s *Server) continueCore(sender *websocket.Conn, pipe *chatPipe, sessionID 
 	nudge := ""
 	if tailIsAssistant {
 		nudge = llm.SeamNudgeText
+	}
+
+	// Log resume from turn state
+	if turnState.Round > 0 {
+		log.Printf("continueCore: resuming %s from turnState round=%d fsm_phase=%s partial_len=%d tool_results=%d",
+			sessionID, turnState.Round, turnState.FSMPhase, len(turnState.PartialOut), len(turnState.ToolResults))
 	}
 
 	turnCtx, turnCancel := context.WithCancel(context.Background())

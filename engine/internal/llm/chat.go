@@ -2006,6 +2006,15 @@ func runWebSearchTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- erro
 	ch <- ChatChunk{Type: "status", State: "idle", Usage: u}
 }
 
+// formatToolProgress formats a ToolProgress for the Args field
+func formatToolProgress(p ToolProgress) string {
+	if p.Percent != nil {
+		return fmt.Sprintf("{\"percent\":%.1f,\"phase\":\"%s\",\"detail\":\"%s\"}", *p.Percent, p.Phase, p.Detail)
+	}
+	return fmt.Sprintf("{\"phase\":\"%s\",\"detail\":\"%s\"}", p.Phase, p.Detail)
+}
+
+// executeAction runs ONE parsed tool call and returns its observation
 // executeAction runs ONE parsed tool call and returns its observation
 // (v0.25: extracted from runWebSearchTurn's body so the multi-action loop
 // can call it per action). allSources accumulates web-search citations
@@ -2015,6 +2024,34 @@ func executeAction(ctx context.Context, req ChatRequest, ch chan<- ChatChunk, ac
 	// manifest names; a hallucinated name gets the honest unknown-tool
 	// teaching (the model self-corrects in one round).
 	var observation string
+	// Helper: run a server-side tool with ToolRunner isolation + progress
+	runWithProgress := func(name string, fn func(context.Context) (string, error)) string {
+		tr := NewToolRunner(ctx, req.SessionID, 0, name)
+		go tr.RunWithContext(fn)
+		progressDone := make(chan struct{})
+		go func() {
+			for p := range tr.Progress {
+				select {
+				case ch <- ChatChunk{
+					Type: "tool_progress",
+					Name: name,
+					Text: p.Detail,
+					Args: formatToolProgress(p),
+				}:
+				default:
+					// channel full or closed, drop progress
+				}
+			}
+			close(progressDone)
+		}()
+		result := <-tr.Done
+		<-progressDone
+		if result.Err != nil {
+			return "OBSERVATION:\nerror: " + result.Err.Error()
+		}
+		return "OBSERVATION:\n" + result.Observation
+	}
+
 	// v0.28: PERSONA TOOLS — the bot's self-management hands. Routed
 	// through the server callback (it owns the session store); the
 	// pill + observation mirror the local-tool shape so the UI and the
@@ -2033,7 +2070,9 @@ func executeAction(ctx context.Context, req ChatRequest, ch chan<- ChatChunk, ac
 		}
 		ch <- ChatChunk{Type: "tool_use", Name: action, Summary: summary, Args: argJSON}
 		if req.PersonaToolFn != nil {
-			observation = req.PersonaToolFn(ctx, action, argJSON)
+			observation = runWithProgress(action, func(ctx context.Context) (string, error) {
+				return req.PersonaToolFn(ctx, action, argJSON), nil
+			})
 		} else {
 			observation = "OBSERVATION:\nerror: persona tools need a live session on this server"
 		}
@@ -2057,7 +2096,9 @@ func executeAction(ctx context.Context, req ChatRequest, ch chan<- ChatChunk, ac
 			}
 		}
 		ch <- ChatChunk{Type: "tool_use", Name: "hublib", Summary: summary, Args: argJSON}
-		observation = req.HublibToolFn(ctx, argJSON)
+		observation = runWithProgress("hublib", func(ctx context.Context) (string, error) {
+			return req.HublibToolFn(ctx, argJSON), nil
+		})
 		ch <- ChatChunk{Type: "tool_result", Text: strings.TrimPrefix(observation, "OBSERVATION:\n"), Name: "hublib"}
 		return observation
 	}
@@ -2079,7 +2120,9 @@ func executeAction(ctx context.Context, req ChatRequest, ch chan<- ChatChunk, ac
 			}
 		}
 		ch <- ChatChunk{Type: "tool_use", Name: "skills", Summary: summary, Args: argJSON}
-		observation = req.SkillsToolFn(ctx, argJSON)
+		observation = runWithProgress("skills", func(ctx context.Context) (string, error) {
+			return req.SkillsToolFn(ctx, argJSON), nil
+		})
 		ch <- ChatChunk{Type: "tool_result", Text: strings.TrimPrefix(observation, "OBSERVATION:\n"), Name: "skills"}
 		return observation
 	}
@@ -2099,7 +2142,9 @@ func executeAction(ctx context.Context, req ChatRequest, ch chan<- ChatChunk, ac
 			}
 		}
 		ch <- ChatChunk{Type: "tool_use", Name: "workspace", Summary: summary, Args: argJSON}
-		observation = req.WorkspaceToolFn(ctx, argJSON)
+		observation = runWithProgress("workspace", func(ctx context.Context) (string, error) {
+			return req.WorkspaceToolFn(ctx, argJSON), nil
+		})
 		ch <- ChatChunk{Type: "tool_result", Text: strings.TrimPrefix(observation, "OBSERVATION:\n"), Name: "workspace"}
 		return observation
 	}
@@ -2137,7 +2182,9 @@ func executeAction(ctx context.Context, req ChatRequest, ch chan<- ChatChunk, ac
 			}
 		}
 		ch <- ChatChunk{Type: "tool_use", Name: "termux", Summary: summary, Args: argJSON}
-		observation = req.TermuxToolFn(ctx, argJSON)
+		observation = runWithProgress("termux", func(ctx context.Context) (string, error) {
+			return req.TermuxToolFn(ctx, argJSON), nil
+		})
 		ch <- ChatChunk{Type: "tool_result", Text: strings.TrimPrefix(observation, "OBSERVATION:\n"), Name: "termux"}
 		return observation
 	}
@@ -2147,7 +2194,9 @@ func executeAction(ctx context.Context, req ChatRequest, ch chan<- ChatChunk, ac
 		// the server's runner (same dispatch, same shapes).
 		summary := mcpbus.DefaultSummary("djournal", argJSON)
 		ch <- ChatChunk{Type: "tool_use", Name: "djournal", Summary: summary, Args: argJSON}
-		observation = req.DjournalToolFn(ctx, argJSON)
+		observation = runWithProgress("djournal", func(ctx context.Context) (string, error) {
+			return req.DjournalToolFn(ctx, argJSON), nil
+		})
 		ch <- ChatChunk{Type: "tool_result", Text: strings.TrimPrefix(observation, "OBSERVATION:\n"), Name: "djournal"}
 		return observation
 	}
@@ -2156,7 +2205,9 @@ func executeAction(ctx context.Context, req ChatRequest, ch chan<- ChatChunk, ac
 		// + detail through the server's runner.
 		summary := mcpbus.DefaultSummary("fleet", argJSON)
 		ch <- ChatChunk{Type: "tool_use", Name: "fleet", Summary: summary, Args: argJSON}
-		observation = req.FleetToolFn(ctx, argJSON)
+		observation = runWithProgress("fleet", func(ctx context.Context) (string, error) {
+			return req.FleetToolFn(ctx, argJSON), nil
+		})
 		ch <- ChatChunk{Type: "tool_result", Text: strings.TrimPrefix(observation, "OBSERVATION:\n"), Name: "fleet"}
 		return observation
 	}
@@ -2270,13 +2321,11 @@ func executeAction(ctx context.Context, req ChatRequest, ch chan<- ChatChunk, ac
 				return observation
 			}
 			ch <- ChatChunk{Type: "tool_use", Name: "web_fetch", Summary: args.URL}
-			text, err := WebFetch(ctx, args.URL) // v1.19.1: full content — no cap
-			if err != nil {
-				observation = "OBSERVATION:\nfetch error: " + err.Error()
-				return observation
-			}
-			observation = "OBSERVATION:\n" + text
-			ch <- ChatChunk{Type: "tool_result", Text: text, Name: "web_fetch"}
+		observation = runWithProgress("web_fetch", func(ctx context.Context) (string, error) {
+			tr := NewToolRunner(ctx, req.SessionID, 0, "web_fetch")
+			return WebFetchWithProgress(ctx, args.URL, tr)
+		})
+		ch <- ChatChunk{Type: "tool_result", Text: strings.TrimPrefix(observation, "OBSERVATION:\n"), Name: "web_fetch"}
 		default:
 			observation = "OBSERVATION:\nerror: unknown tool \"" + action + "\". Valid tools: " + strings.Join(LocalToolNames, ", ") + ", web_search {\"query\": \"...\"}, web_fetch {\"url\": \"...\"} (live internet), template_list {}, template_show {\"id\": \"...\"} (the method-template library)" + (func() string {
 				if req.HublibToolFn != nil {

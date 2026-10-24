@@ -724,7 +724,7 @@ func (s *Server) termuxVerbExec(ctx context.Context, sessionID string, get func(
 	// tool_stream events / the PM poll), the observation composes from
 	// the streamed buffers (or the broadcast fallback when the curls
 	// never landed).
-	return s.termuxRunStreaming(ctx, sessionID, "EXEC DONE", command, roots[0], timeoutMS)
+	return s.termuxRunStreamingWithProgress(ctx, sessionID, "EXEC DONE", command, roots[0], timeoutMS)
 }
 
 // termuxExecCapOf reads the chat's burst cap from its tweaks blob
@@ -1300,7 +1300,7 @@ func (s *Server) termuxVerbPkg(ctx context.Context, sessionID string, get func(s
 	}
 	// v1.28.1: 10 min (the audit's 38MB golang took 37s; a slow-network
 	// toolchain needs the headroom — the output streams live either way).
-	return s.termuxRunStreaming(ctx, sessionID, "PKG "+strings.ToUpper(op)+" — full Termux pkg output", pkgCmd, "", 600000)
+	return s.termuxRunStreamingWithProgress(ctx, sessionID, "PKG "+strings.ToUpper(op)+" — full Termux pkg output", pkgCmd, "", 600000)
 }
 
 // ── v1.29.5 THE GITHUB HAND: git_setup ────────────────────────────────────

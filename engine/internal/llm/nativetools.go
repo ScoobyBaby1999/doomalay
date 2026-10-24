@@ -583,6 +583,10 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
 			} else if bus != nil && !busDegraded {
 				var degraded bool
 				observation, degraded = busExecute(ctx, bus, turn, ch, c.Function.Name, c.Function.Arguments, &allSources)
+			// v1.13.2 THE HANDOFF: emit tool_result for the UI (the busExecute
+			// call emits tool_use + progress, but not the final tool_result).
+			ch <- ChatChunk{Type: "tool_result", Text: strings.TrimPrefix(observation, "OBSERVATION:\n"), Name: c.Function.Name}
+			
 				// v1.56.0 THE HICCUP FLAG: every hiccup a tool
 				// reports (a truncated result, a skipped file,
 				// a refusal) is SPOKEN — the user sees it and

@@ -42,6 +42,7 @@ import (
 
 	"github.com/ScoobyBaby1999/doomalay/engine/internal/llm"
 	"github.com/ScoobyBaby1999/doomalay/engine/internal/netx"
+	"github.com/ScoobyBaby1999/doomalay/engine/internal/store"
 )
 
 // sentinelKey prefixes the durability rows ("retry.sentinel.<sid>").
@@ -520,6 +521,13 @@ func (rs *retrySentinel) autoContinue(sid, class, provider string) {
 	if err != nil || sess == nil {
 		return
 	}
+	
+	// Load persisted turn state for auto-resume
+	var turnState store.TurnState
+	if s.db != nil {
+		turnState, _ = s.db.LoadTurnState(sid)
+	}
+	
 	defer func() {
 		if rec := recover(); rec != nil {
 			log.Printf("PANIC recovered in sentinel auto-continue %s: %v", sid, rec)
@@ -527,7 +535,7 @@ func (rs *retrySentinel) autoContinue(sid, class, provider string) {
 			s.emit(pipeFor(sid), sid, "status", `{"state":"error","usage":null}`, "")
 		}
 	}()
-	log.Printf("sentinel: auto-continuing %s (the %s signal cleared)", sid, "retryable")
+	log.Printf("sentinel: auto-continuing %s (the %s signal cleared, turnState.round=%d)", sid, "retryable", turnState.Round)
 	s.continueCore(nil, pipeFor(sid), sid, sess)
 }
 

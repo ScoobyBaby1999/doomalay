@@ -3,13 +3,14 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 
 	"github.com/ScoobyBaby1999/doomalay/engine/internal/mcpbus"
 	"github.com/ScoobyBaby1999/doomalay/engine/internal/obs"
 )
 
-// mcpbridge.go — v1.13.2 THE HANDOFF (PLAN-V113 §2).
+// mcpbridge.go — v1.74 THE HANDOFF (unified with ToolRunner).
 //
 // The chat loop's wiring to the mcpbus: the Turn (per-request closures),
 // the Gates (the closure-armed tool set), and busExecute — the
@@ -21,6 +22,8 @@ import (
 // fallbacks"): if the MCP protocol layer itself fails, the turn
 // stickily degrades to the direct in-process dispatch (executeAction —
 // the native fallback) for the rest of the turn.
+//
+// All tool calls now run via ToolRunner for isolation + progress.
 
 var mcpBusWarned bool
 
@@ -91,24 +94,39 @@ func mcpTurnFor(req ChatRequest, ch chan<- ChatChunk) *mcpbus.Turn {
 func busExecute(ctx context.Context, bus *mcpbus.Bus, turn *mcpbus.Turn, ch chan<- ChatChunk, action, argJSON string, allSources *[]SearchResult) (observation string, degraded bool) {
 	summary := mcpbus.DefaultSummary(action, argJSON)
 	ch <- ChatChunk{Type: "tool_use", Name: action, Summary: summary, Args: argJSON}
-	res := bus.CallTool(ctx, turn, action, json.RawMessage(argJSON))
-	if res.BusFailure {
-		// The MCP protocol layer itself failed: serve the honest error
-		// (the model self-corrects next round) and degrade the turn —
-		// the remaining calls run the direct in-process dispatch.
-		return "OBSERVATION:\n" + res.Text, true
+
+	// Run with ToolRunner for isolation + progress
+	tr := NewToolRunner(ctx, turn.SessionID, 0, action)
+	go tr.RunWithContext(func(ctx context.Context) (string, error) {
+		res := bus.CallTool(ctx, turn, action, json.RawMessage(argJSON))
+		if res.BusFailure {
+			return "", fmt.Errorf("bus failure: %s", res.Text)
+		}
+		if res.IsError {
+			return res.Text, fmt.Errorf("tool error: %s", res.Text)
+		}
+		if len(res.Sources) > 0 {
+			srcs := fromBusSources(res.Sources)
+			*allSources = append(*allSources, srcs...)
+		}
+		if res.Artifact != "" {
+			// artifact handled by caller
+		}
+		return res.Text, nil
+	})
+	go func() {
+		for p := range tr.Progress {
+			ch <- ChatChunk{Type: "tool_progress", Name: action, Text: p.Detail, Args: formatToolProgress(p)}
+		}
+	}()
+	res := <-tr.Done
+	if res.Err != nil {
+		// Bus failure or tool error: degrade to direct dispatch
+		return "OBSERVATION:\nerror: " + res.Err.Error(), true
 	}
-	if len(res.Sources) > 0 {
-		srcs := fromBusSources(res.Sources)
-		*allSources = append(*allSources, srcs...)
-		ch <- ChatChunk{Type: "sources", Sources: srcs}
-	}
-	resChunk := ChatChunk{Type: "tool_result", Text: res.Text, Name: action}
-	if res.Artifact != "" {
-		resChunk.Artifact = map[string]any{"name": res.Artifact}
-	}
-	ch <- resChunk
-	return "OBSERVATION:\n" + res.Text, false
+	// Emit tool_result for the UI
+	ch <- ChatChunk{Type: "tool_result", Text: res.Observation, Name: action}
+	return "OBSERVATION:\n" + res.Observation, false
 }
 
 // mcpBus returns the process-wide bus (nil when unavailable — callers

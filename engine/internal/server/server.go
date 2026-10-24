@@ -750,6 +750,7 @@ func (s *Server) routes() {
 
 	// WebSocket chat.
 	s.mux.HandleFunc("GET /api/chat", s.handleChatWS)
+	s.mux.HandleFunc("GET /api/chat/debug/{sid}", s.handleChatDebug)
 
 	// v0.31: the Hub (modular library system) — per-type libraries,
 	// items, downloads, endorsements, publishing, the persona-picker
