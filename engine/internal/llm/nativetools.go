@@ -543,6 +543,14 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
                                         // that closes a value early — the kenny class). stillIn
                                         // on the reopened text is the true cut verdict.
                                         args = t
+                                } else if t5, cut := jsonRepairDeep(args); !cut && json.Valid([]byte(t5)) {
+                                        // v1.74.4 rung 4 — THE DEEP PARSE: the jsonrepair
+                                        // subset (unquoted keys/values, comments, fences,
+                                        // trailing commas, Python literals, concat, missing
+                                        // colons) — the shapes JSON hand-writers actually
+                                        // produce that no earlier rung could save. The cut
+                                        // verdict was judged above (stillIn).
+                                        args = t5
                                 } else {
                                         // unrecoverable — tell the model via the tool result
                                         // (v1.13.6: Skip carries the verdict — no execution)
@@ -568,6 +576,7 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
                 // execute + append role:"tool" results
                 for _, c := range wire {
                         var observation string
+                        var callFailed bool // v1.74.1: the structured IsError verdict (never shadowed — the rig's live conviction)
                         // v1.13.6 THE HONESTY LINE, execution side: a Skipped
                         // call's fault text IS the tool's answer — the call was
                         // never executed, so no bus dispatch, no cache write, no
@@ -598,7 +607,12 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
                                 observation = "OBSERVATION:\n(identical " + c.Function.Name + " call already executed this turn — same result)\n" + cached
                         } else if bus != nil && !busDegraded {
                                 var degraded bool
-                                observation, degraded, callFailed := busExecute(ctx, bus, turn, ch, c.Function.Name, c.Function.Arguments, &allSources)
+                                // NOTE: `=` not `:=` — a := here would SHADOW the
+                                // loop-scoped observation/callFailed (the v1740 rig's
+                                // live conviction: every tool result arrived EMPTY on
+                                // the wire to the provider — the shadow was assigned,
+                                // the outer zero value rode the history).
+                                observation, degraded, callFailed = busExecute(ctx, bus, turn, ch, c.Function.Name, c.Function.Arguments, &allSources)
                                 // v1.56.0 THE HICCUP FLAG · v1.74.1 THE HONEST FAULT
                                 // LINE: every hiccup a tool reports is SPOKEN — but
                                 // the call-failed verdict rides the STRUCTURED

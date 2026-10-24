@@ -222,7 +222,12 @@ collect:
                         fl := w.(http.Flusher)
                         if n == 1 {
                                 // round 1 — arguments that are neither valid, cut, nor repairable.
-                                _, _ = w.Write([]byte(`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_bad","type":"function","function":{"name":"calculator","arguments":"{\"expr\": 37*14}"}}]}}]}` + "\n\n"))
+                                // (v1.74.4: the old fixture was an unquoted arithmetic value —
+                                // it now lands through THE DEEP PARSE rung: jsonrepair quotes
+                                // bare values, the calculator executes it and answers 518. That
+                                // is the WAVE'S LAW, not a regression. The unrecoverable class is
+                                // prose — no repair rung can invent structure from a sentence.)
+                                _, _ = w.Write([]byte(`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_bad","type":"function","function":{"name":"calculator","arguments":"please compute 37 times 14"}}]}}]}` + "\n\n"))
                                 _, _ = w.Write([]byte(`data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}` + "\n\n"))
                         } else {
                                 round2Body = string(body)
