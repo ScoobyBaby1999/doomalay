@@ -71,7 +71,9 @@ func TestV1746_CompleteTeaches(t *testing.T) {
 	src := srcOf(t, "../llm/chat.go")
 	for _, want := range []string{
 		"help|list|info|tree|ls|read|readme|grep|view|put|patch|commit|sync|pr|",
-		"exec|cmds|git_setup|ls|read|write|append|patch|rm|mkdir|grep|find|pkg|",
+		// v1.74.10 THE GIT HAND extends the complete teach: the four
+		// git verbs ride between git_setup and the file verbs.
+		"exec|cmds|git_setup|git_status|git_pull|git_push|git_commit|ls|read|write|append|patch|rm|mkdir|grep|find|pkg|",
 		"SURGICAL PATCH",
 	} {
 		if !strings.Contains(src, want) {

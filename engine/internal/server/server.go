@@ -27,6 +27,7 @@ import (
 	"github.com/ScoobyBaby1999/doomalay/engine/internal/config"
 	"github.com/ScoobyBaby1999/doomalay/engine/internal/forge"
 	"github.com/ScoobyBaby1999/doomalay/engine/internal/hub"
+	"github.com/ScoobyBaby1999/doomalay/engine/internal/jobmgr"
 	"github.com/ScoobyBaby1999/doomalay/engine/internal/mcpbus"
 	"github.com/ScoobyBaby1999/doomalay/engine/internal/ocserve"
 	"github.com/ScoobyBaby1999/doomalay/engine/internal/pmstate"
@@ -90,6 +91,15 @@ type Server struct {
 	termuxResumeLastOK    bool
 	termuxResumeLastError string
 	termuxResumeAutoAt    int64
+
+	// v1.74.7 THE PHOENIX HEART (PLAN-V175): the Termux health gauge +
+	// the auto-revive ladder's honest record — termuxphoenix.go owns
+	// these. Every bridge outcome feeds the gauge (the run choke point
+	// + the probe cache fill); two consecutive never-executed outcomes
+	// convict death and the ladder revives (probe → the Kotlin
+	// revive_termux act → probe), single-flight + throttled.
+	termuxPhoenixMu sync.Mutex
+	termuxPhoenix   termuxPhoenixState
 
 	// v1.20.3 THE ARM: the termux tool's per-session exec pacing — the
 	// 12-per-minute rolling window (the anti-burst law; v1.23.1 THE
@@ -222,6 +232,12 @@ func New(cfg *config.Config, db *store.DB, br *brain.Brain) *Server {
 	// HTTP dependency path) folds through the canvas's ONE room goroutine;
 	// the scoped serializer shares collabMu with the whole-state PUT gate
 	// so a checkpoint can never interleave a PUT's read-modify-write.
+	// v1.73.2 THE JOB LAYER (restored by the v1.74.10 wave): the
+	// completion rail — every settled background lane lands as the
+	// chat's "job" row (persist + live push) through the emit.
+	jobmgr.SetEventSink(func(sessionID, content string) {
+		s.emit(pipeFor(sessionID), sessionID, "job", content, "")
+	})
 	if db != nil {
 		s.collabHub = collab.NewHub(db, func(do func()) {
 			s.collabMu.Lock()
@@ -317,6 +333,13 @@ func New(cfg *config.Config, db *store.DB, br *brain.Brain) *Server {
 		// network's return. Background-derived ctx (the detachment
 		// law), process-lifetime, self-healing on bridge hiccups.
 		go s.netWakeListener()
+		// v1.74.7 THE PHOENIX HEART (PLAN-V175): the keepalive loop —
+		// one cheap probe every ~15 min (jittered) while Termux was
+		// fresh-OK: death is caught within minutes, and the periodic
+		// RUN_COMMAND keeps the Termux service warm against the OEM
+		// "unused app" passes. The quiet gate is constructive (only
+		// after a delivered result ever stamped the gauge).
+		go s.termuxPhoenixKeepalive()
 	}
 	// v1.17.4 THE LIVE UPDATE: the delta OTA manager (nil = disabled via
 	// DOOMALAY_OTA_DISABLE or no URL). The background refresher starts

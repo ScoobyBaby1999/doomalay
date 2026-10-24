@@ -203,6 +203,56 @@ object TermuxBridge {
         ctx.startActivity(launch)
     }
 
+    // v1.74.8 THE PHOENIX HAND (PLAN-V175): the revival ladder's Kotlin
+    // half, fired by the engine's termuxphoenix.go when the health gauge
+    // convicts the dead shell (the boonboon transcript: Android killed
+    // Termux hours in — every RUN_COMMAND timed out while the APK and its
+    // bridge stayed alive; the user had to revive Termux BY HAND).
+    //
+    // THE LADDER (each rung honestly reported, nothing silent):
+    //   1. one benign RUN_COMMAND probe (20s) — the startService itself
+    //      often revives a killed-not-stopped Termux (a foreground-service
+    //      caller may start a killed app's service back; the researched
+    //      platform law).
+    //   2. still dead → LAUNCH the Termux activity: the only ladder out of
+    //      Android's stopped state (force-stop / fresh boot). Background
+    //      activity launch is exempt for apps holding SYSTEM_ALERT_WINDOW
+    //      (developer.android.com secure-bal's documented exemption list);
+    //      some OEMs allow it regardless — we try + catch honestly either
+    //      way, and the answer says which arm fired.
+    //
+    // Returns (probeDelivered, launched, error). The engine waits ~3s
+    // after the act and re-probes on its side — this function is the
+    // HANDS, the engine's ladder stays the brain.
+    fun reviveTermux(ctx: Context): Triple<Boolean, Boolean, String?> {
+        // RUNG 1 — the probe re-send (the Kotlin /probe route's own shape).
+        // The latch's countDown→await pair IS the happens-before edge (the
+        // callback's write is visible after await returns — a plain local
+        // var is safe; @Volatile is illegal on locals).
+        val latch = CountDownLatch(1)
+        var probeDelivered = false
+        probe(ctx, 20000L) { r ->
+            // ProbeResult carries no `delivered` (that's CommandResult) —
+            // the delivered truth here: no timeout, no send error.
+            probeDelivered = !r.timeout && r.sendError == null
+            latch.countDown()
+        }
+        try { latch.await(25, TimeUnit.SECONDS) } catch (_: InterruptedException) { /* honest false below */ }
+        if (probeDelivered) return Triple(true, false, null)
+
+        // RUNG 2 — the activity launch (the stopped-state ladder).
+        try {
+            openTermux(ctx)
+            return Triple(false, true, null)
+        } catch (e: Exception) {
+            // The launch was blocked (no overlay grant on a BAL-strict OEM,
+            // or Termux uninstalled mid-flight) — the honest answer names
+            // the arm that failed; the engine's observation teaches the
+            // one-open fix.
+            return Triple(false, false, e.message ?: "activity launch failed")
+        }
+    }
+
     fun openFdroid(ctx: Context, resolvedUrl: String? = null) {
         // v1.23.1 THE LINK: the engine resolves the CURRENT stable Termux
         // APK URL (F-Droid's package API — suggestedVersionCode) and sends
@@ -802,10 +852,14 @@ class TermuxBridgeServer(private val ctx: Context) {
         return o.toString()
     }
 
-    // POST /act — the open-* intents. Body: {"what":"open_termux" |
-    // "open_fdroid" | "open_permission_settings"} (+ an optional "url" for
-    // open_fdroid — v1.23.1 THE LINK: the engine's dynamically-resolved
-    // stable APK link, honored only under the f-droid.org allowlist).
+    // POST /act — the open-* intents + the phoenix revival. Body:
+    // {"what":"open_termux" | "open_fdroid" | "open_permission_settings"
+    // | "revive_termux"} (+ an optional "url" for open_fdroid — v1.23.1
+    // THE LINK: the engine's dynamically-resolved stable APK link, honored
+    // only under the f-droid.org allowlist). v1.74.8 THE PHOENIX HAND:
+    // revive_termux runs the ladder (probe re-send → activity launch) and
+    // answers the honest triple — the engine's termuxphoenix.go ladder
+    // fires it when the health gauge convicts the dead shell.
     private fun handleAct(out: OutputStream, body: ByteArray) {
         val what: String
         val url: String?
@@ -815,6 +869,19 @@ class TermuxBridgeServer(private val ctx: Context) {
             url = if (o.has("url") && !o.isNull("url")) o.optString("url", "") else null
         } catch (e: JSONException) {
             writeResponse(out, 400, errJson("invalid JSON body: ${e.message}"))
+            return
+        }
+        if (what == "revive_termux") {
+            // The ladder can take up to ~25s (the probe re-send's own
+            // budget) — this worker thread suspends on the latch inside,
+            // exactly like the /probe route's handler.
+            val (probeDelivered, launched, err) = TermuxBridge.reviveTermux(ctx)
+            val o = JSONObject()
+            o.put("ok", probeDelivered || launched)
+            o.put("probe_delivered", probeDelivered)
+            o.put("launched", launched)
+            o.put("error", err ?: JSONObject.NULL)
+            writeResponse(out, 200, o.toString())
             return
         }
         when (what) {

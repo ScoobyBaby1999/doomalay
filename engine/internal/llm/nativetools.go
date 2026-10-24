@@ -29,6 +29,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/ScoobyBaby1999/doomalay/engine/internal/jobmgr"
 	"github.com/ScoobyBaby1999/doomalay/engine/internal/mcpbus"
 	"github.com/ScoobyBaby1999/doomalay/engine/internal/obs"
 )
@@ -255,6 +256,16 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
 	seenCalls := map[string]string{}
 
 	for round := 0; round < maxRounds; round++ {
+		// v1.73.2 THE JOB LAYER (restored by the v1.74.10 wave): the
+		// round-boundary drain — a background lane that settled since
+		// the last round rides the history as the loud system row (the
+		// after-the-fact UI; settled jobs are already persisted + live
+		// by the sink, so no duplicate row fires here — the job row IS
+		// the loud half).
+		if settled := jobmgr.Default().DrainSettled(req.SessionID); len(settled) > 0 {
+			block := jobmgr.SettledBlock(settled, 4000)
+			history = append(history, Message{Role: "user", Content: "(system: " + block + ")"})
+		}
 		roundReq := req
 		roundReq.Messages = history
 		// v1.14.4 THE TRACE: the round boundary — inputs on the
@@ -583,10 +594,10 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
 			} else if bus != nil && !busDegraded {
 				var degraded bool
 				observation, degraded = busExecute(ctx, bus, turn, ch, c.Function.Name, c.Function.Arguments, &allSources)
-			// v1.13.2 THE HANDOFF: emit tool_result for the UI (the busExecute
-			// call emits tool_use + progress, but not the final tool_result).
-			ch <- ChatChunk{Type: "tool_result", Text: strings.TrimPrefix(observation, "OBSERVATION:\n"), Name: c.Function.Name}
-			
+				// v1.13.2 THE HANDOFF: emit tool_result for the UI (the busExecute
+				// call emits tool_use + progress, but not the final tool_result).
+				ch <- ChatChunk{Type: "tool_result", Text: strings.TrimPrefix(observation, "OBSERVATION:\n"), Name: c.Function.Name}
+
 				// v1.56.0 THE HICCUP FLAG: every hiccup a tool
 				// reports (a truncated result, a skipped file,
 				// a refusal) is SPOKEN — the user sees it and

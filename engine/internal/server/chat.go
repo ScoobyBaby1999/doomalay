@@ -1308,7 +1308,7 @@ func (s *Server) continueCore(sender *websocket.Conn, pipe *chatPipe, sessionID 
 	if s.db != nil {
 		turnState, _ = s.db.LoadTurnState(sessionID)
 	}
-	
+
 	// NO user emit — the log already carries the conversation's truth.
 
 	// mask the trailing error rows (consecutive 'error' events from
@@ -3138,19 +3138,26 @@ func (s *Server) forwardEvents(ctx context.Context, pipe *chatPipe, sessionID st
 		}
 		toolUseID, _ := ev["tool_use_id"].(string)
 
-		// v1.61.3 THE RETRY SENTINEL: a retryable terminal error arms
-		// the shared dynamic timer AFTER its row persists (the pill
-		// lands below the error bubble in the log). The sentinel
-		// owns everything from here: the probes, the listeners, the
+		// v1.61.3 THE RETRY SENTINEL (v1.74.5 THE ORDER LAW, restored by
+		// the v1.74.10 wave after the UNBOUNDED LANES rewrite reverted
+		// it: the arm runs BELOW the error row's persist — arming above
+		// it put the pill's row above the error bubble, the PWA's merge
+		// walk-back broke on the error row, every later phase row opened
+		// a NEW pill, and the original orphaned armed pill ticked to
+		// 0:00 FOREVER — the user's live conviction). The sentinel owns
+		// everything from here: the probes, the listeners, the
 		// auto-continue when the signal clears.
+		armRetry := false
+		var armProv, armClass string
+		var armRA int64
 		if evType == "error" {
 			if rc, _ := ev["retry_class"].(string); rc != "" {
-				prov, _ := ev["retry_provider"].(string)
-				raMS := int64(0)
+				armRetry = true
+				armProv, _ = ev["retry_provider"].(string)
+				armClass = rc
 				if v, ok := ev["retry_after_ms"].(float64); ok {
-					raMS = int64(v)
+					armRA = int64(v)
 				}
-				s.sentinelFor().Arm(sessionID, prov, rc, raMS, "")
 			}
 		}
 
@@ -3164,6 +3171,13 @@ func (s *Server) forwardEvents(ctx context.Context, pipe *chatPipe, sessionID st
 		if err != nil {
 			log.Printf("persist event: %v", err)
 			continue
+		}
+		// v1.74.5 THE ORDER LAW: the arm fires HERE — after the error
+		// row's persist, so the armed pill's row id is ABOVE the error
+		// row (the merge walk-back finds it without crossing the error;
+		// the orphan class dies).
+		if armRetry {
+			s.sentinelFor().Arm(sessionID, armProv, armClass, armRA, "")
 		}
 		// Forward to PWA with the assigned seq + id.
 		out := map[string]any{
@@ -3325,6 +3339,22 @@ func (s *Server) emit(pipe *chatPipe, sessionID, evType, content, toolUseID stri
 			for k, v := range robj {
 				out[k] = v
 			}
+		}
+	case "job":
+		// v1.73.2 THE JOB LAYER (restored by the v1.74.10 wave after the
+		// UNBOUNDED LANES rewrite dropped it): the after-the-fact
+		// completion rows — a background lane settled and its row lands
+		// in the chat whenever it lands (the user's "the UI be dealt
+		// with after the fact"). JSON payload
+		// (id/tool/state/duration_ms/text) — lift onto the frame like
+		// the retry pill so the PWA + the rigs read them top-level.
+		var jobj map[string]any
+		if json.Unmarshal([]byte(content), &jobj) == nil && len(jobj) > 0 {
+			for k, v := range jobj {
+				out[k] = v
+			}
+		} else {
+			out["text"] = content
 		}
 	case "tool_use":
 		out["name"] = content

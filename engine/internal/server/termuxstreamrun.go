@@ -205,6 +205,11 @@ func (s *Server) termuxRunStreaming(ctx context.Context, sessionID, headline, co
 		if parts.errB != "" {
 			sb.WriteString("\nstderr:\n" + parts.errB)
 		}
+		// v1.74.7 THE PHOENIX HEART: the dead-shell teach rides the
+		// streaming timeout too — when the gauge convicts death, the model
+		// learns the auto-revive state instead of burning calls against a
+		// dead shell (the boonboon transcript's 13-blind-retry conviction).
+		sb.WriteString(s.termuxPhoenixNoteLine())
 		return sb.String()
 	}
 	out, errB, outSeen, errSeen, ec, gotChunks := parts.out, parts.errB, parts.outSeen, parts.errSeen, parts.ec, parts.gotChunks

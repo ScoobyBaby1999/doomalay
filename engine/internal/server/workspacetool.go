@@ -704,8 +704,7 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
 				if pres.Failed > 0 {
 					report.WriteString(" — FIXED BLOCKS NEEDED:\n")
 					report.WriteString(pres.ReportLines())
-				} else 
-				if renameFrom != "" {
+				} else if renameFrom != "" {
 					fmt.Fprintf(&report, " (renamed from %s)", renameFrom)
 				}
 				report.WriteString("\n")
@@ -1346,7 +1345,7 @@ func (s *Server) workspaceManifestFor(sessionID string) string {
 	// cannot): the limits are STATED, never discovered by failing — no
 	// local clone, no rebase/merge/cherry-pick, sync is the rebase eye,
 	// real git runs on the termux device.
-	sb.WriteString("HONEST LIMITS: the workspace tool drives repos through the forge REST API — there is NO local clone and NO working copy: rebase, merge and cherry-pick DO NOT EXIST here (the pr_merge verb can merge a PR server-side). {\"action\":\"sync\"} is the rebase eye — it reports behind/ahead and forecasts the overlap when both sides moved. To run REAL git commands (clone, rebase, push), use the termux tool's exec on the device (git_setup arms it once).")
+	sb.WriteString("HONEST LIMITS: the workspace tool drives repos through the forge REST API — there is NO local clone and NO working copy: rebase, merge and cherry-pick DO NOT EXIST here (the pr_merge verb can merge a PR server-side). {\"action\":\"sync\"} is the rebase eye — it reports behind/ahead and forecasts the overlap when both sides moved. To run REAL git commands, use the termux tool's exec on the device — or its first-class git verbs (git_status / git_pull / git_push — the whole fetch→rebase→push dance with self-healing auth — / git_commit; git_setup arms the vault token once).")
 	return sb.String()
 }
 

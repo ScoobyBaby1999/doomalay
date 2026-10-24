@@ -30,6 +30,31 @@ const (
 // via DOOMALAY_MAX_JOBS env or per-session context.
 const DefaultMaxPerSession = 8
 
+// Grace is the job layer's grace window (v1.73.2's documented law,
+// restored by v1.74.10's wave after the UNBOUNDED LANES rework silently
+// dropped the env knob): DOOMALAY_JOB_GRACE_MS in milliseconds, garbage
+// falls back to the 10s default.
+func Grace() time.Duration {
+	if v := strings.TrimSpace(os.Getenv("DOOMALAY_JOB_GRACE_MS")); v != "" {
+		var n int
+		if _, err := fmt.Sscanf(v, "%d", &n); err == nil && n > 0 {
+			return time.Duration(n) * time.Millisecond
+		}
+	}
+	return 10 * time.Second
+}
+
+// GraceEnabled — DOOMALAY_JOB_GRACE_MS=0 disables the layer (the control
+// arm: every call waits its full runtime, byte-identical to the pre-job
+// law).
+func GraceEnabled() bool {
+	v := strings.TrimSpace(os.Getenv("DOOMALAY_JOB_GRACE_MS"))
+	if v == "" {
+		return true
+	}
+	return v != "0"
+}
+
 // Job is one lane's record. Terminal jobs keep their Text/DurationMS for
 // job_status; the settled ring carries them to the next round boundary.
 // cancel is unexported (never marshals) — the lane's context killer.
@@ -47,12 +72,12 @@ type Job struct {
 }
 
 type manager struct {
-	mu       sync.Mutex
-	jobs     map[string]*Job  // by ID (terminal jobs stay readable for job_status)
-	running  map[string]int   // per-session working count (the capacity guard)
-	settled  map[string][]Job // per-session ring of settled jobs awaiting delivery
-	sink     func(sessionID, content string)
-	maxPerS  map[string]int   // per-session override (nil = default)
+	mu      sync.Mutex
+	jobs    map[string]*Job  // by ID (terminal jobs stay readable for job_status)
+	running map[string]int   // per-session working count (the capacity guard)
+	settled map[string][]Job // per-session ring of settled jobs awaiting delivery
+	sink    func(sessionID, content string)
+	maxPerS map[string]int // per-session override (nil = default)
 }
 
 var (
@@ -64,10 +89,10 @@ var (
 func Default() *manager {
 	once.Do(func() {
 		theMgr = &manager{
-			jobs:     map[string]*Job{},
-			running:  map[string]int{},
-			settled:  map[string][]Job{},
-			maxPerS:  map[string]int{},
+			jobs:    map[string]*Job{},
+			running: map[string]int{},
+			settled: map[string][]Job{},
+			maxPerS: map[string]int{},
 		}
 	})
 	return theMgr
@@ -257,12 +282,12 @@ func (m *manager) DrainSettled(sessionID string) []Job {
 // (1) what happened + the handle, (2) keep working — anything that
 // doesn't depend on this, (3) do NOT poll — the completion lands in
 // this chat; job_status checks on demand, job_kill stops best-effort.
-func TicketText(j *Job, grace time.Duration) string {
+func TicketText(j *Job, maxPerSession int) string {
 	return fmt.Sprintf(
-		"JOB_STARTED — job %s (%s) is still running after %ds, so it moved to its own lane instead of blocking this chat.\n"+
-		"Keep working — do anything else that doesn't depend on this result.\n"+
-		"You do NOT need to poll: when it finishes, the result lands in this chat automatically. (job_status {\"id\":\"%s\"} checks on demand; job_kill {\"id\":\"%s\"} stops it — best-effort, the work may still finish quietly.)",
-		j.ID, j.Tool, int(grace.Seconds()), j.ID, j.ID)
+		"JOB_STARTED — job %s (%s) is running in its own lane (capacity %d).\n"+
+			"Keep working — do anything else that doesn't depend on this result.\n"+
+			"You do NOT need to poll: when it finishes, the result lands in this chat automatically. (job_status {\"id\":\"%s\"} checks on demand; job_kill {\"id\":\"%s\"} stops it — best-effort, the work may still finish quietly.)",
+		j.ID, j.Tool, maxPerSession, j.ID, j.ID)
 }
 
 // Line is one settled job's delivery line — ONE shape on every surface
@@ -310,24 +335,4 @@ func randHex(n int) string {
 		return fmt.Sprintf("%x", time.Now().UnixNano())
 	}
 	return hex.EncodeToString(b)
-}
-
-// Grace is the lane window (DOOMALAY_JOB_GRACE_MS; default 10s).
-func Grace() time.Duration {
-	if v := strings.TrimSpace(os.Getenv("DOOMALAY_JOB_GRACE_MS")); v != "" {
-		var ms int
-		if _, err := fmt.Sscanf(v, "%d", &ms); err == nil {
-			return time.Duration(ms) * time.Millisecond
-		}
-	}
-	return 10 * time.Second
-}
-
-// GraceEnabled answers whether the layer is on.
-func GraceEnabled() bool { return Grace() > 0 }
-
-// WrapEnabled answers whether one tool name rides the layer.
-// The job_* tools never wrap (self-reference: job_status must answer while other jobs run).
-func WrapEnabled(tool string) bool {
-	return !strings.HasPrefix(tool, "job_")
 }

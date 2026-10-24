@@ -49,6 +49,12 @@ type fakeArmBridge struct {
 	lastBody    map[string]any
 	lastTimeout float64
 	canned      map[string]any
+
+	// v1.74.10 THE GIT HAND: when armed, the FIRST /run whose command
+	// contains "git push" answers git's auth-failure shape (the origin
+	// refusing bad credentials); every other call — and every later
+	// push — executes live. The self-heal pin's scalpel.
+	pushAuthFailOnce bool
 }
 
 // newFakeArmBridge builds the executing fake (the /status + /probe +
@@ -76,9 +82,23 @@ func newFakeArmBridge(t *testing.T) *fakeArmBridge {
 			fb.lastTimeout = v
 		}
 		canned := fb.canned
+		pushAuthFail := false
+		if fb.pushAuthFailOnce {
+			command, _ := body["command"].(string)
+			if strings.Contains(command, "git push") {
+				fb.pushAuthFailOnce = false // the FIRST push only
+				pushAuthFail = true
+			}
+		}
 		fb.mu.Unlock()
 		if canned != nil {
 			writeStubBridgeJSON(w, canned)
+			return
+		}
+		if pushAuthFail {
+			writeStubBridgeJSON(w, map[string]any{
+				"ok": true, "stdout": "remote: Permission to ScoobyBaby1999/doomalay denied to crippy.\nfatal: Authentication failed for 'https://github.com/ScoobyBaby1999/doomalay.git/'", "stderr": "", "exit_code": 4,
+			})
 			return
 		}
 		command, _ := body["command"].(string)

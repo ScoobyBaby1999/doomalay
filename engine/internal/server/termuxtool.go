@@ -65,7 +65,9 @@ import (
 // ── the verb registry + the honesty constants ────────────────────────────
 
 // termuxVerbs is the canonical verb list (help + unknown-action teach).
-const termuxVerbs = "help, exec, cmds, ls, read, write, append, patch, rm, mkdir, grep, find, pkg, git_setup, session_start, session_list, session_log, session_kill"
+// v1.74.10 THE GIT HAND: git_status / git_pull / git_push / git_commit
+// join git_setup — the first-class git verbs.
+const termuxVerbs = "help, exec, cmds, ls, read, write, append, patch, rm, mkdir, grep, find, pkg, git_setup, git_status, git_pull, git_push, git_commit, session_start, session_list, session_log, session_kill"
 
 // termuxCapBytes is Termux's own result-Bundle physics (ResultSender's
 // TRANSACTION_SIZE_LIMIT_IN_BYTES): stdout+stderr ride the
@@ -292,6 +294,14 @@ func (s *Server) runTermuxActionCore(ctx context.Context, sessionID, argJSON str
 		out = s.termuxVerbPkg(ctx, sessionID, get, args)
 	case "git_setup":
 		out = s.termuxVerbGitSetup(ctx)
+	case "git_status":
+		out = s.termuxVerbGitStatus(ctx, get, roots)
+	case "git_pull":
+		out = s.termuxVerbGitPull(ctx, get, roots)
+	case "git_push":
+		out = s.termuxVerbGitPush(ctx, get, roots)
+	case "git_commit":
+		out = s.termuxVerbGitCommit(ctx, get, args, roots)
 	case "session_start":
 		out = s.termuxVerbSessionStart(ctx, get)
 	case "session_list":
@@ -467,7 +477,7 @@ func (s *Server) termuxRunScript(ctx context.Context, script string, vargs []str
 	}
 	oc.res = res
 	if res.Timeout {
-		return oc, termuxTimeoutObs(res, timeoutMS)
+		return oc, s.termuxTimeoutObs(res, timeoutMS)
 	}
 	stdout := res.Stdout
 	if idx := strings.IndexByte(stdout, '\n'); idx >= 0 {
@@ -567,19 +577,35 @@ func (s *Server) termuxRunOne(ctx context.Context, command, workdir string, time
 	defer cancel()
 	res, err := s.termux.Run(runCtx, command, workdir, timeoutMS)
 	if err != nil {
+		// A transport error is the APK-side bridge's own story (the engine's
+		// watchdog owns that restart) — NOT a Termux-death event; the gauge
+		// (v1.74.7 THE PHOENIX HEART) only counts the never-executed class.
 		return nil, "OBSERVATION:\nerror: the Termux bridge did not answer — " + err.Error()
+	}
+	// v1.74.7 THE PHOENIX HEART: every delivered outcome feeds the health
+	// gauge. res.Timeout = the bridge answered but Termux never executed
+	// (the boonboon transcript's dead-shell signature — even `echo test`
+	// timed out); anything else = a real round-trip (an exit≠0 result is
+	// still Termux EXECUTING the command — the shell is alive).
+	if res != nil && res.Timeout {
+		s.termuxPhoenixObserveFail()
+	} else if res != nil {
+		s.termuxPhoenixObserveOK()
 	}
 	return res, ""
 }
 
-// termuxTimeoutObs — the budget ended before the command did: the
-// honest two-truth report. v1.28.1: the old text claimed "Termux killed
-// the command" — neither half was true (the budget is OURS, and nothing
-// is killed: the Kotlin timeout only stops WAITING; the Termux-side
-// process may still be running — the stream-recovery law exists exactly
-// for that). The new text says both truths and teaches the ladder
-// (timeout_ms up to the ceiling; session_start for the unbounded class).
-func termuxTimeoutObs(res *termuxbridge.RunResult, timeoutMS int) string {
+// (s *Server) termuxTimeoutObs — the budget ended before the command did:
+// the honest two-truth report + the PHOENIX NOTE (v1.74.7: when the gauge
+// convicts the dead shell, the timeout observation teaches the auto-revive
+// state — the model learns instead of burning calls). v1.28.1: the old
+// text claimed "Termux killed the command" — neither half was true (the
+// budget is OURS, and nothing is killed: the Kotlin timeout only stops
+// WAITING; the Termux-side process may still be running — the
+// stream-recovery law exists exactly for that). The new text says both
+// truths and teaches the ladder (timeout_ms up to the ceiling;
+// session_start for the unbounded class).
+func (s *Server) termuxTimeoutObs(res *termuxbridge.RunResult, timeoutMS int) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "OBSERVATION:\nTIMEOUT — the %ds exec budget ended; the command may still be running in Termux (pass timeout_ms up to 1800000, or session_start it for unbounded)", timeoutMS/1000)
 	if res != nil && res.Stdout != "" {
@@ -588,6 +614,9 @@ func termuxTimeoutObs(res *termuxbridge.RunResult, timeoutMS int) string {
 	if res != nil && res.Stderr != "" {
 		sb.WriteString("\nstderr:\n" + res.Stderr)
 	}
+	// v1.74.7 THE PHOENIX HEART: the dead-shell teach rides every timeout
+	// observation when the gauge has a conviction on record ("" when not).
+	sb.WriteString(s.termuxPhoenixNoteLine())
 	return sb.String()
 }
 
@@ -709,7 +738,11 @@ func (s *Server) termuxVerbExec(ctx context.Context, sessionID string, get func(
 	// tool_stream events / the PM poll), the observation composes from
 	// the streamed buffers (or the broadcast fallback when the curls
 	// never landed).
-	return s.termuxRunStreamingWithProgress(ctx, sessionID, "EXEC DONE", command, roots[0], timeoutMS)
+	// v1.74.10 THE GIT HAND: the failure-point teach rides the return — a
+	// git command that died on AUTH with a vault token available learns
+	// the exact remedy at the failure point (the boonboon transcript's
+	// root conviction: the model never knew git_setup existed).
+	return s.termuxMaybeGitAuthTeach(command, s.termuxRunStreamingWithProgress(ctx, sessionID, "EXEC DONE", command, roots[0], timeoutMS))
 }
 
 // termuxExecCapOf reads the chat's burst cap from its tweaks blob
@@ -1297,7 +1330,7 @@ echo
 		return errObs
 	}
 	if res.Timeout {
-		return termuxTimeoutObs(res, 60000)
+		return s.termuxTimeoutObs(res, 60000)
 	}
 	var sb strings.Builder
 	sb.WriteString("OBSERVATION:\nCMDS — every command available in this Termux (run ANY of them with exec; pkg install adds a package's commands instantly — cmds again to see them):\n")
@@ -1389,44 +1422,14 @@ func (s *Server) termuxVerbGitSetup(ctx context.Context) string {
 	if s.termux == nil {
 		return "OBSERVATION:\nerror: this engine has no Termux bridge (a desktop build, or the APK's loopback bridge is down) — git_setup cannot run here."
 	}
-	tok := s.githubToken()
-	if tok == "" {
-		return "OBSERVATION:\nerror: no GitHub token in the vault — the user connects once (the workspace connect flow: the +workspace pill → GitHub sign-in, or paste a PAT) and git_setup arms it here. After that every git clone/push in Termux works with NO credentials in any command, ever."
+	// v1.74.10 THE GIT HAND: the arming lives in ONE core
+	// (termuxgit.go's termuxGitArmVault) — this verb and the
+	// self-healing git_push both ride it (the factoring law).
+	out, armErr := s.termuxGitArmVault(ctx)
+	if armErr != "" {
+		return "OBSERVATION:\nerror: " + armErr
 	}
-	login, err := ghLoginFor(ctx, tok)
-	if err != nil || login == "" {
-		login = "x-access-token" // the PAT convention — any username works
-	}
-	email := login + "@users.noreply.github.com"
-	script := `set -u
-umask 077
-login="$1"; email="$2"
-command -v git >/dev/null 2>&1 || pkg install -y git >/dev/null 2>&1
-read -r cred
-printf '%s\n' "$cred" > "$HOME/.git-credentials"
-chmod 600 "$HOME/.git-credentials" 2>/dev/null || true
-git config --global credential.helper store
-git config --global user.name  >/dev/null 2>&1 || git config --global user.name  "$login"
-git config --global user.email >/dev/null 2>&1 || git config --global user.email "$email"
-echo "git $(git --version 2>&1 | cut -d' ' -f3)"
-echo "credential.helper: $(git config --global credential.helper)"
-echo "identity: $(git config --global user.name) <$(git config --global user.email)>"
-`
-	credLine := "https://" + login + ":" + tok + "@github.com"
-	runCtx, cancel := context.WithTimeout(ctx, 185*time.Second)
-	defer cancel()
-	res, err := s.termux.RunWithStdin(runCtx, termuxCommand(script, login, email), "", 180000, credLine)
-	if err != nil {
-		return "OBSERVATION:\nerror: the Termux bridge did not answer — " + err.Error()
-	}
-	if res.Timeout {
-		return termuxTimeoutObs(res, 180000)
-	}
-	if res.ExitCode != 0 {
-		return termuxFailObs(res)
-	}
-	out := Redact(strings.TrimRight(res.Stdout, "\n"))
-	return "OBSERVATION:\nGIT ARMED — the vault's GitHub token now lives in Termux (~/.git-credentials, 0600, credential.helper=store). git clone / pull / push against github.com just work now — no token in any command, ever. (The gh CLI is pkg install gh if you want it.)\n" + out
+	return "OBSERVATION:\nGIT ARMED — the vault's GitHub token now lives in Termux (~/.git-credentials, 0600, credential.helper=store). git clone / pull / push against github.com just work now — no token in any command, ever. The git verbs (git_status / git_pull / git_push / git_commit) use it automatically. (The gh CLI is pkg install gh if you want it.)\n" + Redact(out)
 }
 
 // ghLoginFor — the GitHub API's /user login for the token (best-effort;
@@ -1495,7 +1498,7 @@ if kill -0 "$(cat "$d/pid")" 2>/dev/null; then echo "live $(cat "$d/pid")"; else
 		return errObs
 	}
 	if res.Timeout {
-		return termuxTimeoutObs(res, 20000)
+		return s.termuxTimeoutObs(res, 20000)
 	}
 	if res.ExitCode != 0 {
 		return termuxFailObs(res)
@@ -1531,7 +1534,7 @@ done
 		return errObs
 	}
 	if res.Timeout {
-		return termuxTimeoutObs(res, 15000)
+		return s.termuxTimeoutObs(res, 15000)
 	}
 	if res.ExitCode != 0 {
 		return termuxFailObs(res)
@@ -1582,7 +1585,7 @@ tail -n "$n" -- "$d/out.log"
 		return errObs
 	}
 	if res.Timeout {
-		return termuxTimeoutObs(res, 30000)
+		return s.termuxTimeoutObs(res, 30000)
 	}
 	if res.ExitCode != 0 {
 		return termuxFailObs(res)
@@ -1629,7 +1632,7 @@ fi
 		return errObs
 	}
 	if res.Timeout {
-		return termuxTimeoutObs(res, 30000)
+		return s.termuxTimeoutObs(res, 30000)
 	}
 	if res.ExitCode != 0 {
 		return termuxFailObs(res)
@@ -1668,6 +1671,11 @@ Actions (one JSON object of arguments per tool call):
   {"action":"grep","args":{"pattern":"TODO","path":"","glob":"*.py"}}   search file contents — a REAL grep: the pattern is a REGEX, EVERY hit is reported, and it takes glob/exclude, context/before/after, case_sensitive, word, invert, count, files_only (ripgrep when installed, GNU grep -E otherwise)
   {"action":"find","args":{"path":"","name":"*.go"}}   find files by name
   {"action":"pkg","args":{"op":"install","packages":["python","git"]}}  install|update|remove Termux packages (the package's commands go live instantly)
+THE GIT HAND (the first-class git verbs — for any repo on the device; "path" is the repo folder, default the first bound root):
+  {"action":"git_status","args":{"path":"myrepo"}}   branch + ahead/behind + status + the last 5 commits — ONE call
+  {"action":"git_pull","args":{}}             fetch + rebase (conflicts reported honestly with the file list — never auto-resolved)
+  {"action":"git_push","args":{"tags":true}}  THE WHOLE DANCE: fetch → rebase when behind → push (+ release tags; "tags":true pushes ALL tags) — and on an auth failure it AUTO-ARMS the vault's GitHub token and retries once. Never hand-build the push dance again
+  {"action":"git_commit","args":{"message":"feat: x","paths":["a.go"]}}   add (all or the listed paths) + commit
   {"action":"git_setup","args":{}}              arm the vault's GitHub token in Termux — ~/.git-credentials (0600) + credential.helper=store + identity; after ONE call every git clone/push just works (the token rides bridge stdin, never a command, never the chat)
   {"action":"session_start","args":{"name":"web","command":"python -m http.server 8000"}}  background process (nohup + pid + out.log) — create AND kill on the fly, like python processes
   {"action":"session_list","args":{}}         every session: name, pid, live/dead, log size, the ps line

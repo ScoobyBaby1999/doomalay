@@ -195,6 +195,11 @@ func (s *Server) handleTermuxStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// v1.74.7 THE PHOENIX HEART (additive — the old PWA ignores these): the
+	// health gauge + the revive ladder's honest record ride the status answer
+	// so any surface can see the auto-revive state without polling anything.
+	ph := s.termuxPhoenixSnapshot()
+
 	writeJSON(w, 200, map[string]any{
 		"available":       true,
 		"android":         runtime.GOOS == "android", // runtime check — same binary every platform
@@ -223,6 +228,14 @@ func (s *Server) handleTermuxStatus(w http.ResponseWriter, r *http.Request) {
 		"probe_suppressed":  suppressed,
 		"last_error":        lastError,
 		"checked_at":        time.Now().Unix(),
+		// v1.74.7 THE PHOENIX HEART: the gauge + the ladder's record
+		"phoenix_consecutive_failures": ph.Consecutive,
+		"phoenix_last_ok_at":           ph.LastOKAt,
+		"phoenix_revive_running":       ph.ReviveRunning,
+		"phoenix_revive_attempts":      ph.ReviveAttempts,
+		"phoenix_revive_last_at":       ph.ReviveLastAt,
+		"phoenix_revive_last_ok":       ph.ReviveLastOK,
+		"phoenix_revive_last_error":    ph.ReviveLastErr,
 	})
 }
 
@@ -301,6 +314,19 @@ func (s *Server) termuxProbeCached(force, canAutoProbe bool) (*termuxbridge.RunR
 	r, err := s.termux.Probe(ctx)
 	cancel()
 
+	// v1.74.7 THE PHOENIX HEART: the probe outcome feeds the health gauge —
+	// a delivered probe (markers or not) is Termux EXECUTING our script (alive);
+	// a probe timeout is the bridge answering while Termux never executed (the
+	// dead-shell signature). A transport error is the APK bridge's own story —
+	// the gauge must not count it.
+	if err == nil && r != nil {
+		if r.Timeout {
+			s.termuxPhoenixObserveFail()
+		} else if r.Ok {
+			s.termuxPhoenixObserveOK()
+		}
+	}
+
 	s.termuxMu.Lock()
 	s.termuxCache = termuxProbeCache{at: time.Now(), result: r, err: err}
 	s.termuxFlight = nil
@@ -330,10 +356,11 @@ func (s *Server) handleTermuxAct(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch body.What {
-	case "open_termux", "open_fdroid", "open_permission_settings":
-		// ok — one of the three legal actions
+	case "open_termux", "open_fdroid", "open_permission_settings", "revive_termux":
+		// ok — one of the four legal actions (v1.74.7: revive_termux — the
+		// phoenix ladder's Kotlin hand; a manual PWA tap may fire it too)
 	default:
-		writeError(w, http.StatusBadRequest, "unknown what (expected open_termux | open_fdroid | open_permission_settings)")
+		writeError(w, http.StatusBadRequest, "unknown what (expected open_termux | open_fdroid | open_permission_settings | revive_termux)")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)

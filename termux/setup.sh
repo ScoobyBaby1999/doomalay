@@ -26,6 +26,13 @@
 #                                     one curl tells Doomalay this script
 #                                     finished — zero extra commands,
 #                                     zero notifications)
+#   + THE EVERALIVE (v1.74.9, PLAN-V175): the persistent wake lock (Termux
+#                                     survives screen-off + the OEM idle
+#                                     passes), the ~/.termux/boot/ script
+#                                     (Termux re-arms itself at every boot
+#                                     when the Termux:Boot add-on is in),
+#                                     and the ~/.doomalay/alive heartbeat
+#                                     (the engine's diagnostic trail).
 #
 # THE BAR (v1.24.1): a live 2-line ASCII progress block drawn on THIS
 # terminal while the script runs — line 1 is the spinner + percent + a █/░
@@ -406,9 +413,12 @@ __dm_cleanup() {
     if [ -n "${DM_STATEDIR:-}" ]; then
         rm -rf "$DM_STATEDIR" 2>/dev/null
     fi
-    if [ "${DM_SAFE:-0}" = "1" ] && [ -z "$DM_DEMO" ]; then
+    if [ "${DM_SAFE:-0}" = "1" ] && [ -z "$DM_DEMO" ] && [ "${DM_KEEPALIVE_ARMED:-0}" != "1" ]; then
         # release the lock the script took (the wiki's law: manage the
-        # unlock yourself — never leak a wakelock past setup)
+        # unlock yourself — never leak a wakelock past setup). v1.74.9
+        # THE EVERALIVE: when the persistent keep-alive lock was ARMED at
+        # the end of setup, the lock is not a leak — it is the product
+        # (Termux survives screen-off; termux-wake-unlock is the off-switch).
         command -v termux-wake-unlock >/dev/null 2>&1 \
             && termux-wake-unlock >/dev/null 2>&1
     fi
@@ -628,6 +638,61 @@ else
     __out "  doomalay termux setup complete — return to the Doomalay app"
 fi
 __out "═══════════════════════════════════════════════════════════"
+
+# ── THE EVERALIVE (v1.74.9, PLAN-V175 — the user's law: "termux needs to
+# be persistent… truly one time… no user input needed at all"). Three
+# additive arms, every one non-fatal + honestly reported:
+#   1. THE PERSISTENT WAKE LOCK — termux-wake-lock held past setup (the
+#      documented Termux answer to Android killing the idle shell: the
+#      lock keeps Termux's own service class alive through screen-off +
+#      the OEM idle passes; termux-wake-unlock is the user's off-switch).
+#   2. THE BOOT SCRIPT — ~/.termux/boot/doomalay-keepalive re-arms the
+#      lock + stamps the heartbeat at every device boot (needs the
+#      Termux:Boot add-on — F-Droid, opened once — Termux's own security
+#      model; without it the script simply waits, harmless).
+#   3. THE HEARTBEAT — ~/.doomalay/alive (epoch), the engine's phoenix
+#      probe re-stamps it on every revival; the boot script stamps it on
+#      every boot (the diagnostic trail).
+DM_KEEPALIVE_ARMED=0
+__out ""
+if [ -z "$DM_DEMO" ]; then
+    if command -v termux-wake-lock >/dev/null 2>&1 \
+        && termux-wake-lock >/dev/null 2>&1; then
+        DM_KEEPALIVE_ARMED=1
+        __out "  ✓ everalive: wake lock held — Termux survives screen-off + idle kills"
+        __out "    (termux-wake-unlock releases it if you ever want it off)"
+    else
+        __out "  ⚠ everalive: termux-wake-lock unavailable — the wake lock stays off"
+        __out "    (the Doomalay app still auto-revives Termux when a command dies)"
+    fi
+    DM_BOOT_DIR="$HOME/.termux/boot"
+    mkdir -p "$DM_BOOT_DIR" 2>/dev/null
+    cat > "$DM_BOOT_DIR/doomalay-keepalive" <<'KEEPALIVE_EOF'
+#!/data/data/com.termux/files/usr/bin/sh
+# doomalay-keepalive — written by setup.sh (v1.74.9 THE EVERALIVE SCRIPT,
+# PLAN-V175). Termux:Boot runs this at every device boot (the add-on app
+# must be installed from F-Droid and opened ONCE — Termux's own security
+# model; until then this file simply waits, harmless).
+termux-wake-lock >/dev/null 2>&1 || true
+mkdir -p "$HOME/.doomalay" 2>/dev/null || true
+date +%s > "$HOME/.doomalay/alive" 2>/dev/null || true
+echo "$(date '+%Y-%m-%d %H:%M:%S') doomalay keepalive armed (boot)" >> "$HOME/.doomalay/keepalive.log" 2>/dev/null || true
+KEEPALIVE_EOF
+    if [ -s "$DM_BOOT_DIR/doomalay-keepalive" ]; then
+        chmod +x "$DM_BOOT_DIR/doomalay-keepalive" 2>/dev/null
+        __out "  ✓ everalive: boot script written (~/.termux/boot/doomalay-keepalive)"
+        __out "    with the Termux:Boot app (F-Droid — install + open once), Termux"
+        __out "    re-arms itself at every boot — that one open is the only ritual"
+    else
+        __out "  ⚠ everalive: could not write ~/.termux/boot/ — the boot script waits"
+    fi
+    if mkdir -p "$HOME/.doomalay" 2>/dev/null \
+        && date +%s > "$HOME/.doomalay/alive" 2>/dev/null; then
+        __out "  ✓ everalive: heartbeat live (~/.doomalay/alive)"
+    else
+        __out "  ⚠ everalive: could not write the heartbeat — non-fatal"
+    fi
+fi
 
 # ── the checkin (v1.20.1 THE QUIET GATE) ──────────────────────
 # Tell the Doomalay app the bootstrap ran, with this script's OWN honest
