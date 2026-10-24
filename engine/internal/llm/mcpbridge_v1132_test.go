@@ -61,7 +61,7 @@ collect:
 			if !ok {
 				break collect
 			}
-			switch {
+						switch {
 			case c.Type == "tool_use" && c.Name == "calculator":
 				sawUse = true
 			case c.Type == "tool_result" && c.Name == "calculator":

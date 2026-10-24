@@ -453,7 +453,14 @@ var (
 	webFetchRetryBase     = 500 * time.Millisecond
 )
 
+// WebFetch fetches a URL with progress support via ToolRunner.
+// For direct calls without ToolRunner, use WebFetchSimple.
 func WebFetch(ctx context.Context, rawURL string) (string, error) {
+	return WebFetchSimple(ctx, rawURL)
+}
+
+// WebFetchSimple is the original WebFetch without progress instrumentation.
+func WebFetchSimple(ctx context.Context, rawURL string) (string, error) {
         if err := assertPublicURL(rawURL); err != nil {
                 return "", err
         }
@@ -499,6 +506,97 @@ func WebFetch(ctx context.Context, rawURL string) (string, error) {
         }
         return htmlToText(string(body)), nil
 }
+
+// WebFetchWithProgress fetches a URL and emits progress via ToolRunner.
+// Usage: tr.EmitProgress("fetching", "downloading..."); tr.EmitPercent(pct, detail)
+func WebFetchWithProgress(ctx context.Context, rawURL string, tr *ToolRunner) (string, error) {
+	if err := assertPublicURL(rawURL); err != nil {
+		return "", err
+	}
+	
+	// Phase: starting
+	tr.EmitProgress("starting", "preparing fetch for "+rawURL)
+	
+	// HF spaces: try structured API first
+	if txt, ok, err := structuredFetch(ctx, rawURL, true); ok {
+		tr.EmitProgress("completed", "fetched via structured API")
+		return txt, err
+	}
+	
+	// Phase: connecting
+	tr.EmitProgress("connecting", "connecting to "+rawURL)
+	
+	// v1.61.2 THE PATIENT WIRE: the page fetch rides netx.RetryDo (2
+	// attempts, transient classes only)
+	resp, err := netx.RetryDo(ctx, ssrfClient, func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, "GET", rawURL, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("User-Agent", browserUA)
+		return req, nil
+	}, webFetchRetryAttempts, webFetchRetryBase)
+	if err != nil {
+		tr.EmitProgress("error", "connection failed: "+err.Error())
+		return "", err
+	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode != 200 {
+		// second chance: a known-host JSON API may still describe the
+		// target (public repo whose HTML fetch failed, private repo, …).
+		// A precise "private/renamed/deleted" error beats a bare status.
+		if txt, ok, ferr := structuredFetch(ctx, rawURL, false); ok {
+			if ferr == nil {
+				tr.EmitProgress("completed", "fetched via fallback API")
+				return txt, nil
+			}
+			return "", ferr
+		}
+		tr.EmitProgress("error", fmt.Sprintf("HTTP %d", resp.StatusCode))
+		return "", fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	
+	// Phase: downloading with progress if Content-Length available
+	tr.EmitProgress("downloading", "downloading content")
+	contentLength := resp.ContentLength
+	var reader io.Reader = resp.Body
+	if contentLength > 0 {
+		reader = &progressReader{Reader: resp.Body, Total: contentLength, Tr: tr}
+	}
+	
+	// v1.19.1: the body ceiling is an OOM guard at absurd sizes, not a
+	// content cap — no fetch truncates.
+	body, err := io.ReadAll(io.LimitReader(reader, 256<<20))
+	if err != nil {
+		tr.EmitProgress("error", "read failed: "+err.Error())
+		return "", err
+	}
+	
+	tr.EmitProgress("processing", "processing content")
+	text := htmlToText(string(body))
+	tr.EmitProgress("completed", "fetch complete")
+	return text, nil
+}
+
+// progressReader wraps an io.Reader to emit progress percentages.
+type progressReader struct {
+	io.Reader
+	Total int64
+	ReadBytes int64
+	Tr    *ToolRunner
+}
+
+func (pr *progressReader) Read(p []byte) (int, error) {
+	n, err := pr.Reader.Read(p)
+	pr.ReadBytes += int64(n)
+	if pr.Total > 0 && pr.Tr != nil {
+		pct := float64(pr.ReadBytes) * 100.0 / float64(pr.Total)
+		pr.Tr.EmitPercent(pct, fmt.Sprintf("downloaded %d/%d bytes", pr.ReadBytes, pr.Total))
+	}
+	return n, err
+}
+
 
 // structuredFetch resolves github.com / huggingface.co URLs through their
 // keyless JSON APIs. prefer=true runs even when the page fetch would work

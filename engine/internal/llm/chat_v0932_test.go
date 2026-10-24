@@ -110,7 +110,7 @@ collect:
                         if !ok {
                                 break collect
                         }
-                        if c.Type == "tool_result" && c.Name == "workspace" && strings.Contains(c.Text, "failed internally") {
+                        if (c.Type == "tool_result" || c.Type == "notice") && (c.Name == "workspace" || strings.Contains(c.Text, "workspace")) && (strings.Contains(c.Text, "failed internally") || strings.Contains(c.Text, "engine recovered")) {
                                 sawToolError = true
                                 toolErr = c.Text
                         }

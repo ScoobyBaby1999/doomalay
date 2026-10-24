@@ -31,6 +31,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ScoobyBaby1999/doomalay/engine/internal/llm"
 	"github.com/ScoobyBaby1999/doomalay/engine/internal/termuxbridge"
 )
 
@@ -265,4 +266,20 @@ rm -f -- "$d/o.$1" "$d/e.$1" 2>/dev/null
 		return nil
 	}
 	return res
+}
+
+// termuxRunStreamingWithProgress wraps termuxRunStreaming with ToolRunner
+// isolation + progress emission for executeAction integration.
+func (s *Server) termuxRunStreamingWithProgress(ctx context.Context, sessionID, headline, command, workdir string, timeoutMS int) string {
+	tr := llm.NewToolRunner(ctx, sessionID, 0, "termux")
+	go tr.RunWithContext(func(ctx context.Context) (string, error) {
+		return s.termuxRunStreaming(ctx, sessionID, headline, command, workdir, timeoutMS), nil
+	})
+	// Note: progress is emitted by the caller (executeAction's runWithProgress)
+
+	result := <-tr.Done
+	if result.Err != nil {
+		return "OBSERVATION:\nerror: " + result.Err.Error()
+	}
+	return result.Observation
 }
