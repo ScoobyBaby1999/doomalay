@@ -2299,7 +2299,11 @@ func executeAction(ctx context.Context, req ChatRequest, ch chan<- ChatChunk, ac
                                 // user's repro had the model guessing "repo_list"
                                 // and dead-ending. Name the real tool + verbs.
                                 if req.WorkspaceToolFn != nil {
-                                        return ", workspace {\"action\": \"help|list|ls|read|grep|view|put|pr|pr_diff|pr_review|pr_comment|pr_merge|issue_create|issue_comment|issue_close|discussion_post|workflow_dispatch|file_delete|release_create|branch|fork\", \"ws\": \"owner/repo\", ...} (this chat's CONNECTED cloud repos — grep, read, push, PR, code review, issues, discussions, workflows)"
+                                        // v1.74.6 THE COMPLETE TEACH: the old list named 20 of 30 verbs
+					// (info/tree/readme/patch/commit/sync/tag_create/create/
+					// discover never existed to a model that read it) — re-teaching
+					// pre-V161 shapes exactly on the fumble path.
+					return ", workspace {\"action\": \"help|list|info|tree|ls|read|readme|grep|view|put|patch|commit|sync|pr|pr_diff|pr_review|pr_comment|pr_merge|branch|tag_create|release_create|issue_create|issue_comment|issue_close|discussion_post|workflow_dispatch|file_delete|fork|create|discover\", \"ws\": \"owner/repo\", ...} (this chat's CONNECTED cloud repos — grep, read, SURGICAL PATCH (search/replace edits), atomic multi-file commit, push, PR, code review, issues, discussions, workflows; API-only — no clone/rebase: sync is the rebase eye, real git runs via termux exec)"
                                 }
                                 return ""
                         }()) + (func() string {
@@ -2309,7 +2313,9 @@ func executeAction(ctx context.Context, req ChatRequest, ch chan<- ChatChunk, ac
                                 // let the model guess "shell" or "terminal" and
                                 // dead-end).
                                 if req.TermuxToolFn != nil {
-                                        return ", termux {\"action\": \"exec|ls|read|write|append|rm|mkdir|grep|find|pkg|session_start|session_list|session_log|session_kill|help\", \"args\": {\"path\":\"…\",\"command\":\"…\"}} (a real Termux Linux shell on the user's device, jailed to this chat's bound device folders — run commands, edit files, install packages, create/kill background process sessions)"
+                                        // v1.74.6 THE COMPLETE TEACH: cmds, git_setup and patch join the
+					// list (the old shape re-taught a pre-V161 verb map).
+					return ", termux {\"action\": \"exec|cmds|git_setup|ls|read|write|append|patch|rm|mkdir|grep|find|pkg|session_start|session_list|session_log|session_kill|help\", \"args\": {\"path\":\"…\",\"command\":\"…\",\"edits\":[…],\"range\":\"lines:A-B\"}} (a real Termux Linux shell on the user's device, jailed to this chat's bound device folders — run commands, SURGICAL PATCH local files, install packages, arm git (git_setup) and run real git, create/kill background process sessions)"
                                 }
                                 return ""
                         }()) + "."

@@ -1302,7 +1302,11 @@ func (s *Server) sessionCloudWorkspaces(sessionID string) []*store.Workspace {
 	}
 	out := make([]*store.Workspace, 0, len(bound))
 	for _, ws := range bound {
-		if ws.Kind == "device" {
+		// v1.74.6 THE DEVICE-ROW SPLIT: termux rows are NOT cloud repos —
+		// they leaked into the CONNECTED CLOUD WORKSPACES block where the
+		// cloud client guaranteed "lookup device: no such host" failures
+		// (a manufactured dead-end, the audit's friction #3).
+		if ws.Kind == "device" || ws.Kind == "termux" {
 			continue
 		}
 		out = append(out, ws)
@@ -1324,7 +1328,7 @@ func (s *Server) workspaceManifestFor(sessionID string) string {
 		// read hand — the model must know it exists BEFORE it falls back
 		// to raw fetching (the user's live repro: the bot burned rounds
 		// hand-rolling fetches the workspace tool does natively).
-		return "PUBLIC REPO ACCESS (no connection needed): the workspace tool reads PUBLIC repos unbound — {\"action\":\"read\",\"ws\":\"owner/repo\",\"path\":\"README.md\"} and info/tree/ls/readme/grep/view, for any GitHub owner/repo or a full forge URL (gitea/gitlab/sourcehut/HF). Prefer this over hand-built fetches. Private repos and writes (put/pr/issues/…) need the user to connect a workspace (the +workspace pill)."
+		return "PUBLIC REPO ACCESS (no connection needed): the workspace tool reads PUBLIC repos unbound — {\"action\":\"read\",\"ws\":\"owner/repo\",\"path\":\"README.md\"} and info/tree/ls/readme/grep/view, for any GitHub owner/repo or a full forge URL (gitea/gitlab/sourcehut/HF). Prefer this over hand-built fetches. Private repos and writes (put/pr/issues/…) need the user to connect a workspace (the +workspace pill). The tool is REST-API-only: no clone, no rebase/merge — the termux exec runs real git on the device."
 	}
 	var sb strings.Builder
 	sb.WriteString("CONNECTED CLOUD WORKSPACES (this chat's repos — act on them with the workspace tool):\n")
@@ -1336,7 +1340,13 @@ func (s *Server) workspaceManifestFor(sessionID string) string {
 		}
 		sb.WriteString("\n")
 	}
-	sb.WriteString("access=read → browse/tree/read/grep/view only; partial → fork+PR flows; full → direct file writes (API commits). The tool routes through the engine, which holds the credentials.")
+	sb.WriteString("access=read → browse/tree/read/grep/view only; partial → fork+PR flows; full → direct file writes (API commits). The tool routes through the engine, which holds the credentials.\n")
+	// v1.74.6 THE API-ONLY TRUTH (the user's bullet 3: the model that
+	// wanted to rebase reached for termux because nothing said the tool
+	// cannot): the limits are STATED, never discovered by failing — no
+	// local clone, no rebase/merge/cherry-pick, sync is the rebase eye,
+	// real git runs on the termux device.
+	sb.WriteString("HONEST LIMITS: the workspace tool drives repos through the forge REST API — there is NO local clone and NO working copy: rebase, merge and cherry-pick DO NOT EXIST here (the pr_merge verb can merge a PR server-side). {\"action\":\"sync\"} is the rebase eye — it reports behind/ahead and forecasts the overlap when both sides moved. To run REAL git commands (clone, rebase, push), use the termux tool's exec on the device (git_setup arms it once).")
 	return sb.String()
 }
 

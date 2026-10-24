@@ -93,7 +93,13 @@ func (s *Server) toolsBlockFor(sess *store.Session, serveMode, mcpBound bool) st
 	// RELEASES, tags, workflows — rides doomalay_workspace. The names
 	// ride the ARMED SHELF's first-class spelling (doomalay_<name>,
 	// called DIRECTLY — the v1.64.0 law above).
-	b.WriteString("Pick whichever tool fits the job: for files and the shell use your native read/write/edit/grep/shell; for WEB SEARCH always use doomalay_web_search first — it is the app's own keyless engine (DuckDuckGo/Bing, the same search every other provider rides; your own websearch tool needs a paid provider key this device does not have); for GitHub and repos — code, issues, PRs, releases, tags, workflows — use doomalay_workspace; for the app's hub library (templates, skills, scripts, docs, personas, themes) use doomalay_hublib; for documents, archives, the journal, the other chatbots (fleet) and calculations use the matching doomalay tools; for the device's Termux shell use doomalay_termux.]")
+	// v1.74.6 THE SCRATCH-DIR TRUTH: the serve's own shell runs in the
+	// per-chat SCRATCH dir (a sandbox cwd), never the user's real
+	// filesystem — the real files live behind doomalay_workspace (cloud
+	// repos) and doomalay_termux (the device). Stated, never discovered
+	// by failing (the rebase-trap lesson: the model that reached for
+	// termux because nothing said what the shell could not touch).
+	b.WriteString("Pick whichever tool fits the job: for files and the shell use your native read/write/edit/grep/shell (NOTE: your shell's working directory is this chat's SCRATCH sandbox \u2014 the user's real files and repos live behind doomalay_workspace and doomalay_termux, and real git (clone/rebase/push) runs through doomalay_termux's exec on the device); for WEB SEARCH always use doomalay_web_search first — it is the app's own keyless engine (DuckDuckGo/Bing, the same search every other provider rides; your own websearch tool needs a paid provider key this device does not have); for GitHub and repos — code, issues, PRs, releases, tags, workflows — use doomalay_workspace; for the app's hub library (templates, skills, scripts, docs, personas, themes) use doomalay_hublib; for documents, archives, the journal, the other chatbots (fleet) and calculations use the matching doomalay tools; for the device's Termux shell use doomalay_termux.]")
 	return b.String()
 }
 
