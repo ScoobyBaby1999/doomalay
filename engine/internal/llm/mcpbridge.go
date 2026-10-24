@@ -86,17 +86,23 @@ func mcpTurnFor(req ChatRequest, ch chan<- ChatChunk) *mcpbus.Turn {
 // busExecute runs ONE tool call through the MCP bus and emits the
 // ChatChunk sequence (the executeAction emission contract):
 // tool_use → sources (web tools) → tool_result (+artifact card).
-// Returns the observation (OBSERVATION-prefixed, the today shape) and
-// whether the turn should degrade to direct dispatch (bus failure).
-func busExecute(ctx context.Context, bus *mcpbus.Bus, turn *mcpbus.Turn, ch chan<- ChatChunk, action, argJSON string, allSources *[]SearchResult) (observation string, degraded bool) {
+// Returns the observation (OBSERVATION-prefixed, the today shape),
+// whether the turn should degrade to direct dispatch (bus failure), and
+// the STRUCTURED failure verdict (v1.74.1 THE HONEST FAULT LINE: the bus
+// result's IsError — set by every mcp.NewToolResultError — is the
+// authoritative call-failed signal for the hiccup notice and the
+// repeat-cache gate; the old content-line scan false-positived on
+// successful reads of error-laden files).
+func busExecute(ctx context.Context, bus *mcpbus.Bus, turn *mcpbus.Turn, ch chan<- ChatChunk, action, argJSON string, allSources *[]SearchResult) (observation string, degraded bool, failed bool) {
         summary := mcpbus.DefaultSummary(action, argJSON)
         ch <- ChatChunk{Type: "tool_use", Name: action, Summary: summary, Args: argJSON}
         res := bus.CallTool(ctx, turn, action, json.RawMessage(argJSON))
+        failed = res.IsError // BusFailure implies IsError; both are failures
         if res.BusFailure {
                 // The MCP protocol layer itself failed: serve the honest error
                 // (the model self-corrects next round) and degrade the turn —
                 // the remaining calls run the direct in-process dispatch.
-                return "OBSERVATION:\n" + res.Text, true
+                return "OBSERVATION:\n" + res.Text, true, true
         }
         if len(res.Sources) > 0 {
                 srcs := fromBusSources(res.Sources)
@@ -108,7 +114,7 @@ func busExecute(ctx context.Context, bus *mcpbus.Bus, turn *mcpbus.Turn, ch chan
                 resChunk.Artifact = map[string]any{"name": res.Artifact}
         }
         ch <- resChunk
-        return "OBSERVATION:\n" + res.Text, false
+        return "OBSERVATION:\n" + res.Text, false, res.IsError
 }
 
 // mcpBus returns the process-wide bus (nil when unavailable — callers

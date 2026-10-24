@@ -86,7 +86,7 @@ func withGrace(ctx context.Context, t *Turn, name, argJSON string, dispatch func
                         if r := recover(); r != nil {
                                 log.Printf("PANIC recovered in mcpbus tool %s (lane): %v", name, r)
                                 done <- outcome{res: mcp.NewToolResultError(
-                                        "error: the " + name + " tool failed internally — the engine recovered; rephrase or try a different approach"), err: nil}
+                                        "error: the " + name + " tool failed internally — the engine recovered; re-send the same call (it may have partially run — check the result first if it matters)"), err: nil}
                         }
                 }()
                 r, e := dispatch(jctx)
@@ -97,6 +97,19 @@ func withGrace(ctx context.Context, t *Turn, name, argJSON string, dispatch func
                 cancel()
                 return o.res, o.err
         case <-time.After(jobmgr.Grace()):
+                // v1.74.1 THE ONCE-DELIVERY LAW: when done AND the timer
+                // are both ready, Go's select picks randomly — the old shape
+                // could hand the caller the TICKET while the settler below
+                // ALSO delivered the natural finish as a job row (the same
+                // call reported twice). The non-blocking drain settles an
+                // already-finished outcome as the plain result — the ticket
+                // and the natural finish are mutually exclusive, ever.
+                select {
+                case o := <-done:
+                        cancel()
+                        return o.res, o.err
+                default:
+                }
                 job := jm.Begin(sess, name, argJSON, cancel, dispatchStart)
                 go func() {
                         // the settler: the lane's finish lands whenever it lands.

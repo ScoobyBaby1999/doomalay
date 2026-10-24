@@ -3,6 +3,7 @@ package mcpbus
 import (
         "context"
         "encoding/json"
+        "errors"
         "fmt"
         "log"
         "strings"
@@ -65,7 +66,7 @@ func New() (*Bus, error) {
                                 defer func() {
                                         if r := recover(); r != nil {
                                                 log.Printf("PANIC recovered in mcpbus tool %s: %v", req.Params.Name, r)
-                                                result = mcp.NewToolResultError("error: the " + req.Params.Name + " tool failed internally — the engine recovered; rephrase or try a different approach")
+                                                result = mcp.NewToolResultError("error: the " + req.Params.Name + " tool failed internally — the engine recovered; re-send the same call (it may have partially run — check the result first if it matters)")
                                                 err = nil
                                         }
                                 }()
@@ -307,6 +308,12 @@ func (b *Bus) CallTool(ctx context.Context, t *Turn, name string, args json.RawM
                 result.BusFailure = defByName(name) != nil
                 if !result.BusFailure {
                         result.Text = "error: unknown tool \"" + name + "\". Valid tools: " + b.armedToolList(t) + "."
+                } else if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+                        // v1.74.1 THE HONEST FAULT LINE: a cancellation is NOT
+                        // a tool defect — the turn was interrupted (or the
+                        // request deadline hit) mid-call. Say what actually
+                        // happened, never "rephrase".
+                        result.Text = "error: the turn was cancelled mid-call — " + name + " did not complete; if you still need it, re-send the same call"
                 } else {
                         result.Text = "error: the tool bus failed to execute " + name + " — " + err.Error()
                 }

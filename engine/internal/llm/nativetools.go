@@ -598,12 +598,16 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
                                 observation = "OBSERVATION:\n(identical " + c.Function.Name + " call already executed this turn — same result)\n" + cached
                         } else if bus != nil && !busDegraded {
                                 var degraded bool
-                                observation, degraded = busExecute(ctx, bus, turn, ch, c.Function.Name, c.Function.Arguments, &allSources)
-                                // v1.56.0 THE HICCUP FLAG: every hiccup a tool
-                                // reports (a truncated result, a skipped file,
-                                // a refusal) is SPOKEN — the user sees it and
-                                // the model knows its observation was partial.
-                                FlagToolFault(ctx, ch, c.Function.Name, observation)
+                                observation, degraded, callFailed := busExecute(ctx, bus, turn, ch, c.Function.Name, c.Function.Arguments, &allSources)
+                                // v1.56.0 THE HICCUP FLAG · v1.74.1 THE HONEST FAULT
+                                // LINE: every hiccup a tool reports is SPOKEN — but
+                                // the call-failed verdict rides the STRUCTURED
+                                // IsError flag now (the old content-line scan
+                                // false-positived on successful reads of
+                                // error-laden files — the phantom-failure
+                                // conviction: display said failed, execution
+                                // succeeded).
+                                FlagToolFaultStructured(ctx, ch, c.Function.Name, observation, callFailed)
                                 // v1.14.4 THE TRACE: bus calls trace through the
                                 // bus Observer (spans + events, obs.AttachBus);
                                 // only the DEGRADE verdict is unique to this site.
@@ -618,7 +622,7 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
                                 // served the old failure verbatim and the directory was
                                 // never created). Only a SUCCESS is idempotently
                                 // cacheable — a retry of a failure must re-execute.
-                                if !failedObservation(observation) {
+                                if !failedObservation(observation, callFailed) {
                                         seenCalls[dedupKey] = strings.TrimPrefix(observation, "OBSERVATION:\n")
                                         // v1.70.4 THE STALE CENSUS: a successful call may
                                         // have MUTATED state — every cached MUTABLE READ
@@ -667,7 +671,7 @@ func runNativeToolsTurn(ctx context.Context, ch chan<- ChatChunk, errs chan<- er
                                 if hasSpan {
                                         tsp.End(strings.HasPrefix(observation, "OBSERVATION:\n(error"), len(observation))
                                 }
-                                if !failedObservation(observation) {
+                                if !failedObservation(observation, false) {
                                         seenCalls[dedupKey] = strings.TrimPrefix(observation, "OBSERVATION:\n")
                                         evictMutableReads(seenCalls) // v1.70.4 THE STALE CENSUS
                                 }

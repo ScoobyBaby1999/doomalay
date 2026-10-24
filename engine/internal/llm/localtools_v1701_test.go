@@ -88,7 +88,7 @@ func TestV1701_FailedObservationClassifier(t *testing.T) {
                 "OBSERVATION:\nEXEC DONE — workdir /x\nexit_code: 1\nstdout:\n(error from inner script) whatever\nstderr:\nerror: boom",
         }
         for _, obs := range fails {
-                if !failedObservation(obs) {
+                if !failedObservation(obs, false) {
                         t.Fatalf("must classify as failed: %q", obs[:min(60, len(obs))])
                 }
         }
@@ -100,7 +100,7 @@ func TestV1701_FailedObservationClassifier(t *testing.T) {
                 "OBSERVATION:\nTEXT — notes.txt (10 bytes)\nthe text mentions error: in prose but is a success",
         }
         for _, obs := range oks {
-                if failedObservation(obs) {
+                if failedObservation(obs, false) {
                         t.Fatalf("must NOT classify as failed: %q", obs[:min(60, len(obs))])
                 }
         }
