@@ -51,63 +51,37 @@ type EditReport struct {
 
 // ApplyEdits applies the edits SEQUENTIALLY — edit N sees edit N-1's
 // output (the aider/MCP semantics: the order is the contract).
+// v1.74.2: it rides the SAME leniency ladder as ApplyEditsPartial
+// (normalize → exact → indent-flex → elision → fuzzy) and keeps the
+// all-or-nothing contract (the first failure's re-ask diagnostic is
+// the error; nothing lands). The patch/commit verbs ride PARTIAL —
+// this stays for the callers that want the atomic shape.
 func ApplyEdits(content string, edits []EditSpec) (string, []EditReport, error) {
         if len(edits) == 0 {
                 return content, nil, fmt.Errorf("no edits given — pass edits: [{\"old\":\"…\",\"new\":\"…\"}]")
         }
-        reports := make([]EditReport, 0, len(edits))
-        for i, e := range edits {
-                next, report, err := applyOne(content, i, e)
-                if err != nil {
-                        return content, reports, err
+        pres := ApplyEditsPartial(content, edits)
+        if pres.Failed > 0 {
+                for _, o := range pres.Outcomes {
+                        if !o.OK {
+                                return content, nil, fmt.Errorf("%s", o.Err)
+                        }
                 }
-                content = next
-                reports = append(reports, report)
         }
-        return content, reports, nil
+        reports := make([]EditReport, 0, len(pres.Outcomes))
+        for _, o := range pres.Outcomes {
+                r := EditReport{Index: o.Index, Mode: o.Mode, Count: o.Count}
+                if o.Index >= 0 && o.Index < len(edits) {
+                        r.OldLen = len(edits[o.Index].Old)
+                        r.NewLen = len(edits[o.Index].New)
+                }
+                reports = append(reports, r)
+        }
+        return pres.Content, reports, nil
 }
 
-func applyOne(content string, index int, e EditSpec) (string, EditReport, error) {
-        rep := EditReport{Index: index, OldLen: len(e.Old), NewLen: len(e.New)}
-        if strings.TrimSpace(e.Old) == "" {
-                return content, rep, fmt.Errorf("edit %d: \"old\" is empty — a patch REPLACES existing text; to create a file, write its full content (the commit verb's content field); to insert at a point, include the surrounding lines in old", index+1)
-        }
-        // EXACT PATH: byte-for-byte offsets
-        if offsets := allIndexes(content, e.Old); len(offsets) > 0 {
-                chosen, err := chooseOffsets(offsets, e, index)
-                if err != nil {
-                        return content, rep, err
-                }
-                rep.Mode = "exact"
-                rep.Count = len(chosen)
-                rep.At = chosen[0]
-                content = replaceExact(content, chosen, len(e.Old), e.New)
-                return content, rep, nil
-        }
-        // INDENT-FLEX PATH: whitespace-normalized line windows, with the
-        // replacement RE-INDENTED to the file's own indentation (the MCP
-        // filesystem server's documented behavior — the model may shift the
-        // context indentation when it copies code).
-        rewritten, lineIdx, bases, oldLineCount, oldFirstIndent, err := flexMatch(content, e.Old)
-        if err != nil {
-                return content, rep, fmt.Errorf("edit %d: %v", index+1, err)
-        }
-        chosen, cerr := chooseOffsets(lineIdx, e, index)
-        if cerr != nil {
-                return content, rep, cerr
-        }
-        rep.Mode = "indent-flex"
-        rep.Count = len(chosen)
-        rep.At = chosen[0]
-        rep.OldLen = oldLineCount
-        texts := make([]string, len(chosen))
-        for k, li := range chosen {
-                texts[k] = reindentText(e.New, oldFirstIndent, bases[li])
-        }
-        rep.NewLen = len(texts[0])
-        content = replaceLines(rewritten, chosen, oldLineCount, texts)
-        return content, rep, nil
-}
+// The EditReport.At field survives for compat; the partial engine
+// reports line/byte offsets only where cheap (exact).
 
 // chooseOffsets resolves the all/occurrence/nudge contract: a multi-match
 // without "all" or "occurrence" never guesses.
@@ -226,7 +200,7 @@ func flexMatch(content, old string) (rewritten string, lineIdx []int, bases map[
                 }
         }
         if len(starts) == 0 {
-                return "", nil, nil, 0, "", notFoundError(contentLines, oldLines)
+                return "", nil, nil, 0, "", fmt.Errorf("old text not found (exact and whitespace-flexible both failed)")
         }
         // capture the FILE's indentation of each window BEFORE rewriting
         bases = make(map[int]string, len(starts))
@@ -250,6 +224,17 @@ func flexMatch(content, old string) (rewritten string, lineIdx []int, bases map[
                 }
         }
         rewritten = strings.Join(contentLines, "\n")
+        // v1.74.2 THE NEVER-PANIC GUARD (a live conviction: the verbatim
+        // re-locate below can find ZERO windows when old's lines differ
+        // from the content by more than a pure indentation prefix — a
+        // stray space class of input. Zero windows + err nil used to
+        // reach chooseOffsets with an EMPTY slice and PANIC. The honest
+        // answer is the miss.)
+        defer func() {
+                if err == nil && len(lineIdx) == 0 {
+                        err = fmt.Errorf("old text not found (exact and whitespace-flexible both failed)")
+                }
+        }()
         // locate the (now-verbatim) windows as LINE indexes
         for i := 0; i+len(oldLines) <= len(contentLines); {
                 found := true
@@ -269,33 +254,9 @@ func flexMatch(content, old string) (rewritten string, lineIdx []int, bases map[
         return rewritten, lineIdx, bases, len(oldLines), oldFirstIndent, nil
 }
 
-// notFoundError builds the nearest-context diagnostic: the content line
-// most similar to the old text's first meaningful line, by common-prefix
-// length after trimming.
-func notFoundError(contentLines, oldLines []string) error {
-        var probe string
-        for _, l := range oldLines {
-                if strings.TrimSpace(l) != "" {
-                        probe = strings.TrimSpace(l)
-                        break
-                }
-        }
-        best, bestScore, bestIdx := "", 0, -1
-        for i, cl := range contentLines {
-                t := strings.TrimSpace(cl)
-                if t == "" {
-                        continue
-                }
-                score := commonPrefixLen(t, probe)
-                if score > bestScore {
-                        best, bestScore, bestIdx = t, score, i
-                }
-        }
-        if bestIdx < 0 || bestScore < 4 {
-                return fmt.Errorf("old text not found (exact and whitespace-flexible both failed) — re-read the file with a range around the target and copy the text verbatim")
-        }
-        return fmt.Errorf("old text not found (exact and whitespace-flexible both failed) — the closest line in the file is line %d: %q — re-read around it and copy the text verbatim", bestIdx+1, truncate(best, 120))
-}
+// (v1.74.2: notFoundError + commonPrefixLen retired — the miss
+// diagnostic now rides missDiagnostic's similarity window, aider's
+// "did you mean these actual lines" pattern.)
 
 func splitLines(s string) (lines []string, hadTrailingNL bool) {
         hadTrailingNL = strings.HasSuffix(s, "\n")
@@ -310,14 +271,6 @@ func leadingWS(s string) string {
                 }
         }
         return s
-}
-
-func commonPrefixLen(a, b string) int {
-        n := 0
-        for n < len(a) && n < len(b) && a[n] == b[n] {
-                n++
-        }
-        return n
 }
 
 func truncate(s string, n int) string {

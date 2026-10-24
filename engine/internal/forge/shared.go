@@ -70,6 +70,13 @@ func buildFileContent(path, sha string, raw []byte, rangeSpec string) *FileConte
 	}
 	fc.Encoding = "utf8"
 	text := string(raw)
+	// v1.74.2 THE READ ANCHORS: the echo is computed where the WHOLE
+	// file's line count is known — the model always knows which lines it
+	// is looking at (never a mystery slice).
+	total := len(strings.Split(text, "\n"))
+	if strings.HasSuffix(text, "\n") {
+		total-- // the trailing newline's phantom line is not a line
+	}
 	switch {
 	case strings.HasPrefix(rangeSpec, "head:"):
 		var n int
@@ -79,6 +86,7 @@ func buildFileContent(path, sha string, raw []byte, rangeSpec string) *FileConte
 			if n < len(lines) {
 				text = strings.Join(lines[:n], "\n")
 				fc.Truncated = true
+				fc.RangeInfo = fmt.Sprintf("lines 1\u2013%d of %d", n, total)
 			}
 		}
 	case strings.HasPrefix(rangeSpec, "tail:"):
@@ -89,6 +97,7 @@ func buildFileContent(path, sha string, raw []byte, rangeSpec string) *FileConte
 			if n < len(lines) {
 				text = strings.Join(lines[len(lines)-n:], "\n")
 				fc.Truncated = true
+				fc.RangeInfo = fmt.Sprintf("lines %d\u2013%d of %d", total-n+1, total, total)
 			}
 		}
 	case strings.HasPrefix(rangeSpec, "lines:"):
@@ -109,6 +118,11 @@ func buildFileContent(path, sha string, raw []byte, rangeSpec string) *FileConte
 			}
 			text = strings.Join(lines[a-1:b], "\n")
 			fc.Truncated = true
+			last := b
+			if last > total {
+				last = total
+			}
+			fc.RangeInfo = fmt.Sprintf("lines %d\u2013%d of %d", a, last, total)
 		}
 	}
 	fc.Content = text

@@ -25,6 +25,11 @@ const (
 	PropNumber  PropKind = "number"
 	PropBoolean PropKind = "boolean"
 	PropArray   PropKind = "array"
+	// PropObject — v1.74.2 THE SCHEMA HONESTY (PLAN-V174 §2): a prop
+	// whose true shape is a JSON object (termux's args). Declaring it a
+	// string invited schema-literal clients to hand-write the object as
+	// escaped text — the exact fumble the argrepair ladder absorbed.
+	PropObject PropKind = "object"
 )
 
 // Prop describes one tool argument.
@@ -223,7 +228,8 @@ var defs = []Def{
 			str("ws", "The repo: id, owner/repo or the bare repo name (from the CONNECTED block or list).", false),
 			str("path", "File/subdirectory path (tree/ls/read/put).", false),
 			str("ref", "Branch/tag/sha override (defaults to the repo branch).", false),
-			str("range", "Read slice: head:80 | tail:40 | lines:10-60.", false),
+			str("range", "Read slice: head:80 | tail:40 | lines:10-60 — the answer's head echoes exactly which lines you got.", false),
+			prop("line_numbers", "Read: number the lines cat -n style (anchors for surgical edits; on by default for ranged reads).", PropBoolean, false),
 			str("query", "Grep PATTERN (a REGEX by default — 'foo|bar', 'func\\(\\w+', 'TODO:').", false),
 			prop("fixed", "Treat the grep pattern as a LITERAL (no regex).", PropBoolean, false),
 			prop("case_sensitive", "Case-sensitive matching (default: case-insensitive).", PropBoolean, false),
@@ -254,7 +260,10 @@ var defs = []Def{
 			// old manifest omitted ~20 of them — the models guessed shapes the
 			// verbs then rejected; the Def now teaches the same grammar the
 			// verbs parse).
-			str("edits", "patch: the surgical edit list — [{\"old\":\"exact text\",\"new\":\"replacement\",\"all\":false?,\"occurrence\":1?}] (also commit's per-file edits).", false),
+			// v1.74.2 THE SCHEMA HONESTY: edits IS an array (the old PropString
+			// declaration made schema-literal MCP clients send a STRING and
+			// eat a teach-retry on every patch — the audit's conviction 3).
+			prop("edits", "patch: the surgical edit list — [{\"old\":\"exact text\",\"new\":\"replacement\",\"all\":false?,\"occurrence\":1?}] (also commit's per-file edits). The edits that match land; any that miss get the file's actual lines back — fix and re-send ONLY the failed ones.", PropArray, false),
 			prop("files", "commit: the changeset — [{\"path\":\"a.go\",\"edits\":[…]} | {\"path\":\"new.txt\",\"content\":\"…\"} | {\"path\":\"old.go\",\"delete\":true} | {\"path\":\"moved.go\",\"rename_from\":\"old.go\"}].", PropArray, false),
 			prop("dry_run", "patch: preview the diff without committing (true) or commit (false/omitted).", PropBoolean, false),
 			prop("labels", "issue_create: label list (strings or a comma-separated list).", PropArray, false),
@@ -284,7 +293,10 @@ var defs = []Def{
 		Desc: "A real Termux Linux shell on the user's device — the whole Linux userland: exec runs ANY command in $PATH (coreutils, findutils, grep/sed/awk, bash, python, git, ssh, curl…), pkg installs any package and its commands go live instantly, cmds inventories every available command, and git_setup arms the vault's GitHub token in Termux (one call: ~/.git-credentials + credential.helper=store — then git clone/push just work, no credentials in any command). Actions: exec (run ANY shell command), cmds (inventory all commands), git_setup, ls, read, write, append, rm, mkdir, grep, find, pkg (install/update/remove packages), session_start/session_list/session_log/session_kill (create and kill background processes, e.g. python servers, with tailable logs) and help. The FILE verbs (ls/read/write/append/rm/mkdir/grep/find) are jailed to this chat's bound device (termux) workspace folders — paths outside them are refused; exec runs any command from the first bound folder as workdir (cd $HOME works — that's where git repos live). exec budget: 10 minutes by default, 30 minutes max (pass timeout_ms); anything longer runs as a background session (session_start, no budget). Compiled binaries only execute from $HOME — the bound folders are FUSE noexec (cp the binary to $HOME and chmod 755 first). Output is FULL; the only cap is Termux's own 100KB result bundle, honestly reported when hit. Use it whenever the user asks about their device's files or wants anything run, installed, compiled or served on the phone.",
 		Props: []PropDef{
 			prop("action", "'exec' (run ANY shell command), 'cmds' (inventory every available command), 'git_setup' (arm the vault's GitHub token — git push works after one call), 'ls', 'read', 'write', 'append', 'patch' (SURGICAL search/replace edits on one local file: read a range first, then patch — no whole-file rewrite), 'rm', 'mkdir', 'grep', 'find', 'pkg' (install|update|remove), 'session_start', 'session_list', 'session_log', 'session_kill' or 'help'.", PropString, true, "exec", "cmds", "git_setup", "ls", "read", "write", "append", "patch", "rm", "mkdir", "grep", "find", "pkg", "session_start", "session_list", "session_log", "session_kill", "help"),
-			str("args", `JSON object of the action's arguments, e.g. {"path":"notes.txt","command":"python -V","content":"…","pattern":"TODO","name":"myserver","op":"install","packages":["python"]} — pass it as a JSON object OR as that object's text; both are accepted ({"action":"exec","args":{"command":"python -V"}} or {"action":"exec","args":"{\"command\":\"python -V\"}"}).`, true),
+			// v1.74.2 THE SCHEMA HONESTY: args is an OBJECT (the old
+			// string declaration invited the escaped-text fumble; the text
+			// form stays accepted by the parser).
+			prop("args", `JSON object of the action's arguments, e.g. {"path":"notes.txt","command":"python -V","content":"…","pattern":"TODO","range":"head:80","edits":[…],"name":"myserver","op":"install","packages":["python"]} — an object is the natural shape; the same object as TEXT is also accepted. read takes "range" (head:80 | tail:40 | lines:10-60) like the workspace read.`, PropObject, true),
 		}},
 	// ── the personal journal (always armed — the app-global diary) ──
 	// v1.47.1 THE JOURNAL HAND (PLAN-V147 §1): the authentic port of

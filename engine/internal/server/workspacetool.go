@@ -386,8 +386,29 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
 		if fc.Binary {
 			return "OBSERVATION:\n" + path + " is a binary file (" + fmt.Sprint(fc.Size) + " bytes) — no text to read"
 		}
+		// v1.74.2 THE READ ANCHORS (the str_replace research's anchor
+		// law): the head echoes exactly WHICH lines this is; line_numbers
+		// (cat -n style, on by default for ranged reads ≤200 lines) gives
+		// the model edit anchors — and the surgeon's normalize rung
+		// strips the prefixes back out of any old block copied verbatim.
 		body := fc.Content // v1.19.1: full content — no cap
-		return "OBSERVATION:\n" + path + " (" + fmt.Sprint(fc.Size) + " bytes, blob sha " + fc.SHA + ")\n" + body
+		head := path + " (" + fmt.Sprint(fc.Size) + " bytes"
+		if fc.RangeInfo != "" {
+			head += " · " + fc.RangeInfo
+		}
+		head += ", blob sha " + fc.SHA + ")"
+		numbering := wsArgBool(args, "line_numbers")
+		if !hasKey(args, "line_numbers") {
+			numbering = fc.RangeInfo != "" && strings.Count(body, "\n") <= 200
+		}
+		if numbering {
+			start := 1
+			if fc.RangeInfo != "" {
+				fmt.Sscanf(fc.RangeInfo, "lines %d", &start)
+			}
+			body = surgeon.NumberLines(strings.Split(strings.TrimSuffix(body, "\n"), "\n"), start)
+		}
+		return "OBSERVATION:\n" + head + "\n" + body
 	case "readme":
 		ws := toolWS // v1.19.2: resolved once above (bound rows + the public fallback)
 		fc, err := s.wsClient(ws).Readme(ctx, refOrWS(get("ref"), ws), s.wsToken(ws))
@@ -556,22 +577,25 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
 		if fc.Binary {
 			return "OBSERVATION:\nerror: " + path + " is a binary file — surgical edits are for text"
 		}
-		newContent, reports, aerr := surgeon.ApplyEdits(fc.Content, specs)
-		if aerr != nil {
-			return "OBSERVATION:\nerror: " + aerr.Error()
-		}
-		var rline strings.Builder
-		for _, r := range reports {
-			fmt.Fprintf(&rline, "edit %d: %s match, %d replacement(s)\n", r.Index+1, r.Mode, r.Count)
+		// v1.74.2 THE SURGEON'S OATH: the partial-apply contract —
+		// the edits that land, LAND (one commit carries them); the ones
+		// that miss get aider's re-ask (the actual lines, the
+		// already-applied hint, the don't-re-send law). 0-of-N is the
+		// honest failure: nothing writes, nothing double-applies on the
+		// retry.
+		pres := surgeon.ApplyEditsPartial(fc.Content, specs)
+		rline := pres.ReportLines()
+		if pres.Failed == len(specs) {
+			return "OBSERVATION:\nerror: no edits applied — " + fmt.Sprint(len(specs)) + " edit(s) failed to match\n" + rline
 		}
 		if wsArgBool(args, "dry_run") {
-			return "OBSERVATION:\nDRY-RUN — patch to " + path + " @" + branch + " applies cleanly (" + fmt.Sprint(len(specs)) + " edit(s)):\n" + rline.String() + surgeon.DiffPreview(fc.Content, newContent) + "\n(pass \"dry_run\":false or omit it to commit)"
+			return "OBSERVATION:\nDRY-RUN — patch to " + path + " @" + branch + " applies (" + fmt.Sprint(pres.Applied) + " of " + fmt.Sprint(len(specs)) + " edit(s)):\n" + rline + surgeon.DiffPreview(fc.Content, pres.Content) + "\n(pass \"dry_run\":false or omit it to commit)"
 		}
-		url, err := c.PutFile(ctx, path, branch, message, newContent, fc.SHA, tok)
+		url, err := c.PutFile(ctx, path, branch, message, pres.Content, fc.SHA, tok)
 		if err != nil {
 			return "OBSERVATION:\nerror: " + wsPublicErr(ws, err) + "\n(the file may have changed under you — re-read it and re-apply; the sha guard refuses a blind overwrite)"
 		}
-		out := "PATCHED — " + path + " @ " + branch + " (" + fmt.Sprint(len(specs)) + " surgical edit(s))\n" + rline.String()
+		out := "PATCHED — " + path + " @ " + branch + " (" + fmt.Sprint(pres.Applied) + " of " + fmt.Sprint(len(specs)) + " surgical edit(s))\n" + rline
 		if branchCreated {
 			out += " (branch created)"
 		}
@@ -655,13 +679,22 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
 				if fc.Binary {
 					return "OBSERVATION:\nerror: " + source + " is binary — surgical edits are for text"
 				}
-				var aerr error
-				content, _, aerr = surgeon.ApplyEdits(fc.Content, specs)
-				if aerr != nil {
-					return "OBSERVATION:\nerror: " + path + ": " + aerr.Error()
+				// v1.74.2 THE SURGEON'S OATH, commit edition: the good
+				// edits ride the atomic commit; the misses get the re-ask;
+				// a 0-of-N file is SKIPPED (named honestly) so one bad
+				// block never aborts the whole changeset.
+				pres := surgeon.ApplyEditsPartial(fc.Content, specs)
+				if pres.Failed == len(specs) {
+					fmt.Fprintf(&report, "- %s: SKIPPED — 0 of %d edits matched:\n%s", path, len(specs), pres.ReportLines())
+					continue
 				}
+				content = pres.Content
 				haveContent = true
-				fmt.Fprintf(&report, "- %s: %d surgical edit(s)", path, len(specs))
+				fmt.Fprintf(&report, "- %s: %d of %d surgical edit(s)", path, pres.Applied, len(specs))
+				if pres.Failed > 0 {
+					report.WriteString(" — FIXED BLOCKS NEEDED:\n")
+					report.WriteString(pres.ReportLines())
+				} else 
 				if renameFrom != "" {
 					fmt.Fprintf(&report, " (renamed from %s)", renameFrom)
 				}

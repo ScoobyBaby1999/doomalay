@@ -38,6 +38,8 @@ func buildMCPTool(d *Def) mcp.Tool {
                         opts = append(opts, mcp.WithBoolean(p.Key, po...))
                 case PropArray:
                         opts = append(opts, mcp.WithArray(p.Key, po...))
+                case PropObject: // v1.74.2 THE SCHEMA HONESTY
+                        opts = append(opts, mcp.WithObject(p.Key, po...))
                 }
         }
         return mcp.NewTool(d.Name, opts...)

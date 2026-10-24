@@ -153,6 +153,11 @@ type FileContent struct {
         Truncated bool   `json:"truncated"`
         SHA       string `json:"sha"` // blob sha (PUT-file fast path)
         Binary    bool   `json:"binary"`
+        // RangeInfo — v1.74.2 THE READ ANCHORS: the human echo of the
+        // range slice ("lines 10–60 of 2105"), computed where the whole
+        // file is known so the model always knows WHICH lines it is
+        // looking at (the str_replace research's anchor law).
+        RangeInfo string `json:"range_info,omitempty"`
 }
 
 // Commit is one log row.

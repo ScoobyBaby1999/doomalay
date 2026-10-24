@@ -276,7 +276,7 @@ func (s *Server) runTermuxActionCore(ctx context.Context, sessionID, argJSON str
 	case "ls":
 		out = s.termuxVerbLs(ctx, sessionID, get, roots)
 	case "read":
-		out = s.termuxVerbRead(ctx, sessionID, get, roots)
+		out = s.termuxVerbRead(ctx, sessionID, get, args, roots)
 	case "write", "append":
 		out = s.termuxVerbWrite(ctx, action, get, roots)
 	case "patch":
@@ -843,10 +843,14 @@ find "$r" -maxdepth 1 -mindepth 1 -printf '%y|%f|%s|%TY-%Tm-%Td %TH:%TM\n' | sor
 	return termuxMaybeTrunc(oc.res, sb.String())
 }
 
-// termuxVerbRead — {path}: cat, binary-sniffed inside the script, FULL
-// text (no local cap — the whole-truth law).
-func (s *Server) termuxVerbRead(ctx context.Context, sessionID string, get func(string) string, roots []string) string {
-	joined, obs := s.termuxPathArgs(get, roots, `read needs {"path":"the/file"} (relative to the first bound folder, or absolute inside one)`)
+// termuxVerbRead — {path, range?, line_numbers?}: cat, binary-sniffed
+// inside the script, FULL text (no local cap — the whole-truth law).
+// v1.74.2: the range param gains parity with the workspace read
+// (head:80 | tail:40 | lines:10-60) — a drifted range used to be
+// silently ignored (whole-file dump, context burn) — and the head
+// echoes the anchor law.
+func (s *Server) termuxVerbRead(ctx context.Context, sessionID string, get func(string) string, args map[string]any, roots []string) string {
+	joined, obs := s.termuxPathArgs(get, roots, `read needs {"path":"the/file"} (relative to the first bound folder, or absolute inside one; optional "range":"head:80|tail:40|lines:10-60" and "line_numbers":true)`)
 	if obs != "" {
 		return obs
 	}
@@ -866,7 +870,68 @@ cat -- "$r"
 		return "OBSERVATION:\nREAD — " + oc.resolved + ": binary file, " + strings.TrimPrefix(head, "binary ") + " bytes — no text to read"
 	}
 	if strings.HasPrefix(head, "text ") {
-		out := "OBSERVATION:\nREAD — " + oc.resolved + " (" + strings.TrimPrefix(head, "text ") + " bytes)\n" + rest
+		sizeB := strings.TrimPrefix(head, "text ")
+		// v1.74.2 THE RANGE PARITY: slice engine-side with the same grammar
+		// the workspace read speaks; the head echoes which lines shipped.
+		rangeSpec := strings.TrimSpace(get("range"))
+		info := ""
+		if rangeSpec != "" {
+			total := strings.Count(rest, "\n")
+			if strings.HasSuffix(rest, "\n") {
+				total--
+			}
+			lines := strings.Split(strings.TrimSuffix(rest, "\n"), "\n")
+			switch {
+			case strings.HasPrefix(rangeSpec, "head:"):
+				var n int
+				fmt.Sscanf(rangeSpec, "head:%d", &n)
+				if n > 0 && n < len(lines) {
+					rest = strings.Join(lines[:n], "\n")
+					info = fmt.Sprintf(" · lines 1–%d of %d", n, total)
+				}
+			case strings.HasPrefix(rangeSpec, "tail:"):
+				var n int
+				fmt.Sscanf(rangeSpec, "tail:%d", &n)
+				if n > 0 && n < len(lines) {
+					rest = strings.Join(lines[len(lines)-n:], "\n")
+					info = fmt.Sprintf(" · lines %d–%d of %d", total-n+1, total, total)
+				}
+			case strings.HasPrefix(rangeSpec, "lines:"):
+				var a, b int
+				if strings.Contains(rangeSpec, "-") {
+					fmt.Sscanf(rangeSpec, "lines:%d-%d", &a, &b)
+				} else {
+					fmt.Sscanf(rangeSpec, "lines:%d", &a)
+					b = a
+				}
+				if a > 0 {
+					if b < a {
+						b = a
+					}
+					if b > len(lines) {
+						b = len(lines)
+					}
+					rest = strings.Join(lines[a-1:b], "\n")
+					last := b
+					if last > total && total > 0 {
+						last = total
+					}
+					info = fmt.Sprintf(" · lines %d–%d of %d", a, last, total)
+				}
+			}
+		}
+		numbering := termuxArgsBool(args, "line_numbers")
+		if !hasKey(args, "line_numbers") {
+			numbering = info != "" && strings.Count(rest, "\n") <= 200
+		}
+		if numbering {
+			start := 1
+			if info != "" {
+				fmt.Sscanf(strings.TrimPrefix(info, " · "), "lines %d", &start)
+			}
+			rest = surgeon.NumberLines(strings.Split(strings.TrimSuffix(rest, "\n"), "\n"), start)
+		}
+		out := "OBSERVATION:\nREAD — " + oc.resolved + " (" + sizeB + " bytes" + info + ")\n" + rest
 		return termuxMaybeTrunc(oc.res, out)
 	}
 	return "OBSERVATION:\nREAD — " + oc.resolved + "\n" + oc.body
@@ -946,18 +1011,18 @@ cat -- "$r"
 	}
 	rest := strings.TrimPrefix(oc.body, head)
 	rest = strings.TrimPrefix(rest, "\n")
-	newContent, reports, err := surgeon.ApplyEdits(rest, specs)
-	if err != nil {
-		return "OBSERVATION:\nerror: " + err.Error()
-	}
-	var rline strings.Builder
-	for _, r := range reports {
-		fmt.Fprintf(&rline, "edit %d: %s match, %d replacement(s)\n", r.Index+1, r.Mode, r.Count)
+	// v1.74.2 THE SURGEON'S OATH: the partial-apply contract (the same
+	// law as the workspace patch verb) — the good edits land in the
+	// write-back; the misses get aider's re-ask; 0-of-N never writes.
+	pres := surgeon.ApplyEditsPartial(rest, specs)
+	rline := pres.ReportLines()
+	if pres.Failed == len(specs) {
+		return "OBSERVATION:\nerror: no edits applied — " + strconv.Itoa(len(specs)) + " edit(s) failed to match\n" + rline
 	}
 	if termuxArgsBool(args, "dry_run") {
-		return "OBSERVATION:\nDRY-RUN — patch to " + oc.resolved + " applies cleanly (" + strconv.Itoa(len(specs)) + " edit(s)):\n" + rline.String() + surgeon.DiffPreview(rest, newContent) + "\n(pass \"dry_run\":false or omit it to write)"
+		return "OBSERVATION:\nDRY-RUN — patch to " + oc.resolved + " applies (" + strconv.Itoa(pres.Applied) + " of " + strconv.Itoa(len(specs)) + " edit(s)):\n" + rline + surgeon.DiffPreview(rest, pres.Content) + "\n(pass \"dry_run\":false or omit it to write)"
 	}
-	b64 := base64.StdEncoding.EncodeToString([]byte(newContent))
+	b64 := base64.StdEncoding.EncodeToString([]byte(pres.Content))
 	wscript := termuxJailScript([]string{"b64"}, `printf %s "$b64" | base64 -d > "$r" || { echo "write failed: $r" >&2; exit 1; }
 echo "wrote $(stat -c%s -- "$r")"
 `)
@@ -967,7 +1032,7 @@ echo "wrote $(stat -c%s -- "$r")"
 	}
 	whead := firstLineOf(woc.body)
 	size := strings.TrimPrefix(whead, "wrote ")
-	return "OBSERVATION:\nPATCHED — " + oc.resolved + " (" + strconv.Itoa(len(specs)) + " surgical edit(s), file now " + size + " bytes)\n" + rline.String()
+	return "OBSERVATION:\nPATCHED — " + oc.resolved + " (" + strconv.Itoa(pres.Applied) + " of " + strconv.Itoa(len(specs)) + " surgical edit(s), file now " + size + " bytes)\n" + rline
 }
 
 // termuxParseEdits parses the patch verb's edits array (the same shape

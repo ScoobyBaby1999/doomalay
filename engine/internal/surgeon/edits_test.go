@@ -109,9 +109,14 @@ func TestV1525_NotFoundNearestContext(t *testing.T) {
                 t.Fatal("a miss must fail")
         }
         msg := err.Error()
-        // the line text rides %q-escaped; assert on the stable fragments
-        if !strings.Contains(msg, "closest line") || !strings.Contains(msg, "hello") || !strings.Contains(msg, "line 5") {
-                t.Fatalf("the miss must name the nearest context line for one-round recovery: %v", err)
+        // v1.74.2: the miss rides the similarity-window re-ask (aider's
+        // "did you mean these actual lines") — the actual file lines, the
+        // line numbers, and the re-read cure
+        if !strings.Contains(msg, "did not apply") || !strings.Contains(msg, "hello") || !strings.Contains(msg, "lines ") {
+                t.Fatalf("the miss must carry the actual-lines re-ask for one-round recovery: %v", err)
+        }
+        if !strings.Contains(msg, "re-read the file") {
+                t.Fatalf("the miss must teach the cure: %v", err)
         }
 }
 

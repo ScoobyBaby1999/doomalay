@@ -305,8 +305,12 @@ func TestSpecsTermuxGating(t *testing.T) {
                         }
                 }
                 argsProp, _ := props["args"].(map[string]any)
-                if argsProp == nil || argsProp["type"] != "string" {
-                        t.Fatalf("termux args prop must be the JSON-object string: %v", argsProp)
+                // v1.74.2 THE SCHEMA HONESTY: args is an OBJECT now (the
+                // old string declaration invited schema-literal clients to
+                // hand-write the object as escaped text; the parser still
+                // accepts the text form too).
+                if argsProp == nil || argsProp["type"] != "object" {
+                        t.Fatalf("termux args prop must be the honest object type: %v", argsProp)
                 }
                 req, _ := params["required"].([]string)
                 if len(req) != 2 || req[0] != "action" || req[1] != "args" {
