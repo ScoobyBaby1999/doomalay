@@ -52,7 +52,6 @@ import (
 	"io"
 	"net/http"
 	"path"
-	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
@@ -280,7 +279,7 @@ func (s *Server) runTermuxActionCore(ctx context.Context, sessionID, argJSON str
 	case "write", "append":
 		out = s.termuxVerbWrite(ctx, action, get, roots)
 	case "patch":
-		out = s.termuxVerbPatch(ctx, get, args, roots)
+		out = s.termuxVerbPatch(ctx, sessionID, get, args, roots)
 	case "rm":
 		out = s.termuxVerbRm(ctx, sessionID, get, roots)
 	case "mkdir":
@@ -625,32 +624,18 @@ func firstLineOf(s string) string {
 
 // ── the truncation honesty (Termux's 100KB physics, reported) ────────────
 
-// termuxOriginalLen reads one optional original-length field off a
-// RunResult DEFENSIVELY (reflection): agent A's v1.20.1 bridge + client
-// carry stdout_original_length / stderr_original_length (the true sizes
-// Termux saw before its 100KB result-Bundle cap); this worktree's
-// client struct does not have the fields yet, and reflection keeps the
-// code compiling on BOTH sides of that merge — zero (unknown) here, the
-// real number the moment the fields land.
+// termuxOriginalLen reads one original-length field (v1.74.3 THE LIVE
+// DETECTOR: the client struct carries the fields now — the Kotlin
+// bridge has sent them since v1.20.1; the old reflection was DEAD CODE
+// scanning a field that never existed. Direct read, zero reflection.)
 func termuxOriginalLen(r *termuxbridge.RunResult, jsonTag string) int {
 	if r == nil {
 		return 0
 	}
-	v := reflect.Indirect(reflect.ValueOf(r))
-	if v.Kind() != reflect.Struct {
-		return 0
+	if jsonTag == "stderr_original_length" {
+		return int(r.StderrOriginalLength)
 	}
-	t := v.Type()
-	for i := 0; i < t.NumField(); i++ {
-		f := t.Field(i)
-		if f.Type.Kind() != reflect.Int {
-			continue
-		}
-		if tag, ok := f.Tag.Lookup("json"); ok && strings.EqualFold(strings.Split(tag, ",")[0], jsonTag) {
-			return int(v.Field(i).Int())
-		}
-	}
-	return 0
+	return int(r.StdoutOriginalLength)
 }
 
 // termuxTruncated honestly reports whether Termux's 100KB result-Bundle
@@ -984,7 +969,7 @@ echo "wrote $(stat -c%s -- "$r")"
 // the jail. Read → ApplyEdits → write (or the dry-run preview). The
 // model edits its local clone surgically: read a range, patch, no
 // whole-file rewrite.
-func (s *Server) termuxVerbPatch(ctx context.Context, get func(string) string, args map[string]any, roots []string) string {
+func (s *Server) termuxVerbPatch(ctx context.Context, sessionID string, get func(string) string, args map[string]any, roots []string) string {
 	joined, obs := s.termuxPathArgs(get, roots, `patch needs {"path":"the/file","edits":[{"old":"…","new":"…"}],"dry_run":true?}`)
 	if obs != "" {
 		return obs
@@ -1001,7 +986,14 @@ if head -c 4096 -- "$r" | grep -qP '[\x00-\x08\x0e-\x1f]'; then echo "binary $(s
 echo "text $(stat -c%s -- "$r")"
 cat -- "$r"
 `)
-	oc, obs := s.termuxRunScript(ctx, script, append([]string{joined}, roots...), roots, "", 60000)
+	// v1.74.3 THE 100KB TAIL LAW (PLAN-V174 §3, the audit's conviction 1):
+	// the read rides the STREAM path (the sibling file verbs' own law) —
+	// the old BUNDLE path amputated at Termux's 100KB cap and the patch
+	// then WROTE THE TRUNCATED BUFFER BACK, silently destroying the tail
+	// of every >100KB file it touched. The announced size is checked
+	// against the body's true size: a truncated buffer NEVER reaches
+	// ApplyEdits.
+	oc, obs := s.termuxRunScriptStream(ctx, sessionID, script, append([]string{joined}, roots...), roots, "", 60000)
 	if obs != "" {
 		return obs
 	}
@@ -1011,6 +1003,14 @@ cat -- "$r"
 	}
 	rest := strings.TrimPrefix(oc.body, head)
 	rest = strings.TrimPrefix(rest, "\n")
+	if strings.HasPrefix(head, "text ") {
+		if want, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(head, "text "))); err == nil && want != len(rest) {
+			return "OBSERVATION:\nerror: " + oc.resolved + " is " + strconv.Itoa(want) + " bytes but the read arrived as " + strconv.Itoa(len(rest)) + " (truncated in flight) — a patch NEVER writes a truncated buffer back. Read it with \"range\":\"lines:A-B\" slices and patch the target region precisely, or edit it via exec (sed/python) on the device."
+		}
+		if strings.Contains(oc.body, "output truncated at the engine's 8MB buffer") {
+			return "OBSERVATION:\nerror: " + oc.resolved + " exceeds the engine's 8MB stream buffer — a patch NEVER writes a truncated buffer back. Read it with \"range\":\"lines:A-B\" slices and patch the target region precisely, or edit it via exec (sed/python) on the device."
+		}
+	}
 	// v1.74.2 THE SURGEON'S OATH: the partial-apply contract (the same
 	// law as the workspace patch verb) — the good edits land in the
 	// write-back; the misses get aider's re-ask; 0-of-N never writes.

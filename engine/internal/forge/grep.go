@@ -259,6 +259,12 @@ func grepOverPaths(ctx context.Context, c *Client, m *grep.Matcher, opt SearchOp
 		unresolved = map[string]string{}
 	)
 	const batchWidth = 8 // the same politeness width the tree walk used
+	// v1.74.3 THE HONEST CURSOR: the resume point tracks the SCAN
+	// POSITION (the candidate index where the scan stopped), never the
+	// HIT count (the old law sliced the candidate list at len(hits) — a
+	// 3-file/10-hit stop "resumed" from candidate 10, skipping 7
+	// unscanned files and re-reporting the scanned tail as remaining).
+	scannedTo := 0
 	for start := 0; start < len(filtered) && !stop; start += batchWidth {
 		end := start + batchWidth
 		if end > len(filtered) {
@@ -321,6 +327,11 @@ func grepOverPaths(ctx context.Context, c *Client, m *grep.Matcher, opt SearchOp
 			}(p)
 		}
 		wg.Wait()
+		if !stop {
+			scannedTo = end // the whole batch completed cleanly (v1.74.3 THE HONEST CURSOR)
+		} else {
+			scannedTo = start // stopped mid-batch: resume re-scans it (honest)
+		}
 	}
 	// THE UNRESOLVED HITS: the files the forge says matched but we
 	// could not fetch — reported as bare paths (the v0.82.4 law: never
@@ -370,7 +381,7 @@ func grepOverPaths(ctx context.Context, c *Client, m *grep.Matcher, opt SearchOp
 	if stop {
 		res.Complete = false
 		res.Reason = fmt.Sprintf("hit limit (%d) reached — %d hit(s) found so far; narrow the query (a glob, a path, a tighter pattern) to see the rest", limit, total)
-		res.Remaining = strings.Join(filtered[min(len(filtered), len(hits)):], "\n")
+		res.Remaining = strings.Join(filtered[scannedTo:], "\n")
 	}
 	if res.Hits == nil {
 		res.Hits = []SearchHit{}

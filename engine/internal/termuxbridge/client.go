@@ -100,6 +100,14 @@ type RunResult struct {
         Timeout   bool   `json:"timeout"`
         StorageOK bool   `json:"storage_ok"`
         PropsOK   bool   `json:"props_ok"`
+        // v1.74.3 THE LIVE DETECTOR (PLAN-V174 §3): the Kotlin bridge has
+        // carried these since v1.20.1 — the true stream sizes before
+        // Termux's 100KB result-Bundle cap. The Go client DROPPED them,
+        // so the exact truncation detector in server/termuxtool.go was
+        // dead reflection over a field that never existed. -1/0 =
+        // unknown (an old bridge) — the heuristic stays as the fallback.
+        StdoutOriginalLength int64 `json:"stdout_original_length"`
+        StderrOriginalLength int64 `json:"stderr_original_length"`
 }
 
 // ActResult is the /act response.

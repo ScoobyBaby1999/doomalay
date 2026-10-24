@@ -244,6 +244,7 @@ var defs = []Def{
 			prop("max_per_file", "Max hits per file (0 = all).", PropNumber, false),
 			prop("count", "Report the hit COUNT per file instead of the lines (grep -c).", PropBoolean, false),
 			prop("files_only", "Report only the FILES that contain a hit (grep -l).", PropBoolean, false),
+			str("resume", "grep: continue a hit-limit-stopped scan — pass back the remaining-candidate list the previous grep answered with (the SAME pattern continues from where it stopped).", false),
 			prop("summary", "Tree only: the directory-summary shape instead of the full listing.", PropBoolean, false),
 			prop("what", "View subject (view only).", PropString, false, "issues", "pulls", "commits", "branches", "releases", "tags", "workflows", "runs", "discussions"),
 			prop("state", "Filter state for issues/pulls (view only).", PropString, false, "open", "closed", "all"),

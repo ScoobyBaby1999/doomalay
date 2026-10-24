@@ -444,6 +444,16 @@ func (s *Server) runWorkspaceVerb(ctx context.Context, bound []*store.Workspace,
 			CountOnly:     wsArgBool(args, "count"),
 			FilesOnly:     wsArgBool(args, "files_only"),
 		}
+		// v1.74.3 THE RESUME PATH: a hit-limit stop answers with the
+		// remaining-candidate list — pass it back as "resume" to continue
+		// the SAME pattern's scan (the REST route's own cursor law).
+		if rem := strings.TrimSpace(get("resume")); rem != "" {
+			res, err := forge.GrepResume(ctx, s.wsClient(ws), q, refOrWS(get("ref"), ws), s.wsToken(ws), opt.Limit, rem)
+			if err != nil {
+				return "OBSERVATION:\nerror: " + wsPublicErr(ws, err)
+			}
+			return "OBSERVATION:\n" + wsGrepText(ws, opt, res)
+		}
 		res, err := forge.GrepOpts(ctx, s.wsClient(ws), opt, refOrWS(get("ref"), ws), s.wsToken(ws))
 		if err != nil {
 			return "OBSERVATION:\nerror: " + wsPublicErr(ws, err)
@@ -1900,11 +1910,31 @@ func wsGrepText(ws *store.Workspace, opt forge.SearchOptions, res *forge.GrepRes
 		}
 	}
 	if res.Reason != "" {
-		fmt.Fprintf(&sb, "\\nNOTE: %s\\n", res.Reason)
+		fmt.Fprintf(&sb, "\nNOTE: %s\n", res.Reason)
 	}
+	// v1.74.3 THE HONEST RENDERING: the NOTE glues onto the last hit as
+	// a literal backslash-n today, and the candidate count split on the
+	// 2-char sequence "\n" — ALWAYS 1 (the audit's conviction 2). Real
+	// newlines, the TRUE count, and the resume teach when the list is
+	// small enough to pass back.
 	if !res.Complete && res.Remaining != "" {
-		fmt.Fprintf(&sb, "(%d candidate file(s) remain — re-run with a higher limit or a tighter pattern)\\n",
-			len(strings.Split(res.Remaining, "\\n")))
+		remaining := strings.Split(strings.TrimSpace(res.Remaining), "\n")
+		n := len(remaining)
+		if n > 0 && remaining[n-1] == "" {
+			remaining = remaining[:n-1]
+			n--
+		}
+		if n <= 32 {
+			fmt.Fprintf(&sb, "(%d candidate file(s) remain — pass {\"action\":\"grep\",\"ws\":\"%s\",\"query\":%q,\"resume\":\"%s\"} to continue the scan of the SAME pattern)\n",
+				n, ws.Name, res.Pattern, strings.Join(remaining, "\n"))
+		} else {
+			preview := remaining
+			if len(preview) > 8 {
+				preview = preview[:8]
+			}
+			fmt.Fprintf(&sb, "(%d candidate file(s) remain, next: %s … — narrow the query: an include glob like {\"include\":\"src/**\"} or a tighter pattern)\n",
+				n, strings.Join(preview, ", "))
+		}
 	}
 	return sb.String()
 }
