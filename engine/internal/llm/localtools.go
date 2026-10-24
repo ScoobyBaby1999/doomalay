@@ -19,6 +19,7 @@
 package llm
 
 import (
+	"github.com/ScoobyBaby1999/doomalay/engine/internal/jobmgr"
 	"bytes"
 	"crypto/md5"
 	"crypto/rand"
@@ -44,6 +45,7 @@ var LocalToolNames = []string{
 	"json_tool", "text_stats", "url_encode", "regex_extract",
 	"docx_create", "xlsx_create", "zip_create", "zip_extract",
 	"archive_create", "archive_extract",
+	"job_status", "job_kill", "job_list", "job_set_max",
 }
 
 // (v1.13.3 THE GUT: the five ACTION-protocol prose blocks —
@@ -785,4 +787,107 @@ func applyCalcFn(name string, args []float64) (float64, error) {
 		return m, nil
 	}
 	return 0, fmt.Errorf("unknown function %q", name)
+}
+
+// --- job_status ---------------------------------------------------------
+
+func runJobStatus(argJSON string) string {
+	var args struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(argJSON), &args); err != nil || args.ID == "" {
+		return "OBSERVATION:\nerror: job_status needs {\"id\": \"...\"}"
+	}
+	job, ok := jobmgr.Default().Status(args.ID)
+	if !ok {
+		return "OBSERVATION:\nerror: job not found: " + args.ID
+	}
+	var stateDesc string
+	switch job.State {
+	case jobmgr.StateWorking:
+		stateDesc = fmt.Sprintf("working (%.1fs elapsed)", float64(job.DurationMS)/1000)
+	case jobmgr.StateCompleted:
+		stateDesc = fmt.Sprintf("completed (%.1fs)", float64(job.DurationMS)/1000)
+	case jobmgr.StateFailed:
+		stateDesc = fmt.Sprintf("FAILED (%.1fs)", float64(job.DurationMS)/1000)
+	case jobmgr.StateCancelled:
+		stateDesc = fmt.Sprintf("cancelled (%.1fs)", float64(job.DurationMS)/1000)
+	default:
+		stateDesc = job.State
+	}
+	out := fmt.Sprintf("job %s (%s) — %s", job.ID, job.Tool, stateDesc)
+	if job.Text != "" {
+		out += ":\n" + job.Text
+	}
+	return "OBSERVATION:\n" + out
+}
+
+// --- job_kill -----------------------------------------------------------
+
+func runJobKill(argJSON string) string {
+	var args struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(argJSON), &args); err != nil || args.ID == "" {
+		return "OBSERVATION:\nerror: job_kill needs {\"id\": \"...\"}"
+	}
+	ok, wasWorking := jobmgr.Default().Kill(args.ID)
+	if !ok {
+		return "OBSERVATION:\nerror: job not found: " + args.ID
+	}
+	if !wasWorking {
+		return "OBSERVATION:\njob " + args.ID + " was already terminal"
+	}
+	return "OBSERVATION:\nsent stop signal to job " + args.ID + " (best-effort — the work may still finish quietly)"
+}
+
+// --- job_list -----------------------------------------------------------
+
+func runJobList(argJSON string) string {
+	var args struct {
+		SessionID string `json:"session_id"`
+	}
+	_ = json.Unmarshal([]byte(argJSON), &args)
+	if args.SessionID == "" {
+		return "OBSERVATION:\nerror: job_list needs {\"session_id\": \"...\"} (the server fills this automatically when called from a chat)"
+	}
+	jobs := jobmgr.Default().List(args.SessionID)
+	if len(jobs) == 0 {
+		return "OBSERVATION:\nno jobs for this session"
+	}
+	var out []string
+	for _, j := range jobs {
+		var stateDesc string
+		switch j.State {
+		case jobmgr.StateWorking:
+			stateDesc = fmt.Sprintf("working (%.1fs elapsed)", float64(time.Since(j.StartedAt).Milliseconds())/1000)
+		case jobmgr.StateCompleted:
+			stateDesc = fmt.Sprintf("completed (%.1fs)", float64(j.DurationMS)/1000)
+		case jobmgr.StateFailed:
+			stateDesc = fmt.Sprintf("FAILED (%.1fs)", float64(j.DurationMS)/1000)
+		case jobmgr.StateCancelled:
+			stateDesc = fmt.Sprintf("cancelled (%.1fs)", float64(j.DurationMS)/1000)
+		default:
+			stateDesc = j.State
+		}
+		out = append(out, fmt.Sprintf("  %s (%s) — %s", j.ID, j.Tool, stateDesc))
+	}
+	return "OBSERVATION:\n" + strings.Join(out, "\n")
+}
+
+// --- job_set_max --------------------------------------------------------
+
+func runJobSetMax(argJSON string) string {
+	var args struct {
+		SessionID string `json:"session_id"`
+		Max       int    `json:"max"`
+	}
+	if err := json.Unmarshal([]byte(argJSON), &args); err != nil || args.SessionID == "" {
+		return "OBSERVATION:\nerror: job_set_max needs {\"session_id\": \"...\", \"max\": N}"
+	}
+	if args.Max <= 0 {
+		return "OBSERVATION:\nerror: max must be > 0"
+	}
+	jobmgr.Default().SetMaxPerSession(args.SessionID, args.Max)
+	return fmt.Sprintf("OBSERVATION:\njob capacity for session %s set to %d", args.SessionID, args.Max)
 }

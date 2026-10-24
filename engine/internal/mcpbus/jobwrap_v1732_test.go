@@ -190,7 +190,7 @@ func TestV1732_CapacityRefusesThroughTheBus(t *testing.T) {
 	b, _ := newTestBus(t)
 	// fill the session's lanes (the sleeps must outlive the 8xgrace arming
 	// loop — 8x120ms arming vs 3s of work keeps every lane live)
-	for i := 0; i < jobmgr.MaxPerSession; i++ {
+	for i := 0; i < jobmgr.DefaultMaxPerSession; i++ {
 		turn := slowTurn("v1732-cap", 3*time.Second)
 		res := b.CallTool(context.Background(), turn, "time_now", args(t, map[string]any{"tz": "UTC"}))
 		if !strings.Contains(res.Text, "JOB_STARTED") {

@@ -4,38 +4,38 @@
 package server
 
 import (
-        "context"
-        "embed"
-        "encoding/json"
-        "io/fs"
-        "log"
-        "net"
-        "net/http"
-        "net/url"
-        "path/filepath"
-        "runtime"
-        "strconv"
-        "strings"
-        "sync"
-        "time"
+	"context"
+	"embed"
+	"encoding/json"
+	"io/fs"
+	"log"
+	"net"
+	"net/http"
+	"net/url"
+	"path/filepath"
+	"runtime"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
 
-        mcpgo "github.com/mark3labs/mcp-go/server"
+	mcpgo "github.com/mark3labs/mcp-go/server"
 
-        "github.com/ScoobyBaby1999/doomalay/engine/internal/brain"
-        "github.com/ScoobyBaby1999/doomalay/engine/internal/buildinfo"
-        "github.com/ScoobyBaby1999/doomalay/engine/internal/collab"
-        "github.com/ScoobyBaby1999/doomalay/engine/internal/config"
-        "github.com/ScoobyBaby1999/doomalay/engine/internal/forge"
-        "github.com/ScoobyBaby1999/doomalay/engine/internal/hub"
-        "github.com/ScoobyBaby1999/doomalay/engine/internal/jobmgr"
-        "github.com/ScoobyBaby1999/doomalay/engine/internal/mcpbus"
-        "github.com/ScoobyBaby1999/doomalay/engine/internal/ocserve"
-        "github.com/ScoobyBaby1999/doomalay/engine/internal/pmstate"
-        "github.com/ScoobyBaby1999/doomalay/engine/internal/secrets"
-        "github.com/ScoobyBaby1999/doomalay/engine/internal/store"
-        "github.com/ScoobyBaby1999/doomalay/engine/internal/termuxbridge"
+	"github.com/ScoobyBaby1999/doomalay/engine/internal/brain"
+	"github.com/ScoobyBaby1999/doomalay/engine/internal/buildinfo"
+	"github.com/ScoobyBaby1999/doomalay/engine/internal/collab"
+	"github.com/ScoobyBaby1999/doomalay/engine/internal/jobmgr"
+	"github.com/ScoobyBaby1999/doomalay/engine/internal/config"
+	"github.com/ScoobyBaby1999/doomalay/engine/internal/forge"
+	"github.com/ScoobyBaby1999/doomalay/engine/internal/hub"
+	"github.com/ScoobyBaby1999/doomalay/engine/internal/mcpbus"
+	"github.com/ScoobyBaby1999/doomalay/engine/internal/ocserve"
+	"github.com/ScoobyBaby1999/doomalay/engine/internal/pmstate"
+	"github.com/ScoobyBaby1999/doomalay/engine/internal/secrets"
+	"github.com/ScoobyBaby1999/doomalay/engine/internal/store"
+	"github.com/ScoobyBaby1999/doomalay/engine/internal/termuxbridge"
 
-        "github.com/ScoobyBaby1999/doomalay/engine/internal/llm"
+	"github.com/ScoobyBaby1999/doomalay/engine/internal/llm"
 )
 
 // v0.88.2: noCacheFS — the embedded SPA's assets always revalidate (the
@@ -44,8 +44,8 @@ import (
 type noCacheFS struct{ inner http.Handler }
 
 func (n noCacheFS) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-        w.Header().Set("Cache-Control", "no-cache")
-        n.inner.ServeHTTP(w, r)
+	w.Header().Set("Cache-Control", "no-cache")
+	n.inner.ServeHTTP(w, r)
 }
 
 //go:embed all:web
@@ -53,308 +53,306 @@ var webFS embed.FS
 
 // Server holds all dependencies needed to serve requests.
 type Server struct {
-        cfg     *config.Config
-        db      *store.DB
-        vault   *secrets.Vault
-        brain   *brain.Brain
-        mux     *http.ServeMux
-        httpSrv *http.Server
-        hub     *hub.Service
-        // v0.46: HF-chat remote brains (one per own Space, keyed by repo) +
-        // the shared community sandbox client. Lazily built; refreshed on
-        // vault changes (SetEnv fans out to all of them).
-        remoteMu    sync.RWMutex
-        remotes     map[string]*brain.RemoteBrain
-        sharedBrain *brain.RemoteBrain
+	cfg     *config.Config
+	db      *store.DB
+	vault   *secrets.Vault
+	brain   *brain.Brain
+	mux     *http.ServeMux
+	httpSrv *http.Server
+	hub     *hub.Service
+	// v0.46: HF-chat remote brains (one per own Space, keyed by repo) +
+	// the shared community sandbox client. Lazily built; refreshed on
+	// vault changes (SetEnv fans out to all of them).
+	remoteMu    sync.RWMutex
+	remotes     map[string]*brain.RemoteBrain
+	sharedBrain *brain.RemoteBrain
 
-        // v1.17.2 THE BRIDGE: the Termux bridge client (nil when the engine
-        // was not configured with --termux-bridge / DOOMALAY_TERMUX_BRIDGE —
-        // every desktop build; /api/termux/status then answers
-        // {"available":false} honestly). The probe result is cached (TTL
-        // 30s) with in-flight dedup so the setup overlay can poll without
-        // hammering the RUN_COMMAND round-trip.
-        termux       *termuxbridge.Client
-        termuxMu     sync.Mutex
-        termuxCache  termuxProbeCache
-        termuxFlight chan struct{}
+	// v1.17.2 THE BRIDGE: the Termux bridge client (nil when the engine
+	// was not configured with --termux-bridge / DOOMALAY_TERMUX_BRIDGE —
+	// every desktop build; /api/termux/status then answers
+	// {"available":false} honestly). The probe result is cached (TTL
+	// 30s) with in-flight dedup so the setup overlay can poll without
+	// hammering the RUN_COMMAND round-trip.
+	termux       *termuxbridge.Client
+	termuxMu     sync.Mutex
+	termuxCache  termuxProbeCache
+	termuxFlight chan struct{}
 
-        // v1.35.2 THE QUIET FINISHER (PLAN-V136 §v1.35.2): the ledger state
-        // read (TTL 15s + single-flight, the probe-cache pattern; termuxresu
-        // me.go) + the single-flight resume executor with its honest outcome
-        // record + the auto-attempt throttle. termuxresume.go owns these.
-        termuxStateMu         sync.Mutex
-        termuxState           termuxStateSnapshot
-        termuxStateFlight     chan struct{}
-        termuxResumeMu        sync.Mutex
-        termuxResumeRunning   bool
-        termuxResumeLastAt    int64
-        termuxResumeLastOK    bool
-        termuxResumeLastError string
-        termuxResumeAutoAt    int64
+	// v1.35.2 THE QUIET FINISHER (PLAN-V136 §v1.35.2): the ledger state
+	// read (TTL 15s + single-flight, the probe-cache pattern; termuxresu
+	// me.go) + the single-flight resume executor with its honest outcome
+	// record + the auto-attempt throttle. termuxresume.go owns these.
+	termuxStateMu         sync.Mutex
+	termuxState           termuxStateSnapshot
+	termuxStateFlight     chan struct{}
+	termuxResumeMu        sync.Mutex
+	termuxResumeRunning   bool
+	termuxResumeLastAt    int64
+	termuxResumeLastOK    bool
+	termuxResumeLastError string
+	termuxResumeAutoAt    int64
 
-        // v1.20.3 THE ARM: the termux tool's per-session exec pacing — the
-        // 12-per-minute rolling window (the anti-burst law; v1.23.1 THE
-        // PACING removed the ≥4s one-shot cooldown — streaming results and
-        // the model's own serial loop pace the calls; the cap stays the
-        // real guard). Lazy maps guarded by termuxExecMu; only
-        // termuxtool.go touches these.
-        termuxExecMu  sync.Mutex
-        termuxExecLog map[string][]time.Time
+	// v1.20.3 THE ARM: the termux tool's per-session exec pacing — the
+	// 12-per-minute rolling window (the anti-burst law; v1.23.1 THE
+	// PACING removed the ≥4s one-shot cooldown — streaming results and
+	// the model's own serial loop pace the calls; the cap stays the
+	// real guard). Lazy maps guarded by termuxExecMu; only
+	// termuxtool.go touches these.
+	termuxExecMu  sync.Mutex
+	termuxExecLog map[string][]time.Time
 
-        // v1.61.1 THE REPAIR HAND: the per-session last-read map —
-        // trippy's read-continue class ({"action":"read","range":…}
-        // with no path) replays the last file the session read
-        // successfully. The termuxExecLog pattern: lazy map, mutex;
-        // only workspacetool.go touches these.
-        wsLastReadMu sync.Mutex
-        wsLastRead   map[string]wsLastReadEntry
+	// v1.61.1 THE REPAIR HAND: the per-session last-read map —
+	// trippy's read-continue class ({"action":"read","range":…}
+	// with no path) replays the last file the session read
+	// successfully. The termuxExecLog pattern: lazy map, mutex;
+	// only workspacetool.go touches these.
+	wsLastReadMu sync.Mutex
+	wsLastRead   map[string]wsLastReadEntry
 
-        // v1.61.3 THE RETRY SENTINEL: the cross-chat dynamic timer registry —
-        // one timer per retryable signal (class|provider), every interrupted
-        // chat a listener; auto-continuation on the signal's recovery.
-        // retrysentinel.go owns these.
-        sentinelOnce sync.Once
-        sentinel     *retrySentinel
+	// v1.61.3 THE RETRY SENTINEL: the cross-chat dynamic timer registry —
+	// one timer per retryable signal (class|provider), every interrupted
+	// chat a listener; auto-continuation on the signal's recovery.
+	// retrysentinel.go owns these.
+	sentinelOnce sync.Once
+	sentinel     *retrySentinel
 
-        // v1.23.1 THE LINK: the F-Droid stable-APK resolver cache (6h TTL,
-        // one fetch in flight; offline answers the frozen fallback URL).
-        fdroid fdroidCache
+	// v1.23.1 THE LINK: the F-Droid stable-APK resolver cache (6h TTL,
+	// one fetch in flight; offline answers the frozen fallback URL).
+	fdroid fdroidCache
 
-        // v1.23.3 THE LIVE STREAM: the Termux stream registry (token-keyed
-        // buffers fed by the wrapper's loopback curls; the WS emitter map +
-        // the PM poll route read the same buffers) — termuxstream.go.
-        txstreams termuxStreams
+	// v1.23.3 THE LIVE STREAM: the Termux stream registry (token-keyed
+	// buffers fed by the wrapper's loopback curls; the WS emitter map +
+	// the PM poll route read the same buffers) — termuxstream.go.
+	txstreams termuxStreams
 
-        // v1.17.4 THE LIVE UPDATE: the delta OTA manager (nil when disabled
-        // — DOOMALAY_OTA_DISABLE=1, or no manifest URL; /api/ota/status then
-        // answers {enabled:false, state:"disabled"} honestly, zero network).
-        // Holds the mutex-guarded manifest cache; the background refresher
-        // (boot + every 5 min) runs on its own goroutine — failures cache as
-        // the honest "unreachable" state, never a silent failure.
-        ota *otaManager
+	// v1.17.4 THE LIVE UPDATE: the delta OTA manager (nil when disabled
+	// — DOOMALAY_OTA_DISABLE=1, or no manifest URL; /api/ota/status then
+	// answers {enabled:false, state:"disabled"} honestly, zero network).
+	// Holds the mutex-guarded manifest cache; the background refresher
+	// (boot + every 5 min) runs on its own goroutine — failures cache as
+	// the honest "unreachable" state, never a silent failure.
+	ota *otaManager
 
-        // v1.44.2 THE PIN (PLAN-V144 §2): the PM pin manager — the persisted
-        // mesh CA + active manifest + cached secret (encrypted at rest in
-        // the vault's internal-state namespace) that lets the engine speak
-        // PM's E2E protocol natively without re-attesting on every boot.
-        // TOFU-gated by the one-shot WASM oracle (/api/pm/bootstrap from
-        // pmsdk.js); honestly surfaced (/api/pm/state). nil only when the
-        // vault itself failed to initialize.
-        pm *pmstate.Manager
+	// v1.44.2 THE PIN (PLAN-V144 §2): the PM pin manager — the persisted
+	// mesh CA + active manifest + cached secret (encrypted at rest in
+	// the vault's internal-state namespace) that lets the engine speak
+	// PM's E2E protocol natively without re-attesting on every boot.
+	// TOFU-gated by the one-shot WASM oracle (/api/pm/bootstrap from
+	// pmsdk.js); honestly surfaced (/api/pm/state). nil only when the
+	// vault itself failed to initialize.
+	pm *pmstate.Manager
 
-        // v1.44.3 THE WIRE: the scoped single-use handshake tickets gating
-        // /api/keys/value for PM (the standing plaintext hole is dead) —
-        // ticket hex → expiry; minted by handlePMHandshakeTicket, consumed
-        // once by handleKeysValue.
-        pmTickets sync.Map
+	// v1.44.3 THE WIRE: the scoped single-use handshake tickets gating
+	// /api/keys/value for PM (the standing plaintext hole is dead) —
+	// ticket hex → expiry; minted by handlePMHandshakeTicket, consumed
+	// once by handleKeysValue.
+	pmTickets sync.Map
 
-        // v1.48.5 THE SERVE BRIDGE: the engine-managed `opencode serve` —
-        // the GENUINE client that reaches OpenCode's FREE models (the
-        // hosted API's free tier is walled below-HTTP to OpenCode's own
-        // apps; ocserveturn.go owns the turn adapter, ocserve owns the
-        // child). Lazily started on the first free-model turn; the
-        // serve-session map pairs app chats with serve sessions (the
-        // recycle law drops poisoned ones).
-        ocServe         *ocserve.Manager
-        ocServeMu       sync.Mutex
-        ocServeSessions map[string]string
-        // v1.58.2 THE WIDE SHELF: the per-chat doomalay MCP binding landed
-        // (the serve session was moved into its per-chat config dir — the
-        // {tools} block's merged catalog rides it; an unbound session gets
-        // the honest native-only note).
-        ocServeBound  map[string]bool
-        ocServeSessMu sync.Mutex
-        // v1.55.1 THE HONEST LADDER: the START serializer. ocServeMu now
-        // guards only the manager POINTER (microsecond windows — the
-        // bridge status route may peek it freely); every SLOW thing
-        // (binary download, Termux provisioning, spawn, health boot)
-        // happens under ocServeStartMu instead, so a 72.5MB install can
-        // never starve /api/models, /api/keys, or the status poll (the
-        // v155-A audit convicted the old all-hold: every bridge GET
-        // blocked on an in-flight install until the WebView's 6-slot
-        // connection pool exhausted and the provider screen rendered
-        // "No providers").
-        ocServeStartMu sync.Mutex
+	// v1.48.5 THE SERVE BRIDGE: the engine-managed `opencode serve` —
+	// the GENUINE client that reaches OpenCode's FREE models (the
+	// hosted API's free tier is walled below-HTTP to OpenCode's own
+	// apps; ocserveturn.go owns the turn adapter, ocserve owns the
+	// child). Lazily started on the first free-model turn; the
+	// serve-session map pairs app chats with serve sessions (the
+	// recycle law drops poisoned ones).
+	ocServe         *ocserve.Manager
+	ocServeMu       sync.Mutex
+	ocServeSessions map[string]string
+	// v1.58.2 THE WIDE SHELF: the per-chat doomalay MCP binding landed
+	// (the serve session was moved into its per-chat config dir — the
+	// {tools} block's merged catalog rides it; an unbound session gets
+	// the honest native-only note).
+	ocServeBound  map[string]bool
+	ocServeSessMu sync.Mutex
+	// v1.55.1 THE HONEST LADDER: the START serializer. ocServeMu now
+	// guards only the manager POINTER (microsecond windows — the
+	// bridge status route may peek it freely); every SLOW thing
+	// (binary download, Termux provisioning, spawn, health boot)
+	// happens under ocServeStartMu instead, so a 72.5MB install can
+	// never starve /api/models, /api/keys, or the status poll (the
+	// v155-A audit convicted the old all-hold: every bridge GET
+	// blocked on an in-flight install until the WebView's 6-slot
+	// connection pool exhausted and the provider screen rendered
+	// "No providers").
+	ocServeStartMu sync.Mutex
 
-        // v1.49.2 THE OPEN HANDSHAKE: the install's single-flight truth
-        // (the status ladder + the turn's honest in-progress terminal ride
-        // on it; ocbridgeapi.go owns the whole surface).
-        ocBridge ocBridgeSnapshot
+	// v1.49.2 THE OPEN HANDSHAKE: the install's single-flight truth
+	// (the status ladder + the turn's honest in-progress terminal ride
+	// on it; ocbridgeapi.go owns the whole surface).
+	ocBridge ocBridgeSnapshot
 
-        // v1.69.1 THE SHARED CANVAS: the doc-plane write serializer — the
-        // op-fold path (read state → fold → checkpoint write) and the
-        // whole-state PUT gate (staleness check → upsert) share ONE mutex
-        // so a fold can never interleave a PUT's read-modify-write (the
-        // view slice must never be clobbered by a stale fold). The room
-        // (v1.69.2) becomes the hot path's single writer; the HTTP plane
-        // keeps this lock as the durable truth's serializer.
-        collabMu sync.Mutex
+	// v1.69.1 THE SHARED CANVAS: the doc-plane write serializer — the
+	// op-fold path (read state → fold → checkpoint write) and the
+	// whole-state PUT gate (staleness check → upsert) share ONE mutex
+	// so a fold can never interleave a PUT's read-modify-write (the
+	// view slice must never be clobbered by a stale fold). The room
+	// (v1.69.2) becomes the hot path's single writer; the HTTP plane
+	// keeps this lock as the durable truth's serializer.
+	collabMu sync.Mutex
 
-        // v1.69.2 THE ROOM: the live room registry (nil only in tests
-        // that construct Server{} without New — every collab handler
-        // guards and answers 503 honestly).
-        collabHub *collab.Hub
+	// v1.69.2 THE ROOM: the live room registry (nil only in tests
+	// that construct Server{} without New — every collab handler
+	// guards and answers 503 honestly).
+	collabHub *collab.Hub
 
-        // v1.69.3 THE HANDSHAKE: the pairing state machine + the per-IP
-        // pairing rate limiter (the online-guess ceiling — 10 claims/min).
-        collabEnroll   *collab.Enroller
-        collabPairMu   sync.Mutex
-        collabPairHits map[string][]time.Time
+	// v1.69.3 THE HANDSHAKE: the pairing state machine + the per-IP
+	// pairing rate limiter (the online-guess ceiling — 10 claims/min).
+	collabEnroll   *collab.Enroller
+	collabPairMu   sync.Mutex
+	collabPairHits map[string][]time.Time
 }
 
 // New constructs the server and registers all routes.
 func New(cfg *config.Config, db *store.DB, br *brain.Brain) *Server {
-        vault, err := secrets.New(cfg.DataDir)
-        if err != nil {
-                log.Printf("warning: vault init failed: %v (keys will not persist)", err)
-        }
-        if br != nil && vault != nil {
-                br.SetEnv(vault.AsEnv())
-        }
-        // v0.27.1: an optional GITHUB_TOKEN in the vault upgrades the
-        // api.github.com metadata fallback past the 60 req/h anonymous
-        // per-IP limit (carrier CGNAT and shared cloud IPs exhaust it).
-        if vault != nil {
-                llm.SetGitHubToken(vault.AsEnv()["GITHUB_TOKEN"])
-        }
+	vault, err := secrets.New(cfg.DataDir)
+	if err != nil {
+		log.Printf("warning: vault init failed: %v (keys will not persist)", err)
+	}
+	if br != nil && vault != nil {
+		br.SetEnv(vault.AsEnv())
+	}
+	// v0.27.1: an optional GITHUB_TOKEN in the vault upgrades the
+	// api.github.com metadata fallback past the 60 req/h anonymous
+	// per-IP limit (carrier CGNAT and shared cloud IPs exhaust it).
+	if vault != nil {
+		llm.SetGitHubToken(vault.AsEnv()["GITHUB_TOKEN"])
+	}
 
-        s := &Server{cfg: cfg, db: db, vault: vault, brain: br, mux: http.NewServeMux(), remotes: map[string]*brain.RemoteBrain{}}
-        // v1.73.2 THE JOB LAYER (PLAN-V173 §v1.73.2): the completion rail —
-        // every background lane's settle lands as a "job" row in its own
-        // chat, whenever it lands (the user's law: "The UI be dealt with
-        // after the fact"): persist + live push through the SAME emit the
-        // sentinel's pill path proves end-to-end. The row carries the JSON
-        // payload {id, tool, state, duration_ms, text} lifted top-level by
-        // emit's "job" case, so the PWA renders the after-the-fact row
-        // (✓/✗/⊘ + the tool + the duration + the collapsible result) and
-        // the replay/exports keep it forever.
-        jobmgr.SetEventSink(func(sessionID, content string) {
-                s.emit(pipeFor(sessionID), sessionID, "job", content, "")
-        })
-        // v1.69.2 THE SHARED CANVAS: the room hub — every op (WS hot path or
-        // HTTP dependency path) folds through the canvas's ONE room goroutine;
-        // the scoped serializer shares collabMu with the whole-state PUT gate
-        // so a checkpoint can never interleave a PUT's read-modify-write.
-        if db != nil {
-                s.collabHub = collab.NewHub(db, func(do func()) {
-                        s.collabMu.Lock()
-                        do()
-                        s.collabMu.Unlock()
-                })
-                // v1.69.3 THE HANDSHAKE: the enrollment state machine over
-                // the same store (the deterministic token mint + the
-                // owner-tap gate live in collab.Enroller).
-                s.collabEnroll = collab.NewEnroller(db)
-        }
-        // v1.55.3 THE LIVING CATALOG: the two engine-side hooks — the
-        // models.dev registry's disk cache rides the engine's own data dir
-        // (a cold boot loads instantly instead of re-downloading 6MB), and the
-        // serve-bridge catalogue (GET /api/model — the genuine client's own
-        // live list with limits/cost/variants) merges into the opencode group
-        // whenever a bridge is up (no import cycle: the llm package owns the
-        // hook, the server arms it with the manager peek).
-        llm.SetCacheDir(cfg.DataDir)
-        llm.SetOpenCodeServeCatalog(func() []llm.FetchedModelInfo {
-                s.ocServeMu.Lock()
-                m := s.ocServe
-                s.ocServeMu.Unlock()
-                if m == nil || !m.Healthy() {
-                        return nil
-                }
-                sms := m.LiveCatalog()
-                if len(sms) == 0 {
-                        return nil
-                }
-                out := make([]llm.FetchedModelInfo, 0, len(sms))
-                for _, sm := range sms {
-                        fi := llm.FetchedModelInfo{
-                                ID:           sm.ModelID,
-                                ContextLimit: sm.Limit.Context,
-                        }
-                        if len(sm.Cost) > 0 {
-                                fi.InputCost = sm.Cost[0].Input
-                                fi.OutputCost = sm.Cost[0].Output
-                        }
-                        if sm.Capabilities.Tools {
-                                fi.Caps = []string{"tools"}
-                        }
-                        for _, v := range sm.Variants {
-                                if v.Settings.ReasoningEffort != "" {
-                                        fi.EffortLevels = append(fi.EffortLevels, v.Settings.ReasoningEffort)
-                                }
-                        }
-                        out = append(out, fi)
-                }
-                return out
-        })
-        // v1.63.2 THE DYNAMIC WALL (PLAN-V163 §2): the llm package's ANDROID
-        // FreeTierError message names the phone's own missing rungs — this is
-        // the server-injected pocket truth (no import cycle: the llm package
-        // owns the hook var, the server arms it with the real probes). Read
-        // on the error path only; every peek is a microsecond pointer/mutex
-        // read except the termux Status (a cheap Kotlin call, and the message
-        // fires once per walled turn — never per frame).
-        llm.OcPocketProbe = func() llm.OcPocketState {
-                st := llm.OcPocketState{SizeHint: ocserve.AndroidZipSizeHint()}
-                if s.termux != nil {
-                        if ts, err := s.termux.Status(context.Background()); err == nil && ts != nil {
-                                st.TermuxInstalled = ts.Installed
-                                st.TermuxReady = ts.Permission
-                        }
-                }
-                if m := s.ocServeManagerNow(); m != nil && m.Healthy() {
-                        st.BridgeUp = true
-                }
-                if running, _ := s.ocBridgeState(); running {
-                        st.Installing = true
-                }
-                return st
-        }
-        // v1.44.2 THE PIN: the PM pin manager rides the vault (nil when the
-        // vault failed — the pm endpoints then answer 500 honestly).
-        if vault != nil {
-                s.pm = pmstate.NewManager(vault)
-                // v1.44.3 THE WIRE: llm.Chat speaks PM natively through the
-                // pinned client — the adapter carries the invariance fix.
-                llm.SetPMTransport(pmTransportAdapter{s.pm})
-        }
-        // v1.17.2 THE BRIDGE: the Termux bridge client (nil = not configured;
-        // /api/termux/status answers {"available":false}).
-        if cfg.TermuxBridge != "" {
-                s.termux = termuxbridge.NewClient(cfg.TermuxBridge)
-                // v1.39.4 THE NET WAKE: the bridge long-poll loop — the
-                // Kotlin NetworkCallback fires through the bridge's /netwait
-                // route the moment Android validates connectivity; this loop
-                // turns it into llm.WakeNet() so every suspended retry waiter
-                // (v1.39.3 THE PATIENT ENGINE) retries within ~1s of the
-                // network's return. Background-derived ctx (the detachment
-                // law), process-lifetime, self-healing on bridge hiccups.
-                go s.netWakeListener()
-        }
-        // v1.17.4 THE LIVE UPDATE: the delta OTA manager (nil = disabled via
-        // DOOMALAY_OTA_DISABLE or no URL). The background refresher starts
-        // on its own goroutine — boot is never blocked on a manifest fetch.
-        s.ota = newOtaManager(cfg)
-        if s.ota != nil {
-                go s.otaBackground()
-        }
-        // v0.31: the hub service (local store + vault + HF client). Nil-DB
-        // safe for the pathological test boot (routes would 500, not panic).
-        s.hub = hub.NewService(cfg.Hub.HFBase, db, vault)
-        // v0.29: the persona resolver needs DB access for the GLOBAL custom
-        // placeholders (app_settings). Single server per process — as everywhere.
-        currentServer = s
-        s.routes()
-        s.healInterruptedTurns() // v0.39: boot heal — close out turns orphaned by a crash/restart
-        // v1.42.1 THE LONG HAUL: idle-time maintenance (checkpoint/vacuum
-        // cadence) — OFF the boot path by construction (first pass 30s in).
-        go s.maintenanceLoop()
-        // v1.61.3 THE RETRY SENTINEL: the boot scan re-arms parked chats whose
-        // tail is a retryable terminal (the durability rows survive the engine
-        // restart; the attempt count rides — "continued after X retries" counts
-        // honestly across restarts).
-        go s.sentinelBootScan()
-        return s
+	s := &Server{cfg: cfg, db: db, vault: vault, brain: br, mux: http.NewServeMux(), remotes: map[string]*brain.RemoteBrain{}}
+	// v1.69.2 THE SHARED CANVAS: the room hub — every op (WS hot path or
+	// HTTP dependency path) folds through the canvas's ONE room goroutine;
+	// the scoped serializer shares collabMu with the whole-state PUT gate
+	// so a checkpoint can never interleave a PUT's read-modify-write.
+		// v1.73.2 THE COMPLETION RAIL (restored in the v1.74 rebase: the
+	// parallel wave's jobmgr rewrite dropped the sink wiring — settled
+	// lanes landed nowhere; the v1730 rig convicted the loss live).
+	// THE USER'S LAW ("The UI be dealt with after the fact"): persist +
+	// live push through the SAME emit the sentinel's pill path proves
+	// end-to-end; the row carries {id, tool, state, duration_ms, text}
+	// lifted top-level by emit's "job" case.
+	jobmgr.SetEventSink(func(sessionID, content string) {
+	        s.emit(pipeFor(sessionID), sessionID, "job", content, "")
+	})
+	if db != nil {
+	        s.collabHub = collab.NewHub(db, func(do func()) {
+			s.collabMu.Lock()
+			do()
+			s.collabMu.Unlock()
+		})
+		// v1.69.3 THE HANDSHAKE: the enrollment state machine over
+		// the same store (the deterministic token mint + the
+		// owner-tap gate live in collab.Enroller).
+		s.collabEnroll = collab.NewEnroller(db)
+	}
+	// v1.55.3 THE LIVING CATALOG: the two engine-side hooks — the
+	// models.dev registry's disk cache rides the engine's own data dir
+	// (a cold boot loads instantly instead of re-downloading 6MB), and the
+	// serve-bridge catalogue (GET /api/model — the genuine client's own
+	// live list with limits/cost/variants) merges into the opencode group
+	// whenever a bridge is up (no import cycle: the llm package owns the
+	// hook, the server arms it with the manager peek).
+	llm.SetCacheDir(cfg.DataDir)
+	llm.SetOpenCodeServeCatalog(func() []llm.FetchedModelInfo {
+		s.ocServeMu.Lock()
+		m := s.ocServe
+		s.ocServeMu.Unlock()
+		if m == nil || !m.Healthy() {
+			return nil
+		}
+		sms := m.LiveCatalog()
+		if len(sms) == 0 {
+			return nil
+		}
+		out := make([]llm.FetchedModelInfo, 0, len(sms))
+		for _, sm := range sms {
+			fi := llm.FetchedModelInfo{
+				ID:           sm.ModelID,
+				ContextLimit: sm.Limit.Context,
+			}
+			if len(sm.Cost) > 0 {
+				fi.InputCost = sm.Cost[0].Input
+				fi.OutputCost = sm.Cost[0].Output
+			}
+			if sm.Capabilities.Tools {
+				fi.Caps = []string{"tools"}
+			}
+			for _, v := range sm.Variants {
+				if v.Settings.ReasoningEffort != "" {
+					fi.EffortLevels = append(fi.EffortLevels, v.Settings.ReasoningEffort)
+				}
+			}
+			out = append(out, fi)
+		}
+		return out
+	})
+	// v1.63.2 THE DYNAMIC WALL (PLAN-V163 §2): the llm package's ANDROID
+	// FreeTierError message names the phone's own missing rungs — this is
+	// the server-injected pocket truth (no import cycle: the llm package
+	// owns the hook var, the server arms it with the real probes). Read
+	// on the error path only; every peek is a microsecond pointer/mutex
+	// read except the termux Status (a cheap Kotlin call, and the message
+	// fires once per walled turn — never per frame).
+	llm.OcPocketProbe = func() llm.OcPocketState {
+		st := llm.OcPocketState{SizeHint: ocserve.AndroidZipSizeHint()}
+		if s.termux != nil {
+			if ts, err := s.termux.Status(context.Background()); err == nil && ts != nil {
+				st.TermuxInstalled = ts.Installed
+				st.TermuxReady = ts.Permission
+			}
+		}
+		if m := s.ocServeManagerNow(); m != nil && m.Healthy() {
+			st.BridgeUp = true
+		}
+		if running, _ := s.ocBridgeState(); running {
+			st.Installing = true
+		}
+		return st
+	}
+	// v1.44.2 THE PIN: the PM pin manager rides the vault (nil when the
+	// vault failed — the pm endpoints then answer 500 honestly).
+	if vault != nil {
+		s.pm = pmstate.NewManager(vault)
+		// v1.44.3 THE WIRE: llm.Chat speaks PM natively through the
+		// pinned client — the adapter carries the invariance fix.
+		llm.SetPMTransport(pmTransportAdapter{s.pm})
+	}
+	// v1.17.2 THE BRIDGE: the Termux bridge client (nil = not configured;
+	// /api/termux/status answers {"available":false}).
+	if cfg.TermuxBridge != "" {
+		s.termux = termuxbridge.NewClient(cfg.TermuxBridge)
+		// v1.39.4 THE NET WAKE: the bridge long-poll loop — the
+		// Kotlin NetworkCallback fires through the bridge's /netwait
+		// route the moment Android validates connectivity; this loop
+		// turns it into llm.WakeNet() so every suspended retry waiter
+		// (v1.39.3 THE PATIENT ENGINE) retries within ~1s of the
+		// network's return. Background-derived ctx (the detachment
+		// law), process-lifetime, self-healing on bridge hiccups.
+		go s.netWakeListener()
+	}
+	// v1.17.4 THE LIVE UPDATE: the delta OTA manager (nil = disabled via
+	// DOOMALAY_OTA_DISABLE or no URL). The background refresher starts
+	// on its own goroutine — boot is never blocked on a manifest fetch.
+	s.ota = newOtaManager(cfg)
+	if s.ota != nil {
+		go s.otaBackground()
+	}
+	// v0.31: the hub service (local store + vault + HF client). Nil-DB
+	// safe for the pathological test boot (routes would 500, not panic).
+	s.hub = hub.NewService(cfg.Hub.HFBase, db, vault)
+	// v0.29: the persona resolver needs DB access for the GLOBAL custom
+	// placeholders (app_settings). Single server per process — as everywhere.
+	currentServer = s
+	s.routes()
+	s.healInterruptedTurns() // v0.39: boot heal — close out turns orphaned by a crash/restart
+	// v1.42.1 THE LONG HAUL: idle-time maintenance (checkpoint/vacuum
+	// cadence) — OFF the boot path by construction (first pass 30s in).
+	go s.maintenanceLoop()
+	// v1.61.3 THE RETRY SENTINEL: the boot scan re-arms parked chats whose
+	// tail is a retryable terminal (the durability rows survive the engine
+	// restart; the attempt count rides — "continued after X retries" counts
+	// honestly across restarts).
+	go s.sentinelBootScan()
+	return s
 }
 
 // healInterruptedTurns (v0.39 P8-FULL) closes out chat turns that were
@@ -378,44 +376,44 @@ func New(cfg *config.Config, db *store.DB, br *brain.Brain) *Server {
 // session costs 1-2 index reads; only sessions that genuinely died
 // mid-turn walk that turn's tail.
 func (s *Server) healInterruptedTurns() {
-        if s.db == nil {
-                return
-        }
-        sessions, err := s.db.ListSessions()
-        if err != nil {
-                return
-        }
-        healed := 0
-        for _, sess := range sessions {
-                pending, decided := s.db.TailPendingTurn(sess.ID, 20001)
-                if !decided {
-                        // A 20k-event tail with neither a user nor a terminal
-                        // status — no realistic turn shape does this. Treat as
-                        // closed (the frontend's own heal still flags the
-                        // interrupted reply honestly) and say so in the log.
-                        log.Printf("boot heal: session %s tail exhausted without a verdict — treating as closed", sess.ID)
-                        continue
-                }
-                if pending {
-                        // v1.52.3 THE HEALED SEAM: a restart mid-tool-call
-                        // leaves a DANGLING tool_use — the history fold
-                        // DROPS it (its pending list never flushes), so the
-                        // model's context loses even the knowledge that it
-                        // made the call, and provider wires that demand an
-                        // answer for every tool_call get an invalid shape
-                        // the moment a continue resumes the turn. Answer the
-                        // call honestly BEFORE the terminal: it never ran.
-                        if n := s.synthesizeDanglingToolResults(sess.ID); n > 0 {
-                                log.Printf("boot heal: session %s — answered %d dangling tool call(s) with the never-ran truth", sess.ID, n)
-                        }
-                        if _, err := s.db.AppendEvent(sess.ID, "status", `{"state":"error","healed":true,"message":"interrupted by engine restart","hint":"continue"}`, ""); err == nil {
-                                healed++
-                        }
-                }
-        }
-        if healed > 0 {
-                log.Printf("boot heal: closed %d interrupted turn(s) with a terminal status", healed)
-        }
+	if s.db == nil {
+		return
+	}
+	sessions, err := s.db.ListSessions()
+	if err != nil {
+		return
+	}
+	healed := 0
+	for _, sess := range sessions {
+		pending, decided := s.db.TailPendingTurn(sess.ID, 20001)
+		if !decided {
+			// A 20k-event tail with neither a user nor a terminal
+			// status — no realistic turn shape does this. Treat as
+			// closed (the frontend's own heal still flags the
+			// interrupted reply honestly) and say so in the log.
+			log.Printf("boot heal: session %s tail exhausted without a verdict — treating as closed", sess.ID)
+			continue
+		}
+		if pending {
+			// v1.52.3 THE HEALED SEAM: a restart mid-tool-call
+			// leaves a DANGLING tool_use — the history fold
+			// DROPS it (its pending list never flushes), so the
+			// model's context loses even the knowledge that it
+			// made the call, and provider wires that demand an
+			// answer for every tool_call get an invalid shape
+			// the moment a continue resumes the turn. Answer the
+			// call honestly BEFORE the terminal: it never ran.
+			if n := s.synthesizeDanglingToolResults(sess.ID); n > 0 {
+				log.Printf("boot heal: session %s — answered %d dangling tool call(s) with the never-ran truth", sess.ID, n)
+			}
+			if _, err := s.db.AppendEvent(sess.ID, "status", `{"state":"error","healed":true,"message":"interrupted by engine restart","hint":"continue"}`, ""); err == nil {
+				healed++
+			}
+		}
+	}
+	if healed > 0 {
+		log.Printf("boot heal: closed %d interrupted turn(s) with a terminal status", healed)
+	}
 }
 
 // synthesizeDanglingToolResults — v1.52.3 THE HEALED SEAM: walks the tail
@@ -424,8 +422,8 @@ func (s *Server) healInterruptedTurns() {
 // order, oldest-first), and appends one honest synthesized result for
 // every use that never got one:
 //
-//      OBSERVATION:\ninterrupted by engine restart — this call never ran;
-//      re-issue it if still needed.
+//	OBSERVATION:\ninterrupted by engine restart — this call never ran;
+//	re-issue it if still needed.
 //
 // Why: foldSlots' pending list silently DROPS an unanswered tool_use, so
 // the resumed turn's history loses the call entirely (the model re-issues
@@ -433,555 +431,556 @@ func (s *Server) healInterruptedTurns() {
 // tool_use→tool_result chain reject the shape. The synthesized pair keeps
 // the seam truthful on both sides.
 func (s *Server) synthesizeDanglingToolResults(sessionID string) int {
-        events, err := s.db.ListEventsTail(sessionID, 20001)
-        if err != nil || len(events) == 0 {
-                return 0
-        }
-        // the interrupted turn's boundary: the LAST user row
-        start := -1
-        for i := len(events) - 1; i >= 0; i-- {
-                if events[i].EventType == "user" {
-                        start = i
-                        break
-                }
-        }
-        if start < 0 {
-                return 0 // the window can't see the turn's start — nothing to pair safely
-        }
-        var pending []string
-        for _, ev := range events[start+1:] {
-                switch ev.EventType {
-                case "tool_use":
-                        var p struct {
-                                Name string `json:"name"`
-                        }
-                        if json.Unmarshal([]byte(ev.Content), &p) == nil && p.Name != "" {
-                                pending = append(pending, p.Name)
-                        }
-                case "tool_result":
-                        var p struct {
-                                Name string `json:"name"`
-                        }
-                        if json.Unmarshal([]byte(ev.Content), &p) != nil {
-                                continue
-                        }
-                        idx := -1
-                        for i, u := range pending {
-                                if u == p.Name {
-                                        idx = i
-                                        break
-                                }
-                        }
-                        if idx < 0 && p.Name == "" && len(pending) > 0 {
-                                idx = 0
-                        }
-                        if idx < 0 {
-                                continue // an orphan result — no use to pair
-                        }
-                        pending = append(pending[:idx], pending[idx+1:]...)
-                }
-        }
-        done := 0
-        for _, name := range pending {
-                content := `{"name":` + strconv.Quote(name) + `,"text":"OBSERVATION:\ninterrupted by engine restart — this call never ran; re-issue it if still needed."}`
-                if _, err := s.db.AppendEvent(sessionID, "tool_result", content, ""); err != nil {
-                        return done // partial heal — the log stays honest; the rest wait for the next boot
-                }
-                done++
-        }
-        return done
+	events, err := s.db.ListEventsTail(sessionID, 20001)
+	if err != nil || len(events) == 0 {
+		return 0
+	}
+	// the interrupted turn's boundary: the LAST user row
+	start := -1
+	for i := len(events) - 1; i >= 0; i-- {
+		if events[i].EventType == "user" {
+			start = i
+			break
+		}
+	}
+	if start < 0 {
+		return 0 // the window can't see the turn's start — nothing to pair safely
+	}
+	var pending []string
+	for _, ev := range events[start+1:] {
+		switch ev.EventType {
+		case "tool_use":
+			var p struct {
+				Name string `json:"name"`
+			}
+			if json.Unmarshal([]byte(ev.Content), &p) == nil && p.Name != "" {
+				pending = append(pending, p.Name)
+			}
+		case "tool_result":
+			var p struct {
+				Name string `json:"name"`
+			}
+			if json.Unmarshal([]byte(ev.Content), &p) != nil {
+				continue
+			}
+			idx := -1
+			for i, u := range pending {
+				if u == p.Name {
+					idx = i
+					break
+				}
+			}
+			if idx < 0 && p.Name == "" && len(pending) > 0 {
+				idx = 0
+			}
+			if idx < 0 {
+				continue // an orphan result — no use to pair
+			}
+			pending = append(pending[:idx], pending[idx+1:]...)
+		}
+	}
+	done := 0
+	for _, name := range pending {
+		content := `{"name":` + strconv.Quote(name) + `,"text":"OBSERVATION:\ninterrupted by engine restart — this call never ran; re-issue it if still needed."}`
+		if _, err := s.db.AppendEvent(sessionID, "tool_result", content, ""); err != nil {
+			return done // partial heal — the log stays honest; the rest wait for the next boot
+		}
+		done++
+	}
+	return done
 }
 
 // routes registers every API endpoint + the embedded PWA.
 func (s *Server) routes() {
-        // v1.13.4 THE CHAIN: the mcpbus serves EXTERNAL consumers at /mcp
-        // (stateless streamable HTTP — the same JSON-RPC tools/list +
-        // tools/call the engine itself speaks) and chains the configured
-        // external MCP servers (stdio on desktop, HTTP everywhere; the
-        // config lives in <data-dir>/mcp_servers.json or
-        // DOOMALAY_MCP_SERVERS). External callers get the global tool set;
-        // session-scoped tools honestly refuse without a session turn.
-        if bus, err := mcpbus.Default(); err != nil {
-                log.Printf("mcpbus unavailable — /mcp not mounted, no external chain: %v", err)
-        } else {
-                // v1.13.5: requests carrying X-Doomalay-Session resolve a
-                // session-bound Turn (the PM bridge's browser loop calls
-                // /mcp with it — session tools, artifact sinks and all).
-                httpSrv := mcpgo.NewStreamableHTTPServer(bus.Server(),
-                        mcpgo.WithStateLess(true),
-                        mcpgo.WithHTTPContextFunc(func(ctx context.Context, r *http.Request) context.Context {
-                                if sid := r.Header.Get("X-Doomalay-Session"); sid != "" {
-                                        if t := mcpbus.ResolveSessionTurn(sid); t != nil {
-                                                return mcpbus.ContextWithTurn(ctx, t)
-                                        }
-                                }
-                                return ctx
-                        }),
-                )
-                s.mux.Handle("/mcp", httpSrv)
-                // v1.58.2 THE WIDE SHELF — the per-chat MCP route: the opencode
-                // serve's per-session config points each serve session's doomalay
-                // MCP entry at /mcp/oc/<app-chat-id> (a per-chat URL is the only
-                // binding the serve's static-config world can carry; the custom
-                // header RIDES TOO — live-probed — but the URL path needs no
-                // header support upstream). The wrapper clones the request with
-                // the chat id injected as X-Doomalay-Session: the SAME resolution
-                // path the header speaks, zero new resolution code.
-                s.mux.Handle("/mcp/oc/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-                        chatID := strings.TrimPrefix(r.URL.Path, "/mcp/oc/")
-                        if chatID == "" || strings.Contains(chatID, "/") {
-                                http.NotFound(w, r)
-                                return
-                        }
-                        r2 := r.Clone(r.Context())
-                        r2.Header.Set("X-Doomalay-Session", chatID)
-                        r2.URL.Path = "/mcp"
-                        httpSrv.ServeHTTP(w, r2)
-                }))
-                mcpbus.SetSessionTurnResolver(s.sessionMcpTurn)
-                go func() {
-                        for _, cfg := range mcpbus.LoadServerConfigs(s.cfg.DataDir) {
-                                ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-                                if err := bus.Attach(ctx, cfg); err != nil {
-                                        log.Printf("mcpbus: chain attach %q failed: %v", cfg.Name, err)
-                                }
-                                cancel()
-                        }
-                }()
-        }
-        // API endpoints (one per resource).
-        s.mux.HandleFunc("GET /api/health", s.handleHealth)
-        // v1.42.1 THE LONG HAUL: the aged-state dashboard + the on-demand
-        // maintenance pass (Settings → Storage renders it; the rig asserts it).
-        s.mux.HandleFunc("GET /api/storage/usage", s.handleStorageUsage)
-        s.mux.HandleFunc("POST /api/storage/maintain", s.handleStorageMaintain)
-        // v1.42.4 THE LEDGER (PLAN-V142 §3.2 W2): the multi-canvas home —
-        // engine-side rows replace the WebView-localStorage-only world
-        // (R3: WebView storage is evictable + 5-10MB-capped; the engine
-        // dir is durable). The web layer's Worlds registry (worlds.js)
-        // is the only client; the digest variant feeds the hygiene sweep.
-        s.mux.HandleFunc("GET /api/canvases", s.handleCanvasesList)
-        s.mux.HandleFunc("POST /api/canvases", s.handleCanvasesCreate)
-        s.mux.HandleFunc("GET /api/canvases/{id}", s.handleCanvasGet)
-        s.mux.HandleFunc("PUT /api/canvases/{id}", s.handleCanvasUpdate)
-        s.mux.HandleFunc("DELETE /api/canvases/{id}", s.handleCanvasDelete)
-        s.mux.HandleFunc("PUT /api/canvases/{id}/thumb", s.handleCanvasThumbPut)
-        s.mux.HandleFunc("GET /api/canvases/{id}/thumb", s.handleCanvasThumbGet)
-        // v1.69.1 THE SHARED CANVAS (PLAN-V169 §v1.69.1): the document
-        // op-log's HTTP data plane — the durable journal both the room
-        // (v1.69.2's live fan-out) and a reconnecting client depend on.
-        // This phase rides the engine's existing auth gate; the pair/live
-        // endpoints that MUST sit outside the global gate arrive with
-        // v1.69.3's handshake and get their own route comments then.
-        s.mux.HandleFunc("GET /api/collab/{canvas}/ops", s.handleCollabOpsList)
-        s.mux.HandleFunc("POST /api/collab/{canvas}/ops", s.handleCollabOpsPost)
-        // v1.69.2 THE ROOM: the live door + the authoritative doc read +
-        // the census (the rig's dormancy pins).
-        s.mux.HandleFunc("GET /api/collab/live", s.handleCollabLive)
-        s.mux.HandleFunc("GET /api/collab/{canvas}/doc", s.handleCollabDoc)
-        s.mux.HandleFunc("GET /api/collab/rooms", s.handleCollabRooms)
-        // v1.69.3 THE HANDSHAKE: the pairing surface. EVERY /api/collab/
-        // path sits OUTSIDE the global gate (authMiddleware exempts the
-        // prefix) and behind its own: pair is code-gated + rate-limited;
-        // my is token-gated; invite/members/revoke are OWNER-only; the
-        // ops/live/doc surfaces answer the owner OR a member device.
-        s.mux.HandleFunc("POST /api/collab/pair", s.handleCollabPair)
-        s.mux.HandleFunc("GET /api/collab/pair", s.handleCollabPairStatus)
-        s.mux.HandleFunc("POST /api/collab/{canvas}/invite", s.handleCollabInviteMint)
-        s.mux.HandleFunc("GET /api/collab/{canvas}/invite", s.handleCollabInviteGet)
-        s.mux.HandleFunc("POST /api/collab/{canvas}/invite/approve", s.handleCollabInviteApprove)
-        s.mux.HandleFunc("POST /api/collab/{canvas}/invite/deny", s.handleCollabInviteDeny)
-        s.mux.HandleFunc("GET /api/collab/{canvas}/members", s.handleCollabMembers)
-        s.mux.HandleFunc("POST /api/collab/{canvas}/members/{device}/revoke", s.handleCollabMemberRevoke)
-        s.mux.HandleFunc("GET /api/collab/my", s.handleCollabMy)
-        // v1.39.2 THE AWAKE ENGINE: the busy gauge — Kotlin's 5s poll rides it
-        // (PARTIAL_WAKE_LOCK acquire/release + the live notification text).
-        s.mux.HandleFunc("GET /api/engine/busy", s.handleEngineBusy)
-        s.mux.HandleFunc("GET /api/capabilities", s.handleCapabilities)
-        // v1.17.2 THE BRIDGE: the Termux status aggregation + act surface.
-        // Honest when unconfigured (desktop): {"available":false}. The
-        // v1.17.3 setup overlay polls status and fires the open-* intents
-        // through act.
-        s.mux.HandleFunc("GET /api/termux/status", s.handleTermuxStatus)
-        s.mux.HandleFunc("POST /api/termux/act", s.handleTermuxAct)
-        // v1.49.2 THE OPEN HANDSHAKE: the pocket bridge's app surface — the
-        // honest state ladder + the one-tap engine-led install.
-        s.mux.HandleFunc("GET /api/opencode/bridge", s.handleOcBridgeStatus)
-        s.mux.HandleFunc("POST /api/opencode/bridge/install", s.handleOcBridgeInstall)
-        // v1.35.2 THE QUIET FINISHER: the resume executor's explicit door
-        s.mux.HandleFunc("POST /api/termux/resume", s.handleTermuxResume)
-        // v1.20.2 THE LOCAL HAND: the jailed device-storage FS surface.
-        // GET lists a folder (machine lines Termux-side: the resolved-path
-        // jail echo first, then T|name|size|mtime rows — dirs first,
-        // dotted entries included, 500-entry cap honestly flagged); POST
-        // mkdirs. Every path resolves under the safe roots Termux-side
-        // (readlink -f + the script's exit-42 jail) AND engine-side (the
-        // P| echo prefix re-check) — symlinks can't launder. Termux-side
-        // problems answer {"ok":false,"error":…} at HTTP 200 (the honesty
-        // law above); malformed/jail paths 400 exactly like the act
-        // handler's unknown whats. termuxfs.go also owns the termux rows'
-        // file verbs — the /api/workspaces/{id}/file routes dispatch on
-        // Kind:"termux" (see the v0.46 block below).
-        s.mux.HandleFunc("GET /api/termux/fs", s.handleTermuxFSList)
-        s.mux.HandleFunc("POST /api/termux/fs", s.handleTermuxFSMkdir)
-        // v1.23.3 THE LIVE STREAM: the wrapper's chunk carrier (token-gated)
-        // + the PM loop's poll side channel.
-        s.mux.HandleFunc("POST /api/termux/stream/{token}", s.handleTermuxStreamPost)
-        s.mux.HandleFunc("GET /api/termux/stream", s.handleTermuxStreamPoll)
-        // v0.48 (task 5): dev-build-only shared public provider keys.
-        s.mux.HandleFunc("POST /api/dev/use-public-keys", s.handleDevUsePublicKeys)
-        s.mux.HandleFunc("GET /api/models", s.handleModels)
-        s.mux.HandleFunc("GET /api/templates", s.handleTemplates)
-        s.mux.HandleFunc("GET /api/templates/{id}", s.handleTemplateGet)
-        s.mux.HandleFunc("GET /api/keys", s.handleKeysList)
-        s.mux.HandleFunc("POST /api/keys", s.handleKeysSet)
-        s.mux.HandleFunc("DELETE /api/keys/{envVar}", s.handleKeysDelete)
-        s.mux.HandleFunc("GET /api/keys/validate", s.handleKeysValidate)
-        // v0.15: the PrivateMode SDK bridge (running in the WebView) needs the
-        // key to establish its E2E-encrypted channel. Scoped to PM ONLY (a
-        // general key-value endpoint would leak every provider's secret to
-        // any same-origin JS bug). CORS middleware blocks foreign origins.
-        s.mux.HandleFunc("GET /api/keys/value", s.handleKeysValue)
-        // v1.44.2 THE PIN: the PM pin surface — the one-shot wasm oracle
-        // reports here (bootstrap), the connect UI's pill reads state,
-        // reverify clears the pin for a fresh oracle run.
-        s.mux.HandleFunc("GET /api/pm/state", s.handlePMState)
-        s.mux.HandleFunc("POST /api/pm/bootstrap", s.handlePMBootstrap)
-        s.mux.HandleFunc("POST /api/pm/reverify", s.handlePMReverify)
-        // v1.44.3 THE WIRE: the scoped one-shot ticket the SDK bridge
-        // redeems at /api/keys/value (the standing plaintext hole is dead).
-        s.mux.HandleFunc("POST /api/pm/handshake-ticket", s.handlePMHandshakeTicket)
-        // v1.44.5 THE BRAIN: the local PM bridge — plain OpenAI on the engine
-        // port for the co-located brain (the Node sidecar is retired).
-        s.mux.HandleFunc("POST /api/pm/local/v1/chat/completions", s.handlePMLocalChat)
-        s.mux.HandleFunc("GET /api/probe-embed", s.handleProbeEmbed)
-        s.mux.HandleFunc("GET /api/preview", s.handleLinkPreview)                  // v0.62.1: the universal link verdict
-        s.mux.HandleFunc("GET /api/preview/screenshot", s.handlePreviewScreenshot) // v0.62.4: the T3 tier (501 when no chromium)
-        s.mux.HandleFunc("GET /api/retry-sentinel", s.handleRetrySentinelGet)
-        s.mux.HandleFunc("PUT /api/retry-sentinel", s.handleRetrySentinelPut)
-        s.mux.HandleFunc("GET /api/netdiag", s.handleNetDiag)
-        s.mux.HandleFunc("GET /api/device-info", s.handleDeviceInfo)
-        s.mux.HandleFunc("GET /api/local-models", s.handleLocalModels)
+	// v1.13.4 THE CHAIN: the mcpbus serves EXTERNAL consumers at /mcp
+	// (stateless streamable HTTP — the same JSON-RPC tools/list +
+	// tools/call the engine itself speaks) and chains the configured
+	// external MCP servers (stdio on desktop, HTTP everywhere; the
+	// config lives in <data-dir>/mcp_servers.json or
+	// DOOMALAY_MCP_SERVERS). External callers get the global tool set;
+	// session-scoped tools honestly refuse without a session turn.
+	if bus, err := mcpbus.Default(); err != nil {
+		log.Printf("mcpbus unavailable — /mcp not mounted, no external chain: %v", err)
+	} else {
+		// v1.13.5: requests carrying X-Doomalay-Session resolve a
+		// session-bound Turn (the PM bridge's browser loop calls
+		// /mcp with it — session tools, artifact sinks and all).
+		httpSrv := mcpgo.NewStreamableHTTPServer(bus.Server(),
+			mcpgo.WithStateLess(true),
+			mcpgo.WithHTTPContextFunc(func(ctx context.Context, r *http.Request) context.Context {
+				if sid := r.Header.Get("X-Doomalay-Session"); sid != "" {
+					if t := mcpbus.ResolveSessionTurn(sid); t != nil {
+						return mcpbus.ContextWithTurn(ctx, t)
+					}
+				}
+				return ctx
+			}),
+		)
+		s.mux.Handle("/mcp", httpSrv)
+		// v1.58.2 THE WIDE SHELF — the per-chat MCP route: the opencode
+		// serve's per-session config points each serve session's doomalay
+		// MCP entry at /mcp/oc/<app-chat-id> (a per-chat URL is the only
+		// binding the serve's static-config world can carry; the custom
+		// header RIDES TOO — live-probed — but the URL path needs no
+		// header support upstream). The wrapper clones the request with
+		// the chat id injected as X-Doomalay-Session: the SAME resolution
+		// path the header speaks, zero new resolution code.
+		s.mux.Handle("/mcp/oc/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			chatID := strings.TrimPrefix(r.URL.Path, "/mcp/oc/")
+			if chatID == "" || strings.Contains(chatID, "/") {
+				http.NotFound(w, r)
+				return
+			}
+			r2 := r.Clone(r.Context())
+			r2.Header.Set("X-Doomalay-Session", chatID)
+			r2.URL.Path = "/mcp"
+			httpSrv.ServeHTTP(w, r2)
+		}))
+		mcpbus.SetSessionTurnResolver(s.sessionMcpTurn)
+		go func() {
+			for _, cfg := range mcpbus.LoadServerConfigs(s.cfg.DataDir) {
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				if err := bus.Attach(ctx, cfg); err != nil {
+					log.Printf("mcpbus: chain attach %q failed: %v", cfg.Name, err)
+				}
+				cancel()
+			}
+		}()
+	}
+	// API endpoints (one per resource).
+	s.mux.HandleFunc("GET /api/health", s.handleHealth)
+	// v1.42.1 THE LONG HAUL: the aged-state dashboard + the on-demand
+	// maintenance pass (Settings → Storage renders it; the rig asserts it).
+	s.mux.HandleFunc("GET /api/storage/usage", s.handleStorageUsage)
+	s.mux.HandleFunc("POST /api/storage/maintain", s.handleStorageMaintain)
+	// v1.42.4 THE LEDGER (PLAN-V142 §3.2 W2): the multi-canvas home —
+	// engine-side rows replace the WebView-localStorage-only world
+	// (R3: WebView storage is evictable + 5-10MB-capped; the engine
+	// dir is durable). The web layer's Worlds registry (worlds.js)
+	// is the only client; the digest variant feeds the hygiene sweep.
+	s.mux.HandleFunc("GET /api/canvases", s.handleCanvasesList)
+	s.mux.HandleFunc("POST /api/canvases", s.handleCanvasesCreate)
+	s.mux.HandleFunc("GET /api/canvases/{id}", s.handleCanvasGet)
+	s.mux.HandleFunc("PUT /api/canvases/{id}", s.handleCanvasUpdate)
+	s.mux.HandleFunc("DELETE /api/canvases/{id}", s.handleCanvasDelete)
+	s.mux.HandleFunc("PUT /api/canvases/{id}/thumb", s.handleCanvasThumbPut)
+	s.mux.HandleFunc("GET /api/canvases/{id}/thumb", s.handleCanvasThumbGet)
+	// v1.69.1 THE SHARED CANVAS (PLAN-V169 §v1.69.1): the document
+	// op-log's HTTP data plane — the durable journal both the room
+	// (v1.69.2's live fan-out) and a reconnecting client depend on.
+	// This phase rides the engine's existing auth gate; the pair/live
+	// endpoints that MUST sit outside the global gate arrive with
+	// v1.69.3's handshake and get their own route comments then.
+	s.mux.HandleFunc("GET /api/collab/{canvas}/ops", s.handleCollabOpsList)
+	s.mux.HandleFunc("POST /api/collab/{canvas}/ops", s.handleCollabOpsPost)
+	// v1.69.2 THE ROOM: the live door + the authoritative doc read +
+	// the census (the rig's dormancy pins).
+	s.mux.HandleFunc("GET /api/collab/live", s.handleCollabLive)
+	s.mux.HandleFunc("GET /api/collab/{canvas}/doc", s.handleCollabDoc)
+	s.mux.HandleFunc("GET /api/collab/rooms", s.handleCollabRooms)
+	// v1.69.3 THE HANDSHAKE: the pairing surface. EVERY /api/collab/
+	// path sits OUTSIDE the global gate (authMiddleware exempts the
+	// prefix) and behind its own: pair is code-gated + rate-limited;
+	// my is token-gated; invite/members/revoke are OWNER-only; the
+	// ops/live/doc surfaces answer the owner OR a member device.
+	s.mux.HandleFunc("POST /api/collab/pair", s.handleCollabPair)
+	s.mux.HandleFunc("GET /api/collab/pair", s.handleCollabPairStatus)
+	s.mux.HandleFunc("POST /api/collab/{canvas}/invite", s.handleCollabInviteMint)
+	s.mux.HandleFunc("GET /api/collab/{canvas}/invite", s.handleCollabInviteGet)
+	s.mux.HandleFunc("POST /api/collab/{canvas}/invite/approve", s.handleCollabInviteApprove)
+	s.mux.HandleFunc("POST /api/collab/{canvas}/invite/deny", s.handleCollabInviteDeny)
+	s.mux.HandleFunc("GET /api/collab/{canvas}/members", s.handleCollabMembers)
+	s.mux.HandleFunc("POST /api/collab/{canvas}/members/{device}/revoke", s.handleCollabMemberRevoke)
+	s.mux.HandleFunc("GET /api/collab/my", s.handleCollabMy)
+	// v1.39.2 THE AWAKE ENGINE: the busy gauge — Kotlin's 5s poll rides it
+	// (PARTIAL_WAKE_LOCK acquire/release + the live notification text).
+	s.mux.HandleFunc("GET /api/engine/busy", s.handleEngineBusy)
+	s.mux.HandleFunc("GET /api/capabilities", s.handleCapabilities)
+	// v1.17.2 THE BRIDGE: the Termux status aggregation + act surface.
+	// Honest when unconfigured (desktop): {"available":false}. The
+	// v1.17.3 setup overlay polls status and fires the open-* intents
+	// through act.
+	s.mux.HandleFunc("GET /api/termux/status", s.handleTermuxStatus)
+	s.mux.HandleFunc("POST /api/termux/act", s.handleTermuxAct)
+	// v1.49.2 THE OPEN HANDSHAKE: the pocket bridge's app surface — the
+	// honest state ladder + the one-tap engine-led install.
+	s.mux.HandleFunc("GET /api/opencode/bridge", s.handleOcBridgeStatus)
+	s.mux.HandleFunc("POST /api/opencode/bridge/install", s.handleOcBridgeInstall)
+	// v1.35.2 THE QUIET FINISHER: the resume executor's explicit door
+	s.mux.HandleFunc("POST /api/termux/resume", s.handleTermuxResume)
+	// v1.20.2 THE LOCAL HAND: the jailed device-storage FS surface.
+	// GET lists a folder (machine lines Termux-side: the resolved-path
+	// jail echo first, then T|name|size|mtime rows — dirs first,
+	// dotted entries included, 500-entry cap honestly flagged); POST
+	// mkdirs. Every path resolves under the safe roots Termux-side
+	// (readlink -f + the script's exit-42 jail) AND engine-side (the
+	// P| echo prefix re-check) — symlinks can't launder. Termux-side
+	// problems answer {"ok":false,"error":…} at HTTP 200 (the honesty
+	// law above); malformed/jail paths 400 exactly like the act
+	// handler's unknown whats. termuxfs.go also owns the termux rows'
+	// file verbs — the /api/workspaces/{id}/file routes dispatch on
+	// Kind:"termux" (see the v0.46 block below).
+	s.mux.HandleFunc("GET /api/termux/fs", s.handleTermuxFSList)
+	s.mux.HandleFunc("POST /api/termux/fs", s.handleTermuxFSMkdir)
+	// v1.23.3 THE LIVE STREAM: the wrapper's chunk carrier (token-gated)
+	// + the PM loop's poll side channel.
+	s.mux.HandleFunc("POST /api/termux/stream/{token}", s.handleTermuxStreamPost)
+	s.mux.HandleFunc("GET /api/termux/stream", s.handleTermuxStreamPoll)
+	// v0.48 (task 5): dev-build-only shared public provider keys.
+	s.mux.HandleFunc("POST /api/dev/use-public-keys", s.handleDevUsePublicKeys)
+	s.mux.HandleFunc("GET /api/models", s.handleModels)
+	s.mux.HandleFunc("GET /api/templates", s.handleTemplates)
+	s.mux.HandleFunc("GET /api/templates/{id}", s.handleTemplateGet)
+	s.mux.HandleFunc("GET /api/keys", s.handleKeysList)
+	s.mux.HandleFunc("POST /api/keys", s.handleKeysSet)
+	s.mux.HandleFunc("DELETE /api/keys/{envVar}", s.handleKeysDelete)
+	s.mux.HandleFunc("GET /api/keys/validate", s.handleKeysValidate)
+	// v0.15: the PrivateMode SDK bridge (running in the WebView) needs the
+	// key to establish its E2E-encrypted channel. Scoped to PM ONLY (a
+	// general key-value endpoint would leak every provider's secret to
+	// any same-origin JS bug). CORS middleware blocks foreign origins.
+	s.mux.HandleFunc("GET /api/keys/value", s.handleKeysValue)
+	// v1.44.2 THE PIN: the PM pin surface — the one-shot wasm oracle
+	// reports here (bootstrap), the connect UI's pill reads state,
+	// reverify clears the pin for a fresh oracle run.
+	s.mux.HandleFunc("GET /api/pm/state", s.handlePMState)
+	s.mux.HandleFunc("POST /api/pm/bootstrap", s.handlePMBootstrap)
+	s.mux.HandleFunc("POST /api/pm/reverify", s.handlePMReverify)
+	// v1.44.3 THE WIRE: the scoped one-shot ticket the SDK bridge
+	// redeems at /api/keys/value (the standing plaintext hole is dead).
+	s.mux.HandleFunc("POST /api/pm/handshake-ticket", s.handlePMHandshakeTicket)
+	// v1.44.5 THE BRAIN: the local PM bridge — plain OpenAI on the engine
+	// port for the co-located brain (the Node sidecar is retired).
+	s.mux.HandleFunc("POST /api/pm/local/v1/chat/completions", s.handlePMLocalChat)
+	s.mux.HandleFunc("GET /api/probe-embed", s.handleProbeEmbed)
+	s.mux.HandleFunc("GET /api/preview", s.handleLinkPreview)                  // v0.62.1: the universal link verdict
+	s.mux.HandleFunc("GET /api/preview/screenshot", s.handlePreviewScreenshot) // v0.62.4: the T3 tier (501 when no chromium)
+	s.mux.HandleFunc("GET /api/retry-sentinel", s.handleRetrySentinelGet)
+	s.mux.HandleFunc("PUT /api/retry-sentinel", s.handleRetrySentinelPut)
+	s.mux.HandleFunc("GET /api/netdiag", s.handleNetDiag)
+	s.mux.HandleFunc("GET /api/device-info", s.handleDeviceInfo)
+	s.mux.HandleFunc("GET /api/local-models", s.handleLocalModels)
 
-        // v1.47.3 THE BRIDGE PURGE: the old PM bridge's /api/tools/*
-        // routes (websearch/webfetch/local/skills/hublib) are GONE. The
-        // WebView-bridge chat that consumed them died with v1.44.0
-        // (THE NATIVE PM — the engine speaks PM's protocol itself), and
-        // a sweep found ZERO consumers left (web, app, brain, docs).
-        // The CURRENT surfaces all stay: the mcpbus (the chats' tools),
-        // /mcp (external consumers — the session-less fallback Turn),
-        // and /api/pm/local/v1/chat/completions (the co-located brain's
-        // PM bridge, v1.44.5 — litellm cannot speak PM's E2E protocol).
-        // The user's directive: "we can get rid of the fallback old pm
-        // bridge since we have native."
+	// v1.47.3 THE BRIDGE PURGE: the old PM bridge's /api/tools/*
+	// routes (websearch/webfetch/local/skills/hublib) are GONE. The
+	// WebView-bridge chat that consumed them died with v1.44.0
+	// (THE NATIVE PM — the engine speaks PM's protocol itself), and
+	// a sweep found ZERO consumers left (web, app, brain, docs).
+	// The CURRENT surfaces all stay: the mcpbus (the chats' tools),
+	// /mcp (external consumers — the session-less fallback Turn),
+	// and /api/pm/local/v1/chat/completions (the co-located brain's
+	// PM bridge, v1.44.5 — litellm cannot speak PM's E2E protocol).
+	// The user's directive: "we can get rid of the fallback old pm
+	// bridge since we have native."
 
-        // v0.21: usage + cost tracking (per chat + fleet-wide).
-        s.mux.HandleFunc("GET /api/sessions/{id}/usage", s.handleSessionUsage)
-        s.mux.HandleFunc("GET /api/usage", s.handleUsageGlobal)
+	// v0.21: usage + cost tracking (per chat + fleet-wide).
+	s.mux.HandleFunc("GET /api/sessions/{id}/usage", s.handleSessionUsage)
+	s.mux.HandleFunc("GET /api/usage", s.handleUsageGlobal)
 
-        // v1.14.4 THE TRACE: the no-OTel debug surface (the in-memory
-        // per-session event rings; POST-less GET, DELETE clears).
-        s.mux.HandleFunc("GET /api/debug/trace", s.handleDebugTrace)
-        s.mux.HandleFunc("GET /api/debug/trace/{id}", s.handleDebugTraceSession)
-        s.mux.HandleFunc("DELETE /api/debug/trace", s.handleDebugTraceClear)
-        // v0.29: the GLOBAL custom placeholders (every chatbot recognizes
-        // them; scope switch lives in the personas → placeholders view).
-        s.mux.HandleFunc("GET /api/placeholders", s.handlePlaceholdersGet)
-        s.mux.HandleFunc("PUT /api/placeholders", s.handlePlaceholdersSet)
-        s.mux.HandleFunc("DELETE /api/placeholders/{key}", s.handlePlaceholdersDelete)
-        // v1.27.1 THE FULL LEXICON: the live MIRROR-block preview (the
-        // placeholders screen renders each block's current expansion —
-        // the same builders the turn path runs).
-        s.mux.HandleFunc("GET /api/sessions/{id}/blocks", s.handleSessionBlocks)
+	// v1.14.4 THE TRACE: the no-OTel debug surface (the in-memory
+	// per-session event rings; POST-less GET, DELETE clears).
+	s.mux.HandleFunc("GET /api/debug/trace", s.handleDebugTrace)
+	s.mux.HandleFunc("GET /api/debug/trace/{id}", s.handleDebugTraceSession)
+	s.mux.HandleFunc("DELETE /api/debug/trace", s.handleDebugTraceClear)
+	// v0.29: the GLOBAL custom placeholders (every chatbot recognizes
+	// them; scope switch lives in the personas → placeholders view).
+	s.mux.HandleFunc("GET /api/placeholders", s.handlePlaceholdersGet)
+	s.mux.HandleFunc("PUT /api/placeholders", s.handlePlaceholdersSet)
+	s.mux.HandleFunc("DELETE /api/placeholders/{key}", s.handlePlaceholdersDelete)
+	// v1.27.1 THE FULL LEXICON: the live MIRROR-block preview (the
+	// placeholders screen renders each block's current expansion —
+	// the same builders the turn path runs).
+	s.mux.HandleFunc("GET /api/sessions/{id}/blocks", s.handleSessionBlocks)
 
-        // Chat session CRUD.
-        s.mux.HandleFunc("GET /api/sessions", s.handleSessionsList)
-        // v0.41: global chat search — the visible transcript across all
-        // sessions (the in-chat find bar is per-conversation; this finds
-        // WHICH conversation something lived in).
-        s.mux.HandleFunc("GET /api/search", s.handleSearch)
-        s.mux.HandleFunc("GET /api/chats", s.handleChats)
-        s.mux.HandleFunc("POST /api/sessions", s.handleSessionsCreate)
-        s.mux.HandleFunc("GET /api/sessions/{id}", s.handleSessionsGet)
-        s.mux.HandleFunc("PATCH /api/sessions/{id}", s.handleSessionsUpdate)
-        s.mux.HandleFunc("DELETE /api/sessions/{id}", s.handleSessionsDelete)
-        s.mux.HandleFunc("GET /api/sessions/{id}/events", s.handleSessionsEvents)
-        // v0.30: per-chat UI TWEAKS (the ✦ tweaks pill — colors, text size,
-        // background) + the chat's background image bytes. v0.44: the
-        // gradient spec's blended texture rides its own rev'd row.
-        s.mux.HandleFunc("GET /api/sessions/{id}/tweaks", s.handleSessionTweaksGet)
-        s.mux.HandleFunc("PUT /api/sessions/{id}/tweaks", s.handleSessionTweaksPut)
-        s.mux.HandleFunc("GET /api/sessions/{id}/background", s.handleSessionBackgroundGet)
-        s.mux.HandleFunc("PUT /api/sessions/{id}/background", s.handleSessionBackgroundPut)
-        s.mux.HandleFunc("DELETE /api/sessions/{id}/background", s.handleSessionBackgroundDelete)
-        s.mux.HandleFunc("GET /api/sessions/{id}/texture", s.handleSessionTextureGet)
-        s.mux.HandleFunc("PUT /api/sessions/{id}/texture", s.handleSessionTexturePut)
-        s.mux.HandleFunc("DELETE /api/sessions/{id}/texture", s.handleSessionTextureDelete)
-        // v0.52: the chat's custom icon (user spec item 10 — tweaks'
-        // "chat icon" section: built-in default set + browse-image crop)
-        s.mux.HandleFunc("GET /api/sessions/{id}/icon", s.handleSessionIconGet)
-        s.mux.HandleFunc("PUT /api/sessions/{id}/icon", s.handleSessionIconPut)
-        s.mux.HandleFunc("DELETE /api/sessions/{id}/icon", s.handleSessionIconDelete)
-        // v0.84.2: the PERSONA BADGE image (the badge spec rides the
-        // personas JSON; these rev'd rows carry the uploaded bytes)
-        s.mux.HandleFunc("GET /api/sessions/{id}/personabadge/{pid}", s.handlePersonaBadgeGet)
-        s.mux.HandleFunc("PUT /api/sessions/{id}/personabadge/{pid}", s.handlePersonaBadgePut)
-        s.mux.HandleFunc("DELETE /api/sessions/{id}/personabadge/{pid}", s.handlePersonaBadgeDelete)
-        // v0.15: frontend-driven turns (the PrivateMode SDK bridge chats
-        // directly from the WebView — the engine can't speak PM's encrypted
-        // protocol) append their events here so history + replay stay exact.
-        s.mux.HandleFunc("POST /api/sessions/{id}/events", s.handleSessionsAppendEvent)
-        // v0.28: the PM path's client-driven compaction lands here (the
-        // engine owns event seqs; the WebView owns the PM model call).
-        s.mux.HandleFunc("POST /api/sessions/{id}/compact", s.handleSessionCompact)
+	// Chat session CRUD.
+	s.mux.HandleFunc("GET /api/sessions", s.handleSessionsList)
+	// v0.41: global chat search — the visible transcript across all
+	// sessions (the in-chat find bar is per-conversation; this finds
+	// WHICH conversation something lived in).
+	s.mux.HandleFunc("GET /api/search", s.handleSearch)
+	s.mux.HandleFunc("GET /api/chats", s.handleChats)
+	s.mux.HandleFunc("POST /api/sessions", s.handleSessionsCreate)
+	s.mux.HandleFunc("GET /api/sessions/{id}", s.handleSessionsGet)
+	s.mux.HandleFunc("PATCH /api/sessions/{id}", s.handleSessionsUpdate)
+	s.mux.HandleFunc("DELETE /api/sessions/{id}", s.handleSessionsDelete)
+	s.mux.HandleFunc("GET /api/sessions/{id}/events", s.handleSessionsEvents)
+	// v0.30: per-chat UI TWEAKS (the ✦ tweaks pill — colors, text size,
+	// background) + the chat's background image bytes. v0.44: the
+	// gradient spec's blended texture rides its own rev'd row.
+	s.mux.HandleFunc("GET /api/sessions/{id}/tweaks", s.handleSessionTweaksGet)
+	s.mux.HandleFunc("PUT /api/sessions/{id}/tweaks", s.handleSessionTweaksPut)
+	s.mux.HandleFunc("GET /api/sessions/{id}/background", s.handleSessionBackgroundGet)
+	s.mux.HandleFunc("PUT /api/sessions/{id}/background", s.handleSessionBackgroundPut)
+	s.mux.HandleFunc("DELETE /api/sessions/{id}/background", s.handleSessionBackgroundDelete)
+	s.mux.HandleFunc("GET /api/sessions/{id}/texture", s.handleSessionTextureGet)
+	s.mux.HandleFunc("PUT /api/sessions/{id}/texture", s.handleSessionTexturePut)
+	s.mux.HandleFunc("DELETE /api/sessions/{id}/texture", s.handleSessionTextureDelete)
+	// v0.52: the chat's custom icon (user spec item 10 — tweaks'
+	// "chat icon" section: built-in default set + browse-image crop)
+	s.mux.HandleFunc("GET /api/sessions/{id}/icon", s.handleSessionIconGet)
+	s.mux.HandleFunc("PUT /api/sessions/{id}/icon", s.handleSessionIconPut)
+	s.mux.HandleFunc("DELETE /api/sessions/{id}/icon", s.handleSessionIconDelete)
+	// v0.84.2: the PERSONA BADGE image (the badge spec rides the
+	// personas JSON; these rev'd rows carry the uploaded bytes)
+	s.mux.HandleFunc("GET /api/sessions/{id}/personabadge/{pid}", s.handlePersonaBadgeGet)
+	s.mux.HandleFunc("PUT /api/sessions/{id}/personabadge/{pid}", s.handlePersonaBadgePut)
+	s.mux.HandleFunc("DELETE /api/sessions/{id}/personabadge/{pid}", s.handlePersonaBadgeDelete)
+	// v0.15: frontend-driven turns (the PrivateMode SDK bridge chats
+	// directly from the WebView — the engine can't speak PM's encrypted
+	// protocol) append their events here so history + replay stay exact.
+	s.mux.HandleFunc("POST /api/sessions/{id}/events", s.handleSessionsAppendEvent)
+	// v0.28: the PM path's client-driven compaction lands here (the
+	// engine owns event seqs; the WebView owns the PM model call).
+	s.mux.HandleFunc("POST /api/sessions/{id}/compact", s.handleSessionCompact)
 
-        // v0.16: chat-log export (the user-reviewable transcript — csv/md/json).
-        // v0.82.5: + txt + html — the plain-text export used to render
-        // client-side via a Blob-URL <a download>, which the Android WebView
-        // cannot download (only engine URLs with Content-Disposition reach the
-        // DownloadListener — that's why md/csv/json worked and txt "did not
-        // work"). Both formats now ride the engine like the rest.
-        s.mux.HandleFunc("GET /api/sessions/{id}/export.csv", s.handleSessionExport)
-        s.mux.HandleFunc("GET /api/sessions/{id}/export.md", s.handleSessionExport)
-        s.mux.HandleFunc("GET /api/sessions/{id}/export.json", s.handleSessionExport)
-        s.mux.HandleFunc("GET /api/sessions/{id}/export.txt", s.handleSessionExport)
-        s.mux.HandleFunc("GET /api/sessions/{id}/export.html", s.handleSessionExport)
+	// v0.16: chat-log export (the user-reviewable transcript — csv/md/json).
+	// v0.82.5: + txt + html — the plain-text export used to render
+	// client-side via a Blob-URL <a download>, which the Android WebView
+	// cannot download (only engine URLs with Content-Disposition reach the
+	// DownloadListener — that's why md/csv/json worked and txt "did not
+	// work"). Both formats now ride the engine like the rest.
+	s.mux.HandleFunc("GET /api/sessions/{id}/export.csv", s.handleSessionExport)
+	s.mux.HandleFunc("GET /api/sessions/{id}/export.md", s.handleSessionExport)
+	s.mux.HandleFunc("GET /api/sessions/{id}/export.json", s.handleSessionExport)
+	s.mux.HandleFunc("GET /api/sessions/{id}/export.txt", s.handleSessionExport)
+	s.mux.HandleFunc("GET /api/sessions/{id}/export.html", s.handleSessionExport)
 
-        // v0.17: per-chat ARTIFACTS (files the model / user produce —
-        // create, list, open, edit, rename, delete, download).
-        s.mux.HandleFunc("GET /api/sessions/{id}/artifacts", s.handleArtifactsList)
-        s.mux.HandleFunc("POST /api/sessions/{id}/artifacts", s.handleArtifactsCreate)
-        s.mux.HandleFunc("GET /api/sessions/{id}/artifacts/{aid}", s.handleArtifactGet)
-        s.mux.HandleFunc("PUT /api/sessions/{id}/artifacts/{aid}", s.handleArtifactUpdate)
-        s.mux.HandleFunc("DELETE /api/sessions/{id}/artifacts/{aid}", s.handleArtifactDelete)
-        s.mux.HandleFunc("GET /api/sessions/{id}/artifacts/{aid}/download", s.handleArtifactDownload)
-        // v0.23: complex-file viewers — docx/xlsx/archive previews, member
-        // reads, and user-driven extract-to-artifacts.
-        s.mux.HandleFunc("GET /api/sessions/{id}/artifacts/{aid}/preview", s.handleArtifactPreview)
-        s.mux.HandleFunc("GET /api/sessions/{id}/artifacts/{aid}/entry", s.handleArtifactEntry)
-        s.mux.HandleFunc("POST /api/sessions/{id}/artifacts/{aid}/extract", s.handleArtifactExtract)
+	// v0.17: per-chat ARTIFACTS (files the model / user produce —
+	// create, list, open, edit, rename, delete, download).
+	s.mux.HandleFunc("GET /api/sessions/{id}/artifacts", s.handleArtifactsList)
+	s.mux.HandleFunc("POST /api/sessions/{id}/artifacts", s.handleArtifactsCreate)
+	s.mux.HandleFunc("GET /api/sessions/{id}/artifacts/{aid}", s.handleArtifactGet)
+	s.mux.HandleFunc("PUT /api/sessions/{id}/artifacts/{aid}", s.handleArtifactUpdate)
+	s.mux.HandleFunc("DELETE /api/sessions/{id}/artifacts/{aid}", s.handleArtifactDelete)
+	s.mux.HandleFunc("GET /api/sessions/{id}/artifacts/{aid}/download", s.handleArtifactDownload)
+	// v0.23: complex-file viewers — docx/xlsx/archive previews, member
+	// reads, and user-driven extract-to-artifacts.
+	s.mux.HandleFunc("GET /api/sessions/{id}/artifacts/{aid}/preview", s.handleArtifactPreview)
+	s.mux.HandleFunc("GET /api/sessions/{id}/artifacts/{aid}/entry", s.handleArtifactEntry)
+	s.mux.HandleFunc("POST /api/sessions/{id}/artifacts/{aid}/extract", s.handleArtifactExtract)
 
-        // WebSocket chat.
-        s.mux.HandleFunc("GET /api/chat", s.handleChatWS)
+	// WebSocket chat.
+	s.mux.HandleFunc("GET /api/chat", s.handleChatWS)
+	s.mux.HandleFunc("GET /api/chat/debug/{sid}", s.handleChatDebug)
 
-        // v0.31: the Hub (modular library system) — per-type libraries,
-        // items, downloads, endorsements, publishing, the persona-picker
-        // hearts, and the HF token connect flow.
-        s.mux.HandleFunc("GET /api/hub/libraries", s.handleHubLibraries)
-        s.mux.HandleFunc("GET /api/hub/collections", s.handleHubCollections)
-        s.mux.HandleFunc("GET /api/hub/collections/{id}/items", s.handleHubCollectionItems)
-        // v0.60 pt C.6: the bundle download + bundle delete-your-copy.
-        s.mux.HandleFunc("POST /api/hub/collections/{id}/download", s.handleHubCollectionDownload)
-        s.mux.HandleFunc("POST /api/hub/collections/{id}/delete", s.handleHubCollectionDelete)
-        // v0.77.10: the per-user bundle endorse (ONE heart on the collection)
-        s.mux.HandleFunc("POST /api/hub/collections/{id}/endorse", s.handleHubCollectionEndorse(true))
-        s.mux.HandleFunc("POST /api/hub/collections/{id}/unendorse", s.handleHubCollectionEndorse(false))
-        // v0.60 pt C.8: THE REPO VIEW — one tree level + one file from any
-        // public dataset repo (the [cards|repo] pill's backing endpoints).
-        s.mux.HandleFunc("GET /api/hub/repo/{repo}/tree", s.handleHubRepoTree)
-        s.mux.HandleFunc("GET /api/hub/repo/{repo}/file", s.handleHubRepoFile)
-        s.mux.HandleFunc("GET /api/hub/{type}/items", s.handleHubItems)
-        s.mux.HandleFunc("GET /api/hub/{type}/downloads", s.handleHubDownloads)
-        s.mux.HandleFunc("GET /api/hub/{type}/item/{repo}/{id}", s.handleHubItem)
-        s.mux.HandleFunc("GET /api/hub/{type}/png/{repo}/{id}", s.handleHubPNG)
-        // v1.54 THE LIBRARY SHIP: the big-payload stream (canvas/chat) —
-        // the engine proxies the CDN bytes; gated on the downloaded row.
-        s.mux.HandleFunc("GET /api/hub/{type}/payload/{repo}/{id}", s.handleHubPayload)
-        s.mux.HandleFunc("POST /api/hub/{type}/download", s.handleHubDownload)
-        s.mux.HandleFunc("POST /api/hub/{type}/delete", s.handleHubDelete)
-        // v1.71.1 THE DASHBOARD: the remote delete (the authorship-gated sweep).
-        s.mux.HandleFunc("POST /api/hub/{type}/unpublish", s.handleHubUnpublish)
-        s.mux.HandleFunc("POST /api/hub/{type}/endorse", s.handleHubEndorse(true))
-        s.mux.HandleFunc("POST /api/hub/{type}/unendorse", s.handleHubEndorse(false))
-        s.mux.HandleFunc("POST /api/hub/{type}/publish", s.handleHubPublish)
-        s.mux.HandleFunc("POST /api/hub/persona/heart", s.handleHubPersonaHeart(true))
-        s.mux.HandleFunc("POST /api/hub/persona/unheart", s.handleHubPersonaHeart(false))
-        s.mux.HandleFunc("GET /api/hub/personas/hearted", s.handleHubPersonasHearted)
-        s.mux.HandleFunc("GET /api/hub/auth/status", s.handleHubAuthStatus)
-        s.mux.HandleFunc("POST /api/hub/auth/connect", s.handleHubAuthConnect)
-        s.mux.HandleFunc("POST /api/hub/auth/disconnect", s.handleHubAuthDisconnect)
+	// v0.31: the Hub (modular library system) — per-type libraries,
+	// items, downloads, endorsements, publishing, the persona-picker
+	// hearts, and the HF token connect flow.
+	s.mux.HandleFunc("GET /api/hub/libraries", s.handleHubLibraries)
+	s.mux.HandleFunc("GET /api/hub/collections", s.handleHubCollections)
+	s.mux.HandleFunc("GET /api/hub/collections/{id}/items", s.handleHubCollectionItems)
+	// v0.60 pt C.6: the bundle download + bundle delete-your-copy.
+	s.mux.HandleFunc("POST /api/hub/collections/{id}/download", s.handleHubCollectionDownload)
+	s.mux.HandleFunc("POST /api/hub/collections/{id}/delete", s.handleHubCollectionDelete)
+	// v0.77.10: the per-user bundle endorse (ONE heart on the collection)
+	s.mux.HandleFunc("POST /api/hub/collections/{id}/endorse", s.handleHubCollectionEndorse(true))
+	s.mux.HandleFunc("POST /api/hub/collections/{id}/unendorse", s.handleHubCollectionEndorse(false))
+	// v0.60 pt C.8: THE REPO VIEW — one tree level + one file from any
+	// public dataset repo (the [cards|repo] pill's backing endpoints).
+	s.mux.HandleFunc("GET /api/hub/repo/{repo}/tree", s.handleHubRepoTree)
+	s.mux.HandleFunc("GET /api/hub/repo/{repo}/file", s.handleHubRepoFile)
+	s.mux.HandleFunc("GET /api/hub/{type}/items", s.handleHubItems)
+	s.mux.HandleFunc("GET /api/hub/{type}/downloads", s.handleHubDownloads)
+	s.mux.HandleFunc("GET /api/hub/{type}/item/{repo}/{id}", s.handleHubItem)
+	s.mux.HandleFunc("GET /api/hub/{type}/png/{repo}/{id}", s.handleHubPNG)
+	// v1.54 THE LIBRARY SHIP: the big-payload stream (canvas/chat) —
+	// the engine proxies the CDN bytes; gated on the downloaded row.
+	s.mux.HandleFunc("GET /api/hub/{type}/payload/{repo}/{id}", s.handleHubPayload)
+	s.mux.HandleFunc("POST /api/hub/{type}/download", s.handleHubDownload)
+	s.mux.HandleFunc("POST /api/hub/{type}/delete", s.handleHubDelete)
+	// v1.71.1 THE DASHBOARD: the remote delete (the authorship-gated sweep).
+	s.mux.HandleFunc("POST /api/hub/{type}/unpublish", s.handleHubUnpublish)
+	s.mux.HandleFunc("POST /api/hub/{type}/endorse", s.handleHubEndorse(true))
+	s.mux.HandleFunc("POST /api/hub/{type}/unendorse", s.handleHubEndorse(false))
+	s.mux.HandleFunc("POST /api/hub/{type}/publish", s.handleHubPublish)
+	s.mux.HandleFunc("POST /api/hub/persona/heart", s.handleHubPersonaHeart(true))
+	s.mux.HandleFunc("POST /api/hub/persona/unheart", s.handleHubPersonaHeart(false))
+	s.mux.HandleFunc("GET /api/hub/personas/hearted", s.handleHubPersonasHearted)
+	s.mux.HandleFunc("GET /api/hub/auth/status", s.handleHubAuthStatus)
+	s.mux.HandleFunc("POST /api/hub/auth/connect", s.handleHubAuthConnect)
+	s.mux.HandleFunc("POST /api/hub/auth/disconnect", s.handleHubAuthDisconnect)
 
-        // v0.45 ITEM 7: HF Spaces OAuth + create-from-scratch + status/logs/restart
-        s.mux.HandleFunc("GET /api/hf/oauth/start", s.handleHFOAuthStart)
-        s.mux.HandleFunc("GET /api/hf/oauth/callback", s.handleHFOAuthCallback)
-        // v0.59: the HF device flow — the gateway-safe sign-in (no redirect
-        // URI at all; the UI picks it whenever the origin isn't loopback).
-        s.mux.HandleFunc("POST /api/hf/oauth/device/start", s.handleHFDeviceStart)
-        s.mux.HandleFunc("GET /api/hf/oauth/device/status", s.handleHFDeviceStatus)
-        s.mux.HandleFunc("POST /api/hf/space/create", s.handleHFSpaceCreate)
-        // v0.47 (task 9): the Docker-sandbox builder (fork + brick-by-brick).
-        s.mux.HandleFunc("POST /api/hf/space/docker-create", s.handleHFSpaceDockerCreate)
-        // v0.48 (task 9): pause a Space — frees the account's cpu-basic slot
-        // (HF's own remedy for the quota wall; used by the docker-sandbox
-        // picker's paused_quota state).
-        s.mux.HandleFunc("POST /api/hf/space/pause", s.handleHFSpacePause)
-        // v0.47 (task 11): the GitHub connect panel's status endpoint.
-        s.mux.HandleFunc("GET /api/gh/account", s.handleGHAccount)
-        s.mux.HandleFunc("POST /api/hf/space/ensure", s.handleHFSpaceEnsure)
-        s.mux.HandleFunc("GET /api/hf/spaces", s.handleHFSpacesList)
-        s.mux.HandleFunc("GET /api/hf/shared", s.handleHFShared)
-        s.mux.HandleFunc("GET /api/hf/account", s.handleHFAccount)
-        s.mux.HandleFunc("GET /api/hf/space/status", s.handleHFSpaceStatus)
-        s.mux.HandleFunc("GET /api/hf/space/probe", s.handleHFSpaceProbe)
-        s.mux.HandleFunc("GET /api/hf/space/logs", s.handleHFSpaceLogs)
-        s.mux.HandleFunc("POST /api/hf/space/restart", s.handleHFSpaceRestart)
+	// v0.45 ITEM 7: HF Spaces OAuth + create-from-scratch + status/logs/restart
+	s.mux.HandleFunc("GET /api/hf/oauth/start", s.handleHFOAuthStart)
+	s.mux.HandleFunc("GET /api/hf/oauth/callback", s.handleHFOAuthCallback)
+	// v0.59: the HF device flow — the gateway-safe sign-in (no redirect
+	// URI at all; the UI picks it whenever the origin isn't loopback).
+	s.mux.HandleFunc("POST /api/hf/oauth/device/start", s.handleHFDeviceStart)
+	s.mux.HandleFunc("GET /api/hf/oauth/device/status", s.handleHFDeviceStatus)
+	s.mux.HandleFunc("POST /api/hf/space/create", s.handleHFSpaceCreate)
+	// v0.47 (task 9): the Docker-sandbox builder (fork + brick-by-brick).
+	s.mux.HandleFunc("POST /api/hf/space/docker-create", s.handleHFSpaceDockerCreate)
+	// v0.48 (task 9): pause a Space — frees the account's cpu-basic slot
+	// (HF's own remedy for the quota wall; used by the docker-sandbox
+	// picker's paused_quota state).
+	s.mux.HandleFunc("POST /api/hf/space/pause", s.handleHFSpacePause)
+	// v0.47 (task 11): the GitHub connect panel's status endpoint.
+	s.mux.HandleFunc("GET /api/gh/account", s.handleGHAccount)
+	s.mux.HandleFunc("POST /api/hf/space/ensure", s.handleHFSpaceEnsure)
+	s.mux.HandleFunc("GET /api/hf/spaces", s.handleHFSpacesList)
+	s.mux.HandleFunc("GET /api/hf/shared", s.handleHFShared)
+	s.mux.HandleFunc("GET /api/hf/account", s.handleHFAccount)
+	s.mux.HandleFunc("GET /api/hf/space/status", s.handleHFSpaceStatus)
+	s.mux.HandleFunc("GET /api/hf/space/probe", s.handleHFSpaceProbe)
+	s.mux.HandleFunc("GET /api/hf/space/logs", s.handleHFSpaceLogs)
+	s.mux.HandleFunc("POST /api/hf/space/restart", s.handleHFSpaceRestart)
 
-        // ── v0.44 WORKSPACES (cloud repos for quick chat) ──────────────
-        s.mux.HandleFunc("POST /api/workspaces/connect", s.handleWorkspacesConnect)
-        s.mux.HandleFunc("GET /api/workspaces", s.handleWorkspacesList)
-        s.mux.HandleFunc("GET /api/workspaces/{id}", s.handleWorkspaceGet)
-        s.mux.HandleFunc("DELETE /api/workspaces/{id}", s.handleWorkspaceDelete)
-        s.mux.HandleFunc("POST /api/workspaces/{id}/bind", s.handleWorkspaceBind)
-        s.mux.HandleFunc("DELETE /api/workspaces/{id}/bind", s.handleWorkspaceUnbind)
-        s.mux.HandleFunc("POST /api/workspaces/{id}/token", s.handleWorkspaceToken)
-        s.mux.HandleFunc("GET /api/workspaces/{id}/tree", s.handleWorkspaceTree)
-        s.mux.HandleFunc("GET /api/workspaces/{id}/file", s.handleWorkspaceFile)
-        s.mux.HandleFunc("GET /api/workspaces/{id}/readme", s.handleWorkspaceReadme)
-        s.mux.HandleFunc("GET /api/workspaces/{id}/grep", s.handleWorkspaceGrep)
-        s.mux.HandleFunc("GET /api/workspaces/{id}/view/{what}", s.handleWorkspaceView)
-        s.mux.HandleFunc("PUT /api/workspaces/{id}/file", s.handleWorkspacePutFile)
-        s.mux.HandleFunc("POST /api/workspaces/{id}/fork", s.handleWorkspaceFork)
-        s.mux.HandleFunc("POST /api/workspaces/{id}/pr", s.handleWorkspacePR)
-        // v0.81.6 THE FULL REPO HAND: the brain path's shared-verb REST twin
-        s.mux.HandleFunc("POST /api/workspaces/{id}/do", s.handleWorkspaceDo)
-        s.mux.HandleFunc("POST /api/workspaces/{id}/clone", s.handleWorkspaceClone)
-        s.mux.HandleFunc("POST /api/workspaces/create-repo", s.handleWorkspaceCreateRepo)
-        s.mux.HandleFunc("GET /api/workspaces/licenses", s.handleWorkspaceLicenses)
-        s.mux.HandleFunc("GET /api/workspaces/gitignores", s.handleWorkspaceGitignores)
-        s.mux.HandleFunc("GET /api/workspaces/discover", s.handleWorkspaceDiscover)
-        s.mux.HandleFunc("GET /api/workspaces/resolve", s.handleWorkspaceResolve)
-        s.mux.HandleFunc("GET /api/sessions/{id}/workspaces", s.handleSessionWorkspacesList)
-        s.mux.HandleFunc("POST /api/sessions/{id}/workspaces", s.handleSessionWorkspaceBind)
-        s.mux.HandleFunc("DELETE /api/sessions/{id}/workspaces/{wid}", s.handleSessionWorkspaceUnbind)
+	// ── v0.44 WORKSPACES (cloud repos for quick chat) ──────────────
+	s.mux.HandleFunc("POST /api/workspaces/connect", s.handleWorkspacesConnect)
+	s.mux.HandleFunc("GET /api/workspaces", s.handleWorkspacesList)
+	s.mux.HandleFunc("GET /api/workspaces/{id}", s.handleWorkspaceGet)
+	s.mux.HandleFunc("DELETE /api/workspaces/{id}", s.handleWorkspaceDelete)
+	s.mux.HandleFunc("POST /api/workspaces/{id}/bind", s.handleWorkspaceBind)
+	s.mux.HandleFunc("DELETE /api/workspaces/{id}/bind", s.handleWorkspaceUnbind)
+	s.mux.HandleFunc("POST /api/workspaces/{id}/token", s.handleWorkspaceToken)
+	s.mux.HandleFunc("GET /api/workspaces/{id}/tree", s.handleWorkspaceTree)
+	s.mux.HandleFunc("GET /api/workspaces/{id}/file", s.handleWorkspaceFile)
+	s.mux.HandleFunc("GET /api/workspaces/{id}/readme", s.handleWorkspaceReadme)
+	s.mux.HandleFunc("GET /api/workspaces/{id}/grep", s.handleWorkspaceGrep)
+	s.mux.HandleFunc("GET /api/workspaces/{id}/view/{what}", s.handleWorkspaceView)
+	s.mux.HandleFunc("PUT /api/workspaces/{id}/file", s.handleWorkspacePutFile)
+	s.mux.HandleFunc("POST /api/workspaces/{id}/fork", s.handleWorkspaceFork)
+	s.mux.HandleFunc("POST /api/workspaces/{id}/pr", s.handleWorkspacePR)
+	// v0.81.6 THE FULL REPO HAND: the brain path's shared-verb REST twin
+	s.mux.HandleFunc("POST /api/workspaces/{id}/do", s.handleWorkspaceDo)
+	s.mux.HandleFunc("POST /api/workspaces/{id}/clone", s.handleWorkspaceClone)
+	s.mux.HandleFunc("POST /api/workspaces/create-repo", s.handleWorkspaceCreateRepo)
+	s.mux.HandleFunc("GET /api/workspaces/licenses", s.handleWorkspaceLicenses)
+	s.mux.HandleFunc("GET /api/workspaces/gitignores", s.handleWorkspaceGitignores)
+	s.mux.HandleFunc("GET /api/workspaces/discover", s.handleWorkspaceDiscover)
+	s.mux.HandleFunc("GET /api/workspaces/resolve", s.handleWorkspaceResolve)
+	s.mux.HandleFunc("GET /api/sessions/{id}/workspaces", s.handleSessionWorkspacesList)
+	s.mux.HandleFunc("POST /api/sessions/{id}/workspaces", s.handleSessionWorkspaceBind)
+	s.mux.HandleFunc("DELETE /api/sessions/{id}/workspaces/{wid}", s.handleSessionWorkspaceUnbind)
 
-        // v0.46: global forge accounts (paste-once sign-in), GitHub App
-        // OAuth (web flow + auto refresh), device-storage workspaces, and
-        // per-workspace branch selections.
-        s.mux.HandleFunc("GET /api/workspaces/accounts", s.handleWorkspaceAccountsList)
-        s.mux.HandleFunc("POST /api/workspaces/accounts", s.handleWorkspaceAccountSet)
-        s.mux.HandleFunc("DELETE /api/workspaces/accounts", s.handleWorkspaceAccountDelete)
-        s.mux.HandleFunc("POST /api/workspaces/device", s.handleWorkspaceDevice)
-        // v1.20.2 THE LOCAL HAND: device rows saved with a termux_path
-        // (the APK's Termux browser) are Kind "termux" and speak the SAME
-        // file verbs as the cloud rows — the GET/PUT /api/workspaces/{id}/file
-        // routes registered in the v0.44 block above dispatch on
-        // Kind:"termux" into termuxfs.go (the jailed cat read + the
-        // EXTRA_STDIN write). No new pattern is registered here: the file
-        // routes already own these paths, so the PWA's viewer/editor twins
-        // apply to device rows unchanged.
-        s.mux.HandleFunc("POST /api/workspaces/{id}/branches", s.handleWorkspaceBranches)
-        s.mux.HandleFunc("GET /api/workspaces/oauth/github/status", s.handleGHOAuthStatus)
-        s.mux.HandleFunc("POST /api/workspaces/oauth/github/config", s.handleGHOAuthConfig)
-        s.mux.HandleFunc("GET /api/workspaces/oauth/github/start", s.handleGHOAuthStart)
-        s.mux.HandleFunc("GET /api/workspaces/oauth/github/callback", s.handleGHOAuthCallback)
-        // v0.55: the device-code flow — the production GitHub sign-in for
-        // distributed builds (secretless: no client secret ships, no callback
-        // URL needed; works for every user of a shipped install).
-        s.mux.HandleFunc("POST /api/workspaces/oauth/github/device/start", s.handleGHDeviceStart)
-        s.mux.HandleFunc("GET /api/workspaces/oauth/github/device/status", s.handleGHDeviceStatus)
-        // v0.60.2: the space-brokered one-click (popup → space → GitHub →
-        // space exchange → relay → done page) — repo-scoped GitHub App auth
-        s.mux.HandleFunc("GET /api/gh/oauth/broker/start", s.handleGHBrokerStart)
-        s.mux.HandleFunc("GET /api/gh/oauth/relay", s.handleGHBrokerRelay)
-        // v0.47 (task 10): the GitHub App's registered redirect URLs use
-        // /api/github/oauth/callback (localhost:8123/:8080) — answer BOTH
-        // paths so the user's existing registration just works.
-        s.mux.HandleFunc("GET /api/github/oauth/callback", s.handleGHOAuthCallback)
-        // v0.44 EXPLORE — the same repo surface, keyed by ?url= instead of
-        // a stored workspace id (the brain's explore tool: ANY repo URL,
-        // no connect step)
-        s.mux.HandleFunc("GET /api/explore/tree", s.handleWorkspaceTree)
-        s.mux.HandleFunc("GET /api/explore/file", s.handleWorkspaceFile)
-        s.mux.HandleFunc("GET /api/explore/files", s.handleExploreFiles)
-        s.mux.HandleFunc("GET /api/explore/readme", s.handleWorkspaceReadme)
-        s.mux.HandleFunc("GET /api/explore/grep", s.handleWorkspaceGrep)
-        s.mux.HandleFunc("GET /api/explore/view/{what}", s.handleWorkspaceView)
-        s.mux.HandleFunc("GET /api/explore/repo", s.handleWorkspaceResolve)
-        // the forge generic-git adapter needs the clone root wired once
-        forge.SetGenericCloneDir(filepath.Join(s.cfg.DataDir, "workspaces"))
+	// v0.46: global forge accounts (paste-once sign-in), GitHub App
+	// OAuth (web flow + auto refresh), device-storage workspaces, and
+	// per-workspace branch selections.
+	s.mux.HandleFunc("GET /api/workspaces/accounts", s.handleWorkspaceAccountsList)
+	s.mux.HandleFunc("POST /api/workspaces/accounts", s.handleWorkspaceAccountSet)
+	s.mux.HandleFunc("DELETE /api/workspaces/accounts", s.handleWorkspaceAccountDelete)
+	s.mux.HandleFunc("POST /api/workspaces/device", s.handleWorkspaceDevice)
+	// v1.20.2 THE LOCAL HAND: device rows saved with a termux_path
+	// (the APK's Termux browser) are Kind "termux" and speak the SAME
+	// file verbs as the cloud rows — the GET/PUT /api/workspaces/{id}/file
+	// routes registered in the v0.44 block above dispatch on
+	// Kind:"termux" into termuxfs.go (the jailed cat read + the
+	// EXTRA_STDIN write). No new pattern is registered here: the file
+	// routes already own these paths, so the PWA's viewer/editor twins
+	// apply to device rows unchanged.
+	s.mux.HandleFunc("POST /api/workspaces/{id}/branches", s.handleWorkspaceBranches)
+	s.mux.HandleFunc("GET /api/workspaces/oauth/github/status", s.handleGHOAuthStatus)
+	s.mux.HandleFunc("POST /api/workspaces/oauth/github/config", s.handleGHOAuthConfig)
+	s.mux.HandleFunc("GET /api/workspaces/oauth/github/start", s.handleGHOAuthStart)
+	s.mux.HandleFunc("GET /api/workspaces/oauth/github/callback", s.handleGHOAuthCallback)
+	// v0.55: the device-code flow — the production GitHub sign-in for
+	// distributed builds (secretless: no client secret ships, no callback
+	// URL needed; works for every user of a shipped install).
+	s.mux.HandleFunc("POST /api/workspaces/oauth/github/device/start", s.handleGHDeviceStart)
+	s.mux.HandleFunc("GET /api/workspaces/oauth/github/device/status", s.handleGHDeviceStatus)
+	// v0.60.2: the space-brokered one-click (popup → space → GitHub →
+	// space exchange → relay → done page) — repo-scoped GitHub App auth
+	s.mux.HandleFunc("GET /api/gh/oauth/broker/start", s.handleGHBrokerStart)
+	s.mux.HandleFunc("GET /api/gh/oauth/relay", s.handleGHBrokerRelay)
+	// v0.47 (task 10): the GitHub App's registered redirect URLs use
+	// /api/github/oauth/callback (localhost:8123/:8080) — answer BOTH
+	// paths so the user's existing registration just works.
+	s.mux.HandleFunc("GET /api/github/oauth/callback", s.handleGHOAuthCallback)
+	// v0.44 EXPLORE — the same repo surface, keyed by ?url= instead of
+	// a stored workspace id (the brain's explore tool: ANY repo URL,
+	// no connect step)
+	s.mux.HandleFunc("GET /api/explore/tree", s.handleWorkspaceTree)
+	s.mux.HandleFunc("GET /api/explore/file", s.handleWorkspaceFile)
+	s.mux.HandleFunc("GET /api/explore/files", s.handleExploreFiles)
+	s.mux.HandleFunc("GET /api/explore/readme", s.handleWorkspaceReadme)
+	s.mux.HandleFunc("GET /api/explore/grep", s.handleWorkspaceGrep)
+	s.mux.HandleFunc("GET /api/explore/view/{what}", s.handleWorkspaceView)
+	s.mux.HandleFunc("GET /api/explore/repo", s.handleWorkspaceResolve)
+	// the forge generic-git adapter needs the clone root wired once
+	forge.SetGenericCloneDir(filepath.Join(s.cfg.DataDir, "workspaces"))
 
-        // ── v1.17.4 THE LIVE UPDATE: the delta OTA endpoints. ──
-        // (Registered in its OWN block, separate from the v1.17.2 termux
-        // routes near the top of routes() — the parallel-wave merge stays
-        // clean. GET status serves the cached manifest + live-computed
-        // plan; POST check forces a manifest refetch; POST download
-        // executes the plan under the ota-first static overlay below.)
-        s.mux.HandleFunc("GET /api/ota/status", s.handleOtaStatus)
-        s.mux.HandleFunc("POST /api/ota/check", s.handleOtaCheck)
-        s.mux.HandleFunc("POST /api/ota/download", s.handleOtaDownload)
+	// ── v1.17.4 THE LIVE UPDATE: the delta OTA endpoints. ──
+	// (Registered in its OWN block, separate from the v1.17.2 termux
+	// routes near the top of routes() — the parallel-wave merge stays
+	// clean. GET status serves the cached manifest + live-computed
+	// plan; POST check forces a manifest refetch; POST download
+	// executes the plan under the ota-first static overlay below.)
+	s.mux.HandleFunc("GET /api/ota/status", s.handleOtaStatus)
+	s.mux.HandleFunc("POST /api/ota/check", s.handleOtaCheck)
+	s.mux.HandleFunc("POST /api/ota/download", s.handleOtaDownload)
 
-        // Embedded PWA (serves web/dist at /).
-        // v0.88.2: THE STALE-CACHE FIX — the SPA's scripts served with NO
-        // cache headers get heuristic-cached by the browser across
-        // engine restarts (the dev flow: edit a .js, rebuild, reload —
-        // the old file kept serving from the HTTP cache; the rigs and
-        // every fresh-build device hit this). no-cache = always
-        // revalidate (the assets are embedded — the "network" hop is
-        // local + cheap); the big vendored blobs keep their own
-        // long-lived rules.
-        // v1.32.2: THE HONEST VALIDATOR — no-cache without a validator
-        // made every revalidation a FULL 200 (embed.FS carries no
-        // Last-Modified/ETag): every reload re-downloaded the whole tree
-        // from the loopback. staticHandler adds the sha256 validators +
-        // the weak If-None-Match 304 gate + gzip variants (own -gz
-        // validator + Vary) — webstatic.go. max-age/immutable stays OUT:
-        // the ota-first overlay serves patches at the SAME URLs, so a
-        // lifetime would go stale after a patch; it returns with the
-        // bundler wave's content-hashed filenames.
-        distFS, _ := fs.Sub(webFS, "web")
-        // v1.17.4 THE LIVE UPDATE: THE APPLY MECHANISM — the ota-first
-        // overlay. A downloaded patch at <dataDir>/ota/<web-relative-path>
-        // wins over the embedded bytes, so a pure web-asset patch goes LIVE
-        // WITHOUT an engine restart (the PWA's post-download reload fetches
-        // the new bytes through this handler). Path traversal is guarded:
-        // only clean relative paths under web/ resolve to a disk file.
-        s.mux.Handle("/", noCacheFS{s.otaOverlay(staticHandler{root: distFS})})
+	// Embedded PWA (serves web/dist at /).
+	// v0.88.2: THE STALE-CACHE FIX — the SPA's scripts served with NO
+	// cache headers get heuristic-cached by the browser across
+	// engine restarts (the dev flow: edit a .js, rebuild, reload —
+	// the old file kept serving from the HTTP cache; the rigs and
+	// every fresh-build device hit this). no-cache = always
+	// revalidate (the assets are embedded — the "network" hop is
+	// local + cheap); the big vendored blobs keep their own
+	// long-lived rules.
+	// v1.32.2: THE HONEST VALIDATOR — no-cache without a validator
+	// made every revalidation a FULL 200 (embed.FS carries no
+	// Last-Modified/ETag): every reload re-downloaded the whole tree
+	// from the loopback. staticHandler adds the sha256 validators +
+	// the weak If-None-Match 304 gate + gzip variants (own -gz
+	// validator + Vary) — webstatic.go. max-age/immutable stays OUT:
+	// the ota-first overlay serves patches at the SAME URLs, so a
+	// lifetime would go stale after a patch; it returns with the
+	// bundler wave's content-hashed filenames.
+	distFS, _ := fs.Sub(webFS, "web")
+	// v1.17.4 THE LIVE UPDATE: THE APPLY MECHANISM — the ota-first
+	// overlay. A downloaded patch at <dataDir>/ota/<web-relative-path>
+	// wins over the embedded bytes, so a pure web-asset patch goes LIVE
+	// WITHOUT an engine restart (the PWA's post-download reload fetches
+	// the new bytes through this handler). Path traversal is guarded:
+	// only clean relative paths under web/ resolve to a disk file.
+	s.mux.Handle("/", noCacheFS{s.otaOverlay(staticHandler{root: distFS})})
 
-        // v0.15: the vendored PrivateMode WASM (5.9MB gzipped). Serve it with
-        // Content-Encoding: gzip so the WebView decompresses transparently —
-        // WebAssembly.instantiateStreaming requires the correct MIME type.
-        // v1.32.2: the route gains its validator (serveWasmAsset — ETag +
-        // the weak INM 304 gate; the max-age contract is untouched).
-        wasmGz, err := fs.ReadFile(webFS, "web/vendor/pm/privatemode.wasm.gz")
-        if err == nil {
-                s.mux.HandleFunc("GET /vendor/pm/privatemode.wasm", func(w http.ResponseWriter, r *http.Request) {
-                        serveWasmAsset(w, r, wasmGz)
-                })
-        } else {
-                log.Printf("warning: PM wasm asset missing: %v", err)
-        }
+	// v0.15: the vendored PrivateMode WASM (5.9MB gzipped). Serve it with
+	// Content-Encoding: gzip so the WebView decompresses transparently —
+	// WebAssembly.instantiateStreaming requires the correct MIME type.
+	// v1.32.2: the route gains its validator (serveWasmAsset — ETag +
+	// the weak INM 304 gate; the max-age contract is untouched).
+	wasmGz, err := fs.ReadFile(webFS, "web/vendor/pm/privatemode.wasm.gz")
+	if err == nil {
+		s.mux.HandleFunc("GET /vendor/pm/privatemode.wasm", func(w http.ResponseWriter, r *http.Request) {
+			serveWasmAsset(w, r, wasmGz)
+		})
+	} else {
+		log.Printf("warning: PM wasm asset missing: %v", err)
+	}
 }
 
 // ListenAndServe starts the HTTP server on addr (e.g. ":8080").
 // Middleware order (outermost → innermost): CORS → auth → logging → panic
 // recovery → handler.
 func (s *Server) ListenAndServe(addr string) error {
-        handler := s.corsMiddleware(s.authMiddleware(s.loggingMiddleware(s.recoverMiddleware(s.mux))))
-        s.httpSrv = &http.Server{
-                Addr:              addr,
-                Handler:           handler,
-                ReadHeaderTimeout: 10_000_000_000,  // 10s — mitigate slowloris
-                ReadTimeout:       0,               // no limit (streaming)
-                WriteTimeout:      0,               // no limit (streaming/SSE)
-                IdleTimeout:       120_000_000_000, // 120s
-        }
-        return s.httpSrv.ListenAndServe()
+	handler := s.corsMiddleware(s.authMiddleware(s.loggingMiddleware(s.recoverMiddleware(s.mux))))
+	s.httpSrv = &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 10_000_000_000,  // 10s — mitigate slowloris
+		ReadTimeout:       0,               // no limit (streaming)
+		WriteTimeout:      0,               // no limit (streaming/SSE)
+		IdleTimeout:       120_000_000_000, // 120s
+	}
+	return s.httpSrv.ListenAndServe()
 }
 
 // Shutdown gracefully stops the server.
 func (s *Server) Shutdown(ctx context.Context) error {
-        // v1.48.5: the serve bridge child dies with the engine
-        s.ocServeMu.Lock()
-        m := s.ocServe
-        s.ocServe = nil
-        s.ocServeMu.Unlock()
-        if m != nil {
-                m.Stop()
-        }
-        if s.httpSrv == nil {
-                return nil
-        }
-        return s.httpSrv.Shutdown(ctx)
+	// v1.48.5: the serve bridge child dies with the engine
+	s.ocServeMu.Lock()
+	m := s.ocServe
+	s.ocServe = nil
+	s.ocServeMu.Unlock()
+	if m != nil {
+		m.Stop()
+	}
+	if s.httpSrv == nil {
+		return nil
+	}
+	return s.httpSrv.Shutdown(ctx)
 }
 
 // ── Middleware ────────────────────────────────────────────────────────────
@@ -998,60 +997,60 @@ func (s *Server) Shutdown(ctx context.Context) error {
 // When the engine is bound to localhost only (the default), this is defense-
 // in-depth. When bound to 0.0.0.0 (LAN/remote), this is critical.
 func (s *Server) corsMiddleware(next http.Handler) http.Handler {
-        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-                origin := r.Header.Get("Origin")
-                // Same-origin requests have no Origin header, or it matches the Host.
-                // For non-browser requests (curl), Origin is empty — allow.
-                if origin == "" {
-                        next.ServeHTTP(w, r)
-                        return
-                }
-                // v0.30.1: SAME-ORIGIN CORS-MODE requests must pass too. Module
-                // scripts (<script type="module"> — the PrivateMode SDK is one)
-                // are fetched in CORS mode and ALWAYS send Origin, even when the
-                // page is same-origin. Through a reverse proxy or tunnel (the
-                // localhost.run red-team) the page origin is the proxy host,
-                // which the localhost-only allowlist below rejected — 403 on
-                // /vendor/pm/*, a missing PM SDK, and a dead boot (recovery
-                // screen). The page was served BY THIS ENGINE through THAT host,
-                // so origin-host == request-Host means the request IS same-origin.
-                if s.isOriginAllowed(origin) || isSameOrigin(r, origin) {
-                        w.Header().Set("Access-Control-Allow-Origin", origin)
-                        w.Header().Set("Vary", "Origin")
-                        w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
-                        // NOTE: X-Env-* is intentionally NOT in this list. That header is for
-                        // engine→brain communication only (localhost, no CORS). The PWA must
-                        // never send provider keys — they live in the engine's vault.
-                        w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
-                        w.Header().Set("Access-Control-Allow-Credentials", "false")
-                        if r.Method == "OPTIONS" {
-                                w.WriteHeader(http.StatusOK)
-                                return
-                        }
-                        next.ServeHTTP(w, r)
-                        return
-                }
-                // Origin not allowed — reject.
-                log.Printf("blocked cross-origin request from %s", origin)
-                http.Error(w, `{"error":"origin not allowed"}`, http.StatusForbidden)
-        })
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		// Same-origin requests have no Origin header, or it matches the Host.
+		// For non-browser requests (curl), Origin is empty — allow.
+		if origin == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		// v0.30.1: SAME-ORIGIN CORS-MODE requests must pass too. Module
+		// scripts (<script type="module"> — the PrivateMode SDK is one)
+		// are fetched in CORS mode and ALWAYS send Origin, even when the
+		// page is same-origin. Through a reverse proxy or tunnel (the
+		// localhost.run red-team) the page origin is the proxy host,
+		// which the localhost-only allowlist below rejected — 403 on
+		// /vendor/pm/*, a missing PM SDK, and a dead boot (recovery
+		// screen). The page was served BY THIS ENGINE through THAT host,
+		// so origin-host == request-Host means the request IS same-origin.
+		if s.isOriginAllowed(origin) || isSameOrigin(r, origin) {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+			// NOTE: X-Env-* is intentionally NOT in this list. That header is for
+			// engine→brain communication only (localhost, no CORS). The PWA must
+			// never send provider keys — they live in the engine's vault.
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+			w.Header().Set("Access-Control-Allow-Credentials", "false")
+			if r.Method == "OPTIONS" {
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			next.ServeHTTP(w, r)
+			return
+		}
+		// Origin not allowed — reject.
+		log.Printf("blocked cross-origin request from %s", origin)
+		http.Error(w, `{"error":"origin not allowed"}`, http.StatusForbidden)
+	})
 }
 
 // isOriginAllowed checks if an origin is permitted to call the API.
 func (s *Server) isOriginAllowed(origin string) bool {
-        // Always allow localhost origins (dev server + the PWA served from the engine itself).
-        for _, prefix := range []string{"http://localhost", "http://127.0.0.1", "https://localhost", "https://127.0.0.1"} {
-                if strings.HasPrefix(origin, prefix) {
-                        return true
-                }
-        }
-        // Allow configured origins (for LAN/remote access — user opts in).
-        for _, allowed := range s.cfg.AllowedOrigins {
-                if origin == allowed {
-                        return true
-                }
-        }
-        return false
+	// Always allow localhost origins (dev server + the PWA served from the engine itself).
+	for _, prefix := range []string{"http://localhost", "http://127.0.0.1", "https://localhost", "https://127.0.0.1"} {
+		if strings.HasPrefix(origin, prefix) {
+			return true
+		}
+	}
+	// Allow configured origins (for LAN/remote access — user opts in).
+	for _, allowed := range s.cfg.AllowedOrigins {
+		if origin == allowed {
+			return true
+		}
+	}
+	return false
 }
 
 // isSameOrigin reports whether an Origin header matches the Host the client
@@ -1067,29 +1066,29 @@ func (s *Server) isOriginAllowed(origin string) bool {
 // host is unguessable, and authMiddleware remains the enforcement point for
 // non-localhost connections.)
 func isSameOrigin(r *http.Request, origin string) bool {
-        u, err := url.Parse(origin)
-        if err != nil || u.Host == "" {
-                return false
-        }
-        reqHost := r.Host
-        var reqPort string
-        if h, p, splitErr := net.SplitHostPort(r.Host); splitErr == nil {
-                reqHost, reqPort = h, p
-        }
-        if !strings.EqualFold(u.Hostname(), reqHost) {
-                return false
-        }
-        if u.Port() == reqPort {
-                return true
-        }
-        // Default-port equivalences (Origin omits :443/:80, proxies may add it).
-        def := map[string]string{"https": "443", "http": "80"}
-        if d, ok := def[u.Scheme]; ok {
-                if (u.Port() == "" && reqPort == d) || (reqPort == "" && u.Port() == d) {
-                        return true
-                }
-        }
-        return false
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	reqHost := r.Host
+	var reqPort string
+	if h, p, splitErr := net.SplitHostPort(r.Host); splitErr == nil {
+		reqHost, reqPort = h, p
+	}
+	if !strings.EqualFold(u.Hostname(), reqHost) {
+		return false
+	}
+	if u.Port() == reqPort {
+		return true
+	}
+	// Default-port equivalences (Origin omits :443/:80, proxies may add it).
+	def := map[string]string{"https": "443", "http": "80"}
+	if d, ok := def[u.Scheme]; ok {
+		if (u.Port() == "" && reqPort == d) || (reqPort == "" && u.Port() == d) {
+			return true
+		}
+	}
+	return false
 }
 
 // Prewarm touches the expensive first-hit paths in the background so the
@@ -1099,28 +1098,28 @@ func isSameOrigin(r *http.Request, origin string) bool {
 // decrypt path, and the model catalog background live-sync (started at boot
 // instead of on the first /api/models call). Best-effort — failures log only.
 func (s *Server) Prewarm() {
-        defer func() {
-                if rec := recover(); rec != nil {
-                        log.Printf("prewarm: recovered: %v", rec)
-                }
-        }()
-        if s.db != nil {
-                if sessions, err := s.db.ListSessions(); err != nil {
-                        log.Printf("prewarm: sessions: %v", err)
-                } else {
-                        log.Printf("prewarm: %d sessions warm", len(sessions))
-                }
-        }
-        var keys map[string]string
-        if s.vault != nil {
-                _ = s.vault.List()
-                keys = s.vault.AsEnv()
-        }
-        if keys == nil {
-                keys = map[string]string{}
-        }
-        go llm.BuildCatalogV2(keys, false) // cold path: instant static + background live sync
-        log.Printf("prewarm: catalog background sync started (engine %s)", buildinfo.Version)
+	defer func() {
+		if rec := recover(); rec != nil {
+			log.Printf("prewarm: recovered: %v", rec)
+		}
+	}()
+	if s.db != nil {
+		if sessions, err := s.db.ListSessions(); err != nil {
+			log.Printf("prewarm: sessions: %v", err)
+		} else {
+			log.Printf("prewarm: %d sessions warm", len(sessions))
+		}
+	}
+	var keys map[string]string
+	if s.vault != nil {
+		_ = s.vault.List()
+		keys = s.vault.AsEnv()
+	}
+	if keys == nil {
+		keys = map[string]string{}
+	}
+	go llm.BuildCatalogV2(keys, false) // cold path: instant static + background live sync
+	log.Printf("prewarm: catalog background sync started (engine %s)", buildinfo.Version)
 }
 
 // authMiddleware enforces the bearer token (when configured). SECURITY:
@@ -1130,62 +1129,62 @@ func (s *Server) Prewarm() {
 // On localhost (the default), the token is optional — localhost is trusted.
 // The engine logs a warning at startup if it's bound non-localhost with no token.
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
-        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-                // Health + capabilities are public (needed for onboarding discovery).
-                if r.URL.Path == "/api/health" || r.URL.Path == "/api/capabilities" {
-                        next.ServeHTTP(w, r)
-                        return
-                }
-                // v1.69.3 THE HANDSHAKE: the ENTIRE /api/collab/ prefix sits
-                // outside the global gate — a joining device has NO global
-                // credential; every collab handler enforces its own gate
-                // (owner-or-member / owner-only / code+rate / token).
-                if strings.HasPrefix(r.URL.Path, "/api/collab/") {
-                        next.ServeHTTP(w, r)
-                        return
-                }
-                // v1.69.3 THE HANDSHAKE: the PWA's STATIC SHELL is public —
-                // a guest pointed at the host engine (e.g. through the
-                // owner's tunnel) must be able to LOAD the app at all; the
-                // shell is embedded static bytes (traversal-guarded), every
-                // datum lives behind the gated /api + the collab gates. The
-                // MCP surfaces stay gated (their own auth).
-                if r.Method == "GET" && !strings.HasPrefix(r.URL.Path, "/api/") &&
-                        !strings.HasPrefix(r.URL.Path, "/mcp") && !strings.HasPrefix(r.URL.Path, "/api") {
-                        next.ServeHTTP(w, r)
-                        return
-                }
-                if s.cfg.AuthToken == "" {
-                        // No token configured — only allow localhost.
-                        host := r.RemoteAddr
-                        if strings.HasPrefix(host, "127.0.0.1") || strings.HasPrefix(host, "[::1]") || strings.HasPrefix(host, "localhost") {
-                                next.ServeHTTP(w, r)
-                                return
-                        }
-                        log.Printf("rejected non-localhost request with no auth token: %s", host)
-                        http.Error(w, `{"error":"auth required for non-localhost access. Set auth_token in config."}`, http.StatusUnauthorized)
-                        return
-                }
-                // Token configured — enforce it for all requests (including localhost).
-                h := r.Header.Get("Authorization")
-                if !strings.HasPrefix(h, "Bearer ") || h[7:] != s.cfg.AuthToken {
-                        http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
-                        return
-                }
-                next.ServeHTTP(w, r)
-        })
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Health + capabilities are public (needed for onboarding discovery).
+		if r.URL.Path == "/api/health" || r.URL.Path == "/api/capabilities" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		// v1.69.3 THE HANDSHAKE: the ENTIRE /api/collab/ prefix sits
+		// outside the global gate — a joining device has NO global
+		// credential; every collab handler enforces its own gate
+		// (owner-or-member / owner-only / code+rate / token).
+		if strings.HasPrefix(r.URL.Path, "/api/collab/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		// v1.69.3 THE HANDSHAKE: the PWA's STATIC SHELL is public —
+		// a guest pointed at the host engine (e.g. through the
+		// owner's tunnel) must be able to LOAD the app at all; the
+		// shell is embedded static bytes (traversal-guarded), every
+		// datum lives behind the gated /api + the collab gates. The
+		// MCP surfaces stay gated (their own auth).
+		if r.Method == "GET" && !strings.HasPrefix(r.URL.Path, "/api/") &&
+			!strings.HasPrefix(r.URL.Path, "/mcp") && !strings.HasPrefix(r.URL.Path, "/api") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if s.cfg.AuthToken == "" {
+			// No token configured — only allow localhost.
+			host := r.RemoteAddr
+			if strings.HasPrefix(host, "127.0.0.1") || strings.HasPrefix(host, "[::1]") || strings.HasPrefix(host, "localhost") {
+				next.ServeHTTP(w, r)
+				return
+			}
+			log.Printf("rejected non-localhost request with no auth token: %s", host)
+			http.Error(w, `{"error":"auth required for non-localhost access. Set auth_token in config."}`, http.StatusUnauthorized)
+			return
+		}
+		// Token configured — enforce it for all requests (including localhost).
+		h := r.Header.Get("Authorization")
+		if !strings.HasPrefix(h, "Bearer ") || h[7:] != s.cfg.AuthToken {
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // loggingMiddleware logs requests. SECURITY: never logs headers, bodies, or
 // query params (which could contain tokens/keys). Only method + path.
 func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
-        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-                // Only log the method + path. No headers (could contain Authorization),
-                // no query string (could contain session_id, though that's not secret),
-                // no body (could contain API keys on POST /api/keys).
-                log.Printf("%s %s", r.Method, r.URL.Path)
-                next.ServeHTTP(w, r)
-        })
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Only log the method + path. No headers (could contain Authorization),
+		// no query string (could contain session_id, though that's not secret),
+		// no body (could contain API keys on POST /api/keys).
+		log.Printf("%s %s", r.Method, r.URL.Path)
+		next.ServeHTTP(w, r)
+	})
 }
 
 // recoverMiddleware (v0.15, the crash fix): a panic in ANY handler would
@@ -1193,44 +1192,44 @@ func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
 // white screen and no restart. A panic is now logged, returned as a 500,
 // and the engine keeps serving.
 func (s *Server) recoverMiddleware(next http.Handler) http.Handler {
-        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-                defer func() {
-                        if rec := recover(); rec != nil {
-                                log.Printf("PANIC recovered in %s %s: %v\n%s", r.Method, r.URL.Path, rec, debugStack())
-                                // Best-effort 500 — headers may already be written.
-                                defer func() { recover() }()
-                                http.Error(w, `{"error":"internal panic — engine recovered"}`, http.StatusInternalServerError)
-                        }
-                }()
-                next.ServeHTTP(w, r)
-        })
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				log.Printf("PANIC recovered in %s %s: %v\n%s", r.Method, r.URL.Path, rec, debugStack())
+				// Best-effort 500 — headers may already be written.
+				defer func() { recover() }()
+				http.Error(w, `{"error":"internal panic — engine recovered"}`, http.StatusInternalServerError)
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
 }
 
 // debugStack returns the current stack (trimmed) for panic logs.
 func debugStack() string {
-        buf := make([]byte, 8192)
-        n := runtime.Stack(buf, false)
-        if n > len(buf) {
-                n = len(buf)
-        }
-        return string(buf[:n])
+	buf := make([]byte, 8192)
+	n := runtime.Stack(buf, false)
+	if n > len(buf) {
+		n = len(buf)
+	}
+	return string(buf[:n])
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
-        w.Header().Set("Content-Type", "application/json")
-        w.WriteHeader(status)
-        _ = json.NewEncoder(w).Encode(v)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
 }
 
 func writeError(w http.ResponseWriter, status int, msg string) {
-        writeJSON(w, status, map[string]string{"error": msg})
+	writeJSON(w, status, map[string]string{"error": msg})
 }
 
 // writeErrorCode is writeError's coded sibling: same shape plus a machine
 // `code` the PWA can branch on (v0.74: "account_age" drives the friendly
 // age card instead of the long raw HF blob).
 func writeErrorCode(w http.ResponseWriter, status int, msg, code string) {
-        writeJSON(w, status, map[string]string{"error": msg, "code": code})
+	writeJSON(w, status, map[string]string{"error": msg, "code": code})
 }

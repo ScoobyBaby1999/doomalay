@@ -1,0 +1,156 @@
+// toolrunner.go — v1.74 THE UNBOUNDED HAND + JOB REGISTRY INTEGRATION.
+//
+// Each tool call runs in its OWN goroutine with a progress channel.
+// The turn goroutine NEVER blocks on tool execution — it streams
+// progress events to the obs bus and the UI while waiting for Done.
+// NO timeouts (user directive: unbounded). Cancel only on ctx (Stop).
+// Integrates with jobmgr for job_status/job_kill visibility.
+
+package llm
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/ScoobyBaby1999/doomalay/engine/internal/jobmgr"
+	"github.com/ScoobyBaby1999/doomalay/engine/internal/obs"
+)
+
+// ToolProgress is one progress update from a running tool.
+// Percent = nil means unknown; Phase = dynamic marker ("downloading",
+// "compiling", "writing", etc.). Detail = human-readable line.
+type ToolProgress struct {
+	Percent    *float64 `json:"percent,omitempty"`
+	Phase      string   `json:"phase,omitempty"`
+	Detail     string   `json:"detail,omitempty"`
+	ElapsedMs  int64    `json:"elapsed_ms,omitempty"`
+}
+
+// ToolResult is the terminal result of a tool run.
+type ToolResult struct {
+	Observation string
+	Err         error
+	Phases      []string // all phase markers seen (for debug timeline)
+	DurationMs  int64
+	JobID       string   // jobmgr job ID for status/kill
+}
+
+// ToolRunner runs ONE tool call in isolation.
+//
+// Usage:
+//   tr := NewToolRunner(ctx, sessionID, round, "termux")
+//   go tr.RunWithContext(func(ctx) (string, error) { ... })
+//   for p := range tr.Progress { emitToolProgress(p) }
+//   result := <-tr.Done
+type ToolRunner struct {
+	Name      string
+	SessionID string
+	Round     int
+	JobID     string
+	
+	Progress  chan ToolProgress
+	Done      chan ToolResult
+	Cancel    context.CancelFunc
+	
+	startedAt time.Time
+	phases    []string
+	ctx       context.Context
+}
+
+// NewToolRunner creates a runner with its own cancellable context.
+// Registers a jobmgr job for tracking (job_status, job_kill).
+func NewToolRunner(parentCtx context.Context, sessionID string, round int, name string) *ToolRunner {
+	ctx, cancel := context.WithCancel(parentCtx)
+	// Register with jobmgr for tracking (job_status, job_kill)
+	job := jobmgr.Default().Begin(sessionID, name, "", cancel, time.Now())
+	return &ToolRunner{
+		Name:      name,
+		SessionID: sessionID,
+		Round:     round,
+		JobID:     job.ID,
+		Progress:  make(chan ToolProgress, 32),
+		Done:      make(chan ToolResult, 1),
+		Cancel:    cancel,
+		startedAt: time.Now(),
+		phases:    make([]string, 0, 8),
+		ctx:       ctx,
+	}
+}
+
+// RunWithContext runs the tool function in a goroutine.
+// The fn receives the tool's context (cancelled on Stop).
+func (tr *ToolRunner) RunWithContext(fn func(ctx context.Context) (string, error)) {
+	go func() {
+		defer close(tr.Progress)
+		defer close(tr.Done)
+		// Recover panics and convert to tool error
+		defer func() {
+			if r := recover(); r != nil {
+				elapsed := time.Since(tr.startedAt).Milliseconds()
+				err := fmt.Errorf("engine recovered from panic: %v", r)
+				tr.Done <- ToolResult{
+					Err:         err,
+					Phases:      tr.phases,
+					DurationMs:  elapsed,
+					JobID:       tr.JobID,
+				}
+				jobmgr.Default().Settle(tr.JobID, jobmgr.StateFailed, "error: " + err.Error())
+			}
+		}()
+
+		obs.EmitS(tr.ctx, obs.ToolStart, "round", tr.Round, "name", tr.Name, "phase", "starting", "job_id", tr.JobID)
+		tr.phases = append(tr.phases, "starting")
+		elapsed := time.Since(tr.startedAt).Milliseconds()
+		tr.Progress <- ToolProgress{Phase: "starting", ElapsedMs: elapsed}
+
+		observation, err := fn(tr.ctx)
+
+		elapsed = time.Since(tr.startedAt).Milliseconds()
+		if err != nil {
+			obs.EmitS(tr.ctx, obs.ToolEnd, "round", tr.Round, "name", tr.Name,
+				"error", err.Error(), "duration_ms", elapsed, "phases", tr.phases, "job_id", tr.JobID)
+			tr.Done <- ToolResult{Err: err, Phases: tr.phases, DurationMs: elapsed, JobID: tr.JobID}
+			jobmgr.Default().Settle(tr.JobID, jobmgr.StateFailed, "error: " + err.Error())
+			return
+		}
+
+		tr.phases = append(tr.phases, "finishing")
+		obs.EmitS(tr.ctx, obs.ToolEnd, "round", tr.Round, "name", tr.Name,
+			"duration_ms", elapsed, "obs_bytes", len(observation), "phases", tr.phases, "job_id", tr.JobID)
+		tr.Done <- ToolResult{Observation: observation, Phases: tr.phases, DurationMs: elapsed, JobID: tr.JobID}
+		jobmgr.Default().Settle(tr.JobID, jobmgr.StateCompleted, observation)
+	}()
+}
+
+// EmitProgress emits a phase marker progress update.
+func (tr *ToolRunner) EmitProgress(phase, detail string) {
+	elapsed := time.Since(tr.startedAt).Milliseconds()
+	tr.phases = append(tr.phases, phase)
+	tr.Progress <- ToolProgress{
+		Phase:     phase,
+		Detail:    detail,
+		ElapsedMs: elapsed,
+	}
+	obs.EmitS(tr.ctx, obs.ToolProgress, "round", tr.Round, "name", tr.Name,
+		"phase", phase, "detail", detail, "elapsed_ms", elapsed, "job_id", tr.JobID)
+}
+
+// EmitPercent emits a percentage progress (0-100).
+func (tr *ToolRunner) EmitPercent(pct float64, detail string) {
+	elapsed := time.Since(tr.startedAt).Milliseconds()
+	tr.Progress <- ToolProgress{
+		Percent:   &pct,
+		Detail:    detail,
+		ElapsedMs: elapsed,
+	}
+	obs.EmitS(tr.ctx, obs.ToolProgress, "round", tr.Round, "name", tr.Name,
+		"percent", pct, "detail", detail, "elapsed_ms", elapsed, "job_id", tr.JobID)
+}
+
+// Stop cancels the tool's context (user pressed Stop).
+func (tr *ToolRunner) Stop() {
+	if tr.Cancel != nil {
+		tr.Cancel()
+	}
+}

@@ -98,14 +98,14 @@ func TestV1732_CapacityGuard(t *testing.T) {
         m := Default()
         sess := "v1732-cap"
         var ids []string
-        for i := 0; i < MaxPerSession; i++ {
+        for i := 0; i < DefaultMaxPerSession; i++ {
                 if m.AtCapacity(sess) {
                         t.Fatalf("capacity reached early at lane %d", i)
                 }
                 ids = append(ids, m.Begin(sess, "calculator", `{}`, func() {}, time.Now()).ID)
         }
         if !m.AtCapacity(sess) {
-                t.Fatalf("the %dlane guard must refuse the next", MaxPerSession)
+                t.Fatalf("the %dlane guard must refuse the next", DefaultMaxPerSession)
         }
         m.Settle(ids[0], StateCompleted, "done")
         if m.AtCapacity(sess) {
