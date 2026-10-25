@@ -2670,6 +2670,16 @@ func (s *Server) streamFromDirectProxy(ctx context.Context, pipe *chatPipe, sess
 				if chunk.Args != "" {
 					ev["args"] = chunk.Args
 				}
+				// v1.73.3 THE HONEST CLOCK (restored by v1.75.1 after the
+				// UNBOUNDED LANES rewrite amputated it): the per-call duration
+				// rides the live event top-level ALWAYS (0 is honest — an
+				// in-process calculator can legitimately answer in under a
+				// millisecond; the PWA's chip formatter hides the 0, the wire
+				// never lies by omission). The persist case below folds it
+				// into the replayed tool_result JSON.
+				if chunk.Type == "tool_result" {
+					ev["duration_ms"] = chunk.DurationMS
+				}
 			}
 			// v0.22: file-tool results carry the saved artifact for the UI card
 			if chunk.Artifact != nil {
@@ -3028,6 +3038,13 @@ func (s *Server) forwardEvents(ctx context.Context, pipe *chatPipe, sessionID st
 			// parsed object).
 			if v, ok := ev["tool_use_id"].(string); ok && v != "" {
 				toolEv["tool_use_id"] = v
+			}
+			// v1.73.3 THE HONEST CLOCK (restored by v1.75.1): the duration
+			// persists INSIDE the tool_result payload (the replay lift
+			// JSON.parses the row — the chip + the slow tone survive a
+			// reload; 0 rides too — the clock is always on the row).
+			if v, ok := ev["duration_ms"].(float64); ok {
+				toolEv["duration_ms"] = v
 			}
 			if len(toolEv) == 0 {
 				if v, ok := ev["text"].(string); ok {

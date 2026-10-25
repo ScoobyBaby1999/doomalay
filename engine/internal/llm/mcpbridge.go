@@ -121,11 +121,21 @@ func busExecute(ctx context.Context, bus *mcpbus.Bus, turn *mcpbus.Turn, ch chan
 	}()
 	res := <-tr.Done
 	if res.Err != nil {
-		// Bus failure or tool error: degrade to direct dispatch
+		// Bus failure or tool error: degrade to direct dispatch — the
+		// honest error still rides the chat as the call's ONE result
+		// (v1.75.1: the byte-identical text the caller used to emit).
+		ch <- ChatChunk{Type: "tool_result", Text: "error: " + res.Err.Error(), Name: action, DurationMS: res.DurationMs}
 		return "OBSERVATION:\nerror: " + res.Err.Error(), true
 	}
-	// Emit tool_result for the UI
-	ch <- ChatChunk{Type: "tool_result", Text: res.Observation, Name: action}
+	// v1.75.1 THE SINGLE VOICE: this emission is the call's ONLY
+	// tool_result. The UNBOUNDED LANES rewrite added it while the
+	// caller (nativetools' v1.13.2 handoff) kept its own copy — every
+	// bus call's result rode the chat TWICE, byte-identical (the
+	// trippy transcript conviction: 20 result rows for 10 calls, every
+	// pill doubled on its result — "2 outputs instead of 1"). The
+	// caller's copy is dead; this one carries the honest clock
+	// (v1.73.3 restored: duration_ms on every tool_result).
+	ch <- ChatChunk{Type: "tool_result", Text: res.Observation, Name: action, DurationMS: res.DurationMs}
 	return "OBSERVATION:\n" + res.Observation, false
 }
 

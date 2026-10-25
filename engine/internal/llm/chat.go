@@ -181,6 +181,12 @@ type ChatChunk struct {
 	RetryClass    string `json:"retry_class,omitempty"`
 	RetryProvider string `json:"retry_provider,omitempty"`
 	RetryAfterMS  int64  `json:"retry_after_ms,omitempty"`
+
+	// v1.73.3 THE HONEST CLOCK (restored by v1.75.1 after the UNBOUNDED
+	// LANES rewrite amputated it): the per-call duration rides EVERY
+	// tool_result chunk — 0 is honest for an in-process call, the wire
+	// never lies by omission. The PWA's chip formatter hides the 0.
+	DurationMS int64 `json:"duration_ms,omitempty"`
 }
 
 // Usage is the token usage from the final chunk. v1.14.1 THE LEDGER:
