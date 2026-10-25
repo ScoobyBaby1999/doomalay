@@ -1,3 +1,17 @@
+## v1.75 THE SINGLE VOICE
+
+The trippy transcript's conviction, the user's words verbatim: *"Notice here how each thinking box is followed by an empty reply (unless the model has something to say) and after many tool looks and reasoning, 2 final outputs appear instead of one. But at the very end of the convo, a simple ask yields one output instead of the 2 outputs that appear after long chains or tools and reasoning."*
+
+The real-device transcript held the exact signature: **10 logical tool calls, 20 result rows** — every pill's result, every JOB_STARTED ticket, every job_status answer rendered twice, byte-identical, while the args pills never doubled and tool-free asks rendered one output. Three convictions, all from the UNBOUNDED LANES rewrite (v1.74), all dead:
+
+- **v1.75.1 THE SINGLE VOICE** — the rewrite added a `tool_result` emission inside `busExecute` while nativetools' v1.13.2 handoff kept its caller-side copy ("busExecute emits tool_use + progress, but not the final tool_result" — true in 2024, false since the rewrite): every bus call's result rode the chat **twice**. `busExecute` now owns the ONE emission (success + the degrade error, both carrying the runner's duration); the caller's copy is dead. Pinned e2e: exactly one `tool_result` per call.
+- **v1.75.1 THE PHANTOM LANE** — the ToolRunner registered a jobmgr job for **every** call while the bus middleware's grace wrap sat inside its fn: when the middleware ticketed, the runner settled its phantom job with the **ticket text** and the window duration instead of the honest result (live-convicted by the v1730 rig falling to 32/34), and every plain fast call settled a phantom too — a garbage "job" row per tool call, phantom `job_list` entries, capacity counts that saw two lanes where the model fired one. The law: **jobmgr lanes are born only at the grace window's ticket** (withGrace's Begin — the model's one honest handle).
+- **v1.75.1 THE RESTORED CLOCK** — the rewrite amputated `ChatChunk.DurationMS`, the converter's top-level lift, and the persisted-replay lift: v1.73.3's "duration_ms rides every tool_result" law was dead on the native path. All three restored.
+
+**The transcript's second conviction** — *"3 greps that are just lost and never completing"* — traced to the user's APK being a mid-wave build (b163f751-era: the em-dash `COMPLETED —` job_status text + the `still running after 10s` ticket shape) that predates the ship's restores: the completion-rail `SetEventSink` wiring and the round-boundary drain the rewrite had dropped were restored by the parallel bot's own v1.74.10 broken-glass pass; this wave re-proved them live (the v1730 rig 34/34: the honest ≥12s job row with the slow probe's own text, the kill, the serve-path lane, the honest clock).
+
+**The proof** — TestV1751_SingleVoiceResult (the e2e count: exactly ONE tool_result per call) + TestV1751_HonestClockRidesTheVoice + the server source pins + the v1730 rig **34/34 ALL GREEN again** + the v1670 34/34 + v1720 64/64 regressions + the llm battery (120.7s) + mcpbus (36.5s) + jobmgr + the server chunks + go build + vet + the linux 56,007,064B + android-arm64 56,381,000B cross-compiles.
+
 ## v1.74 THE UNKILLABLE SHELL
 
 The boonboon transcript's two convictions, both dead — the user's ask verbatim: *"So 2 things: termux needs to be persistent, and the bot needs better git access and knowledge."*
