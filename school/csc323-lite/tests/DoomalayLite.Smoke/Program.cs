@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using DoomalayLite.Core;
 using DoomalayLite.Providers;
 using DoomalayLite.Providers.Dto;
+using DoomalayLite.Services;
 
 namespace DoomalayLite.Smoke
 {
@@ -27,6 +28,7 @@ namespace DoomalayLite.Smoke
             RunCoreTests();
             RunProviderOfflineTests();
             RunJsonWireTests();
+            RunServiceTests();
             if (mode == "live")
             {
                 RunLiveTests();
@@ -345,6 +347,60 @@ namespace DoomalayLite.Smoke
                 badRejected = ex.Message.Contains("401");
             }
             Check("wrong key surfaces a clean 401 domain error", badRejected);
+        }
+
+        // ------------------------------------------------------------------
+        // ChatService (singleton facade) - offline behaviour only
+        // ------------------------------------------------------------------
+
+        private static void RunServiceTests()
+        {
+            Console.WriteLine();
+            Console.WriteLine("[service] ChatService singleton");
+
+            ChatService first = ChatService.GetInstance();
+            ChatService second = ChatService.GetInstance();
+            Check("GetInstance returns the same instance", ReferenceEquals(first, second));
+
+            Check("system prompt seeded on construction",
+                  first.History.Count >= 1 && first.History.Messages[0].Role == ChatRole.System);
+
+            Console.WriteLine();
+            Console.WriteLine("[service] conversation memory + provider switch");
+
+            first.SwitchProvider(ProviderKind.Echo);
+            Check("switched provider name", first.ProviderName == "Echo (offline)");
+            Check("echo provider is ready", first.ProviderReady);
+
+            int before = first.History.Count;
+            ChatReply reply = first.SendUserMessage("hello service");
+            Check("service returned a reply", !string.IsNullOrWhiteSpace(reply.Content));
+            Check("history grew by user + assistant lines", first.History.Count == before + 2);
+            Check("last history line is the assistant answer",
+                  first.History.Messages[first.History.Count - 1].Role == ChatRole.Assistant);
+
+            // Memory: the second send must SEE the first turn in its history.
+            ChatReply secondReply = first.SendUserMessage("and again");
+            Check("second turn still answered", !string.IsNullOrWhiteSpace(secondReply.Content));
+            Check("history keeps growing across turns", first.History.Count == before + 4);
+
+            Console.WriteLine();
+            Console.WriteLine("[service] guards + reset");
+
+            bool emptyRejected = false;
+            try { first.SendUserMessage("   "); }
+            catch (ProviderException ex) { emptyRejected = ex.Message.Contains("Type a message"); }
+            Check("whitespace-only message rejected with a clean error", emptyRejected);
+
+            first.Reset();
+            Check("reset leaves only the system prompt", first.History.Count == 1);
+
+            string envKey = Environment.GetEnvironmentVariable("OPENROUTER_API_KEY");
+            bool expectedReady = !string.IsNullOrWhiteSpace(envKey);
+            first.SwitchProvider(ProviderKind.OpenRouter);
+            Check("OpenRouter readiness reflects key availability",
+                  first.ProviderReady == expectedReady);
+            Check("OpenRouter display name", first.ProviderName == "OpenRouter");
         }
 
         private static IReadOnlyList<ChatMessage> BuildSampleHistory()
