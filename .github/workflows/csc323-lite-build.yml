@@ -22,3 +22,7 @@ jobs:
       - name: Build solution (Release)
         run: dotnet build DoomalayLite.sln -c Release
         working-directory: school/csc323-lite
+
+      - name: Run offline smoke tests
+        run: dotnet run --project tests/DoomalayLite.Smoke -c Release -- offline
+        working-directory: school/csc323-lite
