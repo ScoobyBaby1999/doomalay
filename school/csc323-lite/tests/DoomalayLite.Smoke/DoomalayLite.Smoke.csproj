@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!--
+      Plain net8.0 (no WindowsForms): the smoke suite compiles the domain sources
+      (Core, Providers, Services) directly, so the offline suite runs anywhere,
+      including Linux CI. The UI (frmChat) is intentionally NOT included.
+    -->
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <RootNamespace>DoomalayLite.Smoke</RootNamespace>
+    <AssemblyName>DoomalayLite.Smoke</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="../../src/DoomalayLite/Core/**/*.cs" LinkBase="DoomalayLite/Core" />
+    <Compile Include="../../src/DoomalayLite/Providers/**/*.cs" LinkBase="DoomalayLite/Providers" />
+    <Compile Include="../../src/DoomalayLite/Services/**/*.cs" LinkBase="DoomalayLite/Services" />
+  </ItemGroup>
+
+</Project>

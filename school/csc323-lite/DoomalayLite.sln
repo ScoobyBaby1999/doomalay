@@ -7,6 +7,10 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{643E9BE6-F61
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DoomalayLite", "src\DoomalayLite\DoomalayLite.csproj", "{623B8809-E437-4633-95C9-A512D09620EE}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{39816B18-6A68-4911-A8F9-4AEEFEC42ADD}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DoomalayLite.Smoke", "tests\DoomalayLite.Smoke\DoomalayLite.Smoke.csproj", "{04F9CBC3-B49F-4BE1-BC41-803056EB3731}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -20,8 +24,13 @@ Global
 		{623B8809-E437-4633-95C9-A512D09620EE}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{623B8809-E437-4633-95C9-A512D09620EE}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{623B8809-E437-4633-95C9-A512D09620EE}.Release|Any CPU.Build.0 = Release|Any CPU
+		{04F9CBC3-B49F-4BE1-BC41-803056EB3731}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{04F9CBC3-B49F-4BE1-BC41-803056EB3731}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{04F9CBC3-B49F-4BE1-BC41-803056EB3731}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{04F9CBC3-B49F-4BE1-BC41-803056EB3731}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{623B8809-E437-4633-95C9-A512D09620EE} = {643E9BE6-F611-4DE7-A240-436ACA47B22B}
+		{04F9CBC3-B49F-4BE1-BC41-803056EB3731} = {39816B18-6A68-4911-A8F9-4AEEFEC42ADD}
 	EndGlobalSection
 EndGlobal
