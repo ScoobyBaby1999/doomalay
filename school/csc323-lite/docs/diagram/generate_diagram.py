@@ -182,6 +182,7 @@ CLASSES = [
                   ("-", False, "btnSend_Click(sender : object, e : EventArgs) : void"),
                   ("-", False, "btnClear_Click(sender : object, e : EventArgs) : void"),
                   ("-", False, "cboProvider_SelectedIndexChanged(sender : object, e : EventArgs) : void"),
+                  ("-", False, "txtInput_KeyDown(sender : object, e : KeyEventArgs) : void"),
                   ("-", False, "RefreshTranscript() : void"),
                   ("-", False, "AppendLine(text : string) : void"),
                   ("-", False, "SetBusy(busy : bool) : void"),
