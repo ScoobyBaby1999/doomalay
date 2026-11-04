@@ -61,21 +61,12 @@ namespace DoomalayLite.Providers
 
             string[] fallbacks =
             {
-                "You said: \"" + Truncate(input, 80) + "\"",
+                "You said: \"" + TextUtils.Truncate(input, 80) + "\"",
                 "Echo mode heard " + CountWords(input) + " words.",
                 "Offline mode is alive and echoing. Try 'hello' or ask me my name.",
                 "Message received, processed locally, zero tokens spent."
             };
             return fallbacks[_random.Next(fallbacks.Length)];
-        }
-
-        private static string Truncate(string text, int max)
-        {
-            if (text.Length <= max)
-            {
-                return text;
-            }
-            return text.Substring(0, max) + "...";
         }
 
         private static int CountWords(string text)

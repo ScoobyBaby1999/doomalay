@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using DoomalayLite.Core;
 using DoomalayLite.Providers;
+using DoomalayLite.Providers.Dto;
 
 namespace DoomalayLite.Smoke
 {
@@ -25,11 +26,10 @@ namespace DoomalayLite.Smoke
 
             RunCoreTests();
             RunProviderOfflineTests();
-            // v0.4.0: RunJsonWireTests();
+            RunJsonWireTests();
             if (mode == "live")
             {
-                // v0.4.0: RunLiveTests();
-                Console.WriteLine("(live suite arrives in v0.4.0)");
+                RunLiveTests();
             }
 
             Console.WriteLine();
@@ -172,16 +172,13 @@ namespace DoomalayLite.Smoke
             Check("Echo provider reports ready", echoInfo != null && echoInfo.IsReady);
             Check("Echo provider display name", echoInfo != null && echoInfo.DisplayName == "Echo (offline)");
 
-            bool threwForOpenRouter = false;
-            try
-            {
-                factory.Create(ProviderKind.OpenRouter);
-            }
-            catch (ProviderException)
-            {
-                threwForOpenRouter = true;
-            }
-            Check("factory rejects OpenRouter until v0.4.0", threwForOpenRouter);
+            IChatProvider openRouter = factory.Create(ProviderKind.OpenRouter);
+            Check("factory creates OpenRouterProvider for kind OpenRouter", openRouter is OpenRouterProvider);
+
+            IProviderInfo routerInfo = new ProviderFactory(new ApiSettings()) .Create(ProviderKind.OpenRouter) as IProviderInfo;
+            Check("OpenRouter NOT ready without a key", routerInfo != null && !routerInfo.IsReady);
+            IProviderInfo keyedInfo = factory.Create(ProviderKind.OpenRouter) as IProviderInfo;
+            Check("OpenRouter ready with a key", keyedInfo != null && keyedInfo.IsReady);
 
             Console.WriteLine();
             Console.WriteLine("[providers] EchoProvider (offline twin)");
@@ -239,6 +236,115 @@ namespace DoomalayLite.Smoke
                 allAnswered = allAnswered && !string.IsNullOrEmpty(r.Content);
             }
             Check("every IChatProvider substitute answers identically-shaped", allAnswered);
+        }
+
+        // ------------------------------------------------------------------
+        // JSON wire contract (offline - pinned request/response shapes)
+        // ------------------------------------------------------------------
+
+        private static void RunJsonWireTests()
+        {
+            Console.WriteLine();
+            Console.WriteLine("[wire] request serialization");
+
+            ApiSettings settings = new ApiSettings("wire-suite-key");
+            ChatCompletionRequest request = new ChatCompletionRequest
+            {
+                Model = settings.ModelName,
+                Messages = OpenRouterProvider.MapMessages(BuildSampleHistory())
+            };
+            string body = System.Text.Json.JsonSerializer.Serialize(request,
+                new System.Text.Json.JsonSerializerOptions
+                {
+                    DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+                });
+
+            Check("body carries the pinned model", body.Contains("\"model\":\"recursive/flint-v1.0:free\""));
+            Check("body carries system role", body.Contains("\"role\":\"system\""));
+            Check("body carries user role", body.Contains("\"role\":\"user\""));
+            Check("body carries assistant role", body.Contains("\"role\":\"assistant\""));
+            Check("request omits null fields (no reasoning sent)", !body.Contains("reasoning"));
+            Check("exactly 4 mapped messages", request.Messages.Count == 4);
+            Check("domain User role maps to wire 'user'", request.Messages[1].Role == "user");
+
+            Console.WriteLine();
+            Console.WriteLine("[wire] response parsing");
+
+            string normalJson = "{\"id\":\"x\",\"model\":\"recursive/flint-v1.0:free\",\"choices\":[{\"index\":0,"
+                + "\"finish_reason\":\"stop\",\"message\":{\"role\":\"assistant\",\"content\":\"2 plus 2 equals 4.\"}}]}";
+            ChatReply normal = OpenRouterProvider.ParseResponse(normalJson);
+            Check("normal content parsed", normal.Content == "2 plus 2 equals 4.");
+            Check("model rides the reply", normal.ModelUsed == "recursive/flint-v1.0:free");
+
+            string quirkJson = "{\"model\":\"some/reasoning-model\",\"choices\":[{\"index\":0,"
+                + "\"message\":{\"role\":\"assistant\",\"content\":\"\",\"reasoning\":\"I reasoned about it deeply\"}}]}";
+            ChatReply quirk = OpenRouterProvider.ParseResponse(quirkJson);
+            Check("reasoning-only answer falls back to [thinking] excerpt",
+                  quirk.Content.StartsWith("[thinking]") && quirk.Content.Contains("reasoned about it"));
+
+            string emptyJson = "{\"model\":\"m\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"\"}}]}";
+            bool emptyThrew = false;
+            try { OpenRouterProvider.ParseResponse(emptyJson); }
+            catch (ProviderException ex) { emptyThrew = ex.Message.Contains("empty answer"); }
+            Check("truly empty answer throws a clean domain error", emptyThrew);
+
+            string noChoicesJson = "{\"model\":\"m\",\"choices\":[]}";
+            bool noChoicesThrew = false;
+            try { OpenRouterProvider.ParseResponse(noChoicesJson); }
+            catch (ProviderException ex) { noChoicesThrew = ex.Message.Contains("no choices"); }
+            Check("empty choices array throws a clean domain error", noChoicesThrew);
+
+            bool malformedThrew = false;
+            try { OpenRouterProvider.ParseResponse("{ not json "); }
+            catch (ProviderException ex) { malformedThrew = ex.Message.Contains("unreadable JSON"); }
+            Check("malformed JSON throws a clean domain error", malformedThrew);
+        }
+
+        // ------------------------------------------------------------------
+        // Live suite (network + real key). Run with:  -- live
+        // ------------------------------------------------------------------
+
+        private static void RunLiveTests()
+        {
+            string key = Environment.GetEnvironmentVariable("OPENROUTER_API_KEY");
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                Console.WriteLine();
+                Console.WriteLine("[live] OPENROUTER_API_KEY not set - live suite skipped");
+                return;
+            }
+
+            Console.WriteLine();
+            Console.WriteLine("[live] real OpenRouter calls (pinned model)");
+
+            ApiSettings settings = new ApiSettings(key);
+            OpenRouterProvider provider = new OpenRouterProvider(settings);
+
+            ChatReply simple = provider.Send(new[] { new ChatMessage("What is 2+2? Answer in one short sentence.") });
+            Check("simple math answered", !string.IsNullOrWhiteSpace(simple.Content));
+
+            ChatReply arabic = provider.Send(new[] { new ChatMessage("\u0642\u0644 \u0645\u0631\u062D\u0628\u0627 \u0628\u0627\u0644\u0639\u0631\u0628\u064A\u0629 \u0628\u062C\u0645\u0644\u0629 \u0648\u0627\u062D\u062F\u0629.") });
+            Check("arabic input answered", !string.IsNullOrWhiteSpace(arabic.Content));
+
+            ChatReply emoji = provider.Send(new[] { new ChatMessage("Reply with exactly one emoji.") });
+            Check("emoji request answered", !string.IsNullOrWhiteSpace(emoji.Content));
+
+            string longText = new string('a', 400) + " ... summarize this in five words";
+            ChatReply longInput = provider.Send(new[] { new ChatMessage(longText) });
+            Check("long input answered", !string.IsNullOrWhiteSpace(longInput.Content));
+
+            ApiSettings badKey = new ApiSettings("definitely-wrong-key-for-tests");
+            OpenRouterProvider badProvider = new OpenRouterProvider(badKey);
+            bool badRejected = false;
+            try
+            {
+                badProvider.Send(new[] { new ChatMessage("ping") });
+            }
+            catch (ProviderException ex)
+            {
+                badRejected = ex.Message.Contains("401");
+            }
+            Check("wrong key surfaces a clean 401 domain error", badRejected);
         }
 
         private static IReadOnlyList<ChatMessage> BuildSampleHistory()
