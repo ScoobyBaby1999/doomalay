@@ -86,6 +86,31 @@ Keys never enter git. The app reads `OPENROUTER_API_KEY` from the environment;
 
 ## Changelog
 
+- **v0.9.0** - THE CLASS DIAGRAM IS NOW GENERATED FROM THE CODE ITSELF.
+  The old diagram came from a hand-maintained spec rendered with curved
+  graphviz edges, and it showed exactly the two defects that review caught:
+  the `ChatService` "send" relationship that did not visibly reach the
+  `IChatProvider` interface box, and edge routing that read as
+  "ApiSettings is the model kind" even though no such relationship exists in
+  the code. The new `docs/diagram/generate_diagram.py` parses the actual C#
+  sources (brace-aware member extraction) and derives every box and arrow
+  from real code facts (base lists, field/property types, method
+  params/returns, `new`/`typeof`/casts/`case`/`catch` usages), then renders
+  through PlantUML - the scriptable equivalent of the StarUML / VS Class
+  Designer workflow, so an arrow can no longer be inverted or dangle.
+  Result: 21 types, 36 edges, orthogonal course notation (+/-/#, static
+  underlines, {abstract}/{override}/{readonly}/{internal} tags, hollow
+  inheritance triangles, dashed realization triangles, composition diamonds
+  at the whole, verb labels uses/sends/gets/holds/sets/is/creates/reads/
+  returns/throws/catches). Fixes landed as part of the rederivation:
+  `Program.Main()` had been drawn with `args : string[]` (the code has a
+  parameterless `Main()`), and the send-flow fixes of v0.7.1 are now
+  reflected 1:1. Regenerate any time with:
+  `python3 docs/diagram/generate_diagram.py --version x.y.z`
+  (needs java + PlantUML; the .puml text is the editable source, and
+  src/DCLbot/DCLbot.cd remains the Visual Studio Class Designer side).
+  Behavior unchanged: 72/72 offline smoke tests still green, solution builds
+  with 0 warnings.
 - **v0.8.0** - THE RENAME (DoomalayLite -> DCLbot: solution, projects, folders,
   namespaces, class designer file, CI, docs) + the two remaining reported
   issues closed on top of v0.7.1:

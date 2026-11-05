@@ -63,8 +63,10 @@ behavior, and the same suite runs on every push in GitHub Actions.
 Figure 1. DCLbot class diagram - 21 types in 5 namespaces; legend:
 + public, - private, # protected, underlined = static; hollow triangle =
 inheritance, dashed triangle = interface realization, filled diamond =
-composition. (File: docs/diagram/class_diagram.png, editable source in
-src/DCLbot/DCLbot.cd)
+composition. (File: docs/diagram/class_diagram.png - generated directly
+from the C# source by docs/diagram/generate_diagram.py + PlantUML, so every
+box and arrow mirrors the code; editable sources: docs/diagram/class_diagram.puml
+for the tool pipeline, src/DCLbot/DCLbot.cd for Visual Studio's Class Designer.)
 
 ## Source Code (C#)
 

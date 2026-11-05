@@ -1,0 +1,272 @@
+@startuml class_diagram
+title DCLbot class diagram v0.9.0 - generated from the C# source
+skinparam dpi 130
+skinparam backgroundColor white
+skinparam linetype ortho
+skinparam classAttributeIconSize 0
+skinparam defaultFontName DejaVu Sans
+skinparam shadowing false
+skinparam class {
+  BackgroundColor #DBEAFE
+  BorderColor #4C6EF5
+  ArrowColor #475569
+  FontColor #243447
+}
+skinparam interface {
+  BackgroundColor #EDE9FE
+  BorderColor #6D28D9
+}
+skinparam enum {
+  BackgroundColor #D1FAE5
+  BorderColor #0F766E
+}
+skinparam abstract {
+  BackgroundColor #FEF3C7
+  BorderColor #B45309
+}
+skinparam package {
+  BackgroundColor #F8FAFC
+  BorderColor #CBD5E1
+  FontColor #64748B
+  FontStyle bold
+}
+skinparam legend {
+  BackgroundColor #F8FAFC
+  BorderColor #94A3B8
+  FontColor #243447
+}
+
+class "Exception" as Exception <<external>> #F1F5F9;line:94A3B8
+
+package "DCLbot" {
+  class Program {
+      - {static} Main()
+    }
+}
+
+package "DCLbot.Core" {
+  enum ChatRole {
+      System
+      User
+      Assistant
+    }
+  class ChatMessage {
+      - DateTime _createdAt
+      + ChatRole Role {readonly}
+      + string Content
+      + DateTime CreatedAt {readonly}
+      + ChatMessage(content : string)
+      + ChatMessage(role : ChatRole, content : string)
+      + ToString() : string {override}
+    }
+  class Conversation {
+      - List<ChatMessage> _messages
+      - int _maxMessages
+      + Conversation()
+      + Conversation(maxMessages : int)
+      + int Count {readonly}
+      + int MaxMessages {readonly}
+      + IReadOnlyList<ChatMessage> Messages {readonly}
+      + Add(message : ChatMessage)
+      + AddUserMessage(content : string)
+      + AddAssistantMessage(content : string)
+      + Clear()
+      + Render() : string
+      - Trim()
+    }
+  class ApiSettings {
+      + string EndpointUrl
+      + string ModelName
+      + string ApiKey
+      + int TimeoutSeconds
+      + string SystemPrompt
+      + ApiSettings()
+      + ApiSettings(apiKey : string)
+      + ApiSettings(apiKey : string, modelName : string)
+    }
+  class ChatReply {
+      + string Content
+      + string ModelUsed
+      + double ElapsedSeconds
+      + ChatReply(content : string, modelUsed : string)
+      + ChatReply(content : string, modelUsed : string, elapsedSeconds : double)
+      + ToString() : string {override}
+    }
+}
+
+package "DCLbot.Providers" {
+  interface IChatProvider {
+      - Send(messages : IReadOnlyList<ChatMessage>) : ChatReply {abstract}
+    }
+  interface IProviderInfo {
+      - string DisplayName {readonly}
+      - bool IsReady {readonly}
+    }
+  abstract class ChatProviderBase {
+      # ApiSettings Settings {readonly}
+      + string DisplayName {readonly}
+      + bool IsReady {readonly}
+      # ChatProviderBase(settings : ApiSettings)
+      + Send(messages : IReadOnlyList<ChatMessage>) : ChatReply
+      # DoSend(messages : IReadOnlyList<ChatMessage>) : ChatReply {abstract}
+      # GetDisplayName() : string {abstract}
+      # ValidateSettings() : bool {virtual}
+    }
+  enum ProviderKind {
+      OpenRouter
+      Echo
+    }
+  class ProviderFactory {
+      - ApiSettings _settings
+      + ProviderFactory(settings : ApiSettings)
+      + Create(kind : ProviderKind) : IChatProvider
+    }
+  class ProviderException {
+      + ProviderException(message : string)
+      + ProviderException(message : string, inner : Exception)
+    }
+  class EchoProvider {
+      - Random _random
+      + EchoProvider(settings : ApiSettings)
+      # GetDisplayName() : string {override}
+      # ValidateSettings() : bool {override}
+      # DoSend(messages : IReadOnlyList<ChatMessage>) : ChatReply {override}
+      - PickReply(input : string) : string
+      - {static} CountWords(text : string) : int
+    }
+  class OpenRouterProvider {
+      - HttpClient _http
+      + OpenRouterProvider(settings : ApiSettings)
+      # GetDisplayName() : string {override}
+      # ValidateSettings() : bool {override}
+      # DoSend(messages : IReadOnlyList<ChatMessage>) : ChatReply {override}
+      - BuildRequest(messages : IReadOnlyList<ChatMessage>) : ChatCompletionRequest
+      - {static} MapMessages(messages : IReadOnlyList<ChatMessage>) : List<RequestMessage> {internal}
+      - Post(request : ChatCompletionRequest) : string
+      - {static} ParseResponse(json : string) : ChatReply {internal}
+    }
+  class TextUtils {
+      + {static} Truncate(text : string, max : int) : string
+    }
+}
+
+package "DCLbot.Providers.Dto" {
+  class ChatCompletionRequest {
+      + string Model
+      + List<RequestMessage> Messages
+    }
+  class RequestMessage {
+      + string Role
+      + string Content
+      + string Reasoning
+    }
+  class ChatCompletionResponse {
+      + string Id
+      + string Model
+      + List<Choice> Choices
+    }
+  class Choice {
+      + int Index
+      + RequestMessage Message
+      + string FinishReason
+    }
+}
+
+package "DCLbot.Services" {
+  class ChatService {
+      - {static} ChatService _instance
+      - {static} object _lock
+      - Conversation _conversation
+      - IChatProvider _provider
+      - IProviderInfo _providerInfo
+      - ApiSettings _settings
+      - ChatService()
+      + {static} GetInstance() : ChatService
+      + Conversation History {readonly}
+      + string ProviderName {readonly}
+      + bool ProviderReady {readonly}
+      + string ModelName
+      + SendUserMessage(text : string) : ChatReply
+      + SwitchProvider(kind : ProviderKind)
+      + Reset()
+      - SeedSystemPrompt()
+      - {static} LoadApiKey() : string
+    }
+}
+
+package "DCLbot.UI" {
+  class frmChat {
+      - System.ComponentModel.IContainer components
+      # Dispose(disposing : bool) {override}
+      - InitializeComponent()
+      - System.Windows.Forms.Panel panelTop
+      - System.Windows.Forms.Label lblProvider
+      - System.Windows.Forms.ComboBox cboProvider
+      - System.Windows.Forms.Button btnClear
+      - System.Windows.Forms.TextBox txtChat
+      - System.Windows.Forms.Panel panelBottom
+      - System.Windows.Forms.Button btnSend
+      - System.Windows.Forms.TextBox txtInput
+      - System.Windows.Forms.StatusStrip statusStrip
+      - System.Windows.Forms.ToolStripStatusLabel status
+      - ChatService _chat
+      - bool _busy
+      + frmChat()
+      - cboProvider_SelectedIndexChanged(sender : object, e : EventArgs)
+      - btnSend_Click(sender : object, e : EventArgs)
+      - btnClear_Click(sender : object, e : EventArgs)
+      - txtInput_KeyDown(sender : object, e : KeyEventArgs)
+      - RefreshTranscript()
+      - AppendLine(text : string)
+      - SetBusy(busy : bool)
+      - UpdateProviderStatus()
+    }
+}
+
+' --- relationships (all derived from the source) ---
+IChatProvider <|.. ChatProviderBase
+IProviderInfo <|.. ChatProviderBase
+ChatProviderBase <|-- EchoProvider
+ChatProviderBase <|-- OpenRouterProvider
+Exception <|-- ProviderException
+ChatService "1" *-- "0..*" Conversation : holds
+ChatService --> IChatProvider : sends via
+ChatService --> IProviderInfo : gets status
+ChatService --> ApiSettings : sets
+ChatProviderBase --> ApiSettings : reads
+ProviderFactory --> ApiSettings : reads
+ChatCompletionRequest "1" *-- "0..*" RequestMessage : holds
+ChatCompletionResponse "1" *-- "0..*" Choice : holds
+Choice --> RequestMessage : has
+frmChat --> ChatService : uses
+ChatMessage --> ChatRole : is
+Conversation "1" *-- "0..*" ChatMessage : holds
+Program ..> frmChat : creates
+ChatService ..> ChatReply : returns
+ChatService ..> ProviderException : throws
+ChatService ..> ProviderFactory : creates
+ChatService ..> ProviderKind : switches on
+ChatProviderBase ..> ProviderException : throws
+EchoProvider ..> TextUtils : uses
+IChatProvider ..> ChatMessage : receives
+IChatProvider ..> ChatReply : returns
+OpenRouterProvider ..> ChatCompletionRequest : builds
+OpenRouterProvider ..> ChatCompletionResponse : reads
+OpenRouterProvider ..> ChatRole : maps
+OpenRouterProvider ..> RequestMessage : creates
+OpenRouterProvider ..> TextUtils : uses
+ProviderFactory ..> IChatProvider : creates
+ProviderFactory ..> ProviderException : throws
+ProviderFactory ..> ProviderKind : reads
+frmChat ..> ProviderException : catches
+frmChat ..> ProviderKind : uses
+
+legend right
+  + public   - private   # protected   underlined = static
+  {abstract} {override} {virtual} {readonly} {internal} tags
+  hollow triangle = inheritance   dashed triangle = realization
+  filled diamond = composition (at the whole)
+  dashed open arrow = dependency (uses / creates / returns)
+  solid arrow = association, navigable as drawn
+end legend
+@enduml
