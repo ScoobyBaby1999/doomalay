@@ -71,3 +71,20 @@ PLAN.md                      approved project blueprint
 
 Keys never enter git. The app reads `OPENROUTER_API_KEY` from the environment;
 `.gitignore` blocks local key files; every push is secret-scanned.
+
+## Changelog
+
+- **v0.7.1** - fixed the busy-state bug that allowed only ONE message to be
+  sent per app run (the `_busy` guard flag was set on the first send and never
+  cleared, so every later send - even after "New chat" - was silently ignored).
+  The flag now lives inside `SetBusy()` together with the visuals and is
+  always cleared in the `finally` block of the send handler. Also hardened:
+  the whole send turn runs inside try/finally, the input box uses `ReadOnly`
+  instead of `Enabled` while thinking so it never loses keyboard focus, the
+  provider combo guards its re-entrancy, and Enter is routed through the
+  input box KeyDown (`AcceptsReturn = true`). Removed an accidentally
+  committed API key from `ApiSettings` (the key was already compromised and
+  revoked - 401). Class diagram regenerated: static members now follow the
+  course Ch.2 underline notation, and previously missing members were added
+  (`CountWords`, `ReadOptions`/`WriteOptions`, `Reasoning`, `ModelName`,
+  designer fields).

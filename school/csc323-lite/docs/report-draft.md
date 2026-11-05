@@ -57,9 +57,9 @@ behavior, and the same suite runs on every push in GitHub Actions.
 ## Class Diagram (UML)
 
 Figure 1. Doomalay Lite class diagram - 21 types in 5 namespaces; legend:
-+ public, - private, # protected, & static; hollow triangle = inheritance,
-dashed triangle = interface realization, filled diamond = composition.
-(File: docs/diagram/class-diagram.png, editable source in
++ public, - private, # protected, underlined = static; hollow triangle =
+inheritance, dashed triangle = interface realization, filled diamond =
+composition. (File: docs/diagram/class_diagram.png, editable source in
 src/DoomalayLite/DoomalayLite.cd)
 
 ## Source Code (C#)
@@ -72,7 +72,8 @@ Planned figures (each with caption):
 - Figure 4. Adapter: OpenRouterProvider with the four DTO classes and the
   reasoning-quirk fallback; EchoProvider with keyword replies
 - Figure 5. Singleton facade: ChatService (private ctor, GetInstance, SwitchProvider)
-- Figure 6. UI: frmChat event handlers (async send, busy state, graceful degradation)
+- Figure 6. UI: frmChat event handlers (async send with try/finally busy
+  state, graceful degradation to Echo, guarded provider switching)
 
 ## Key concepts (around 30 words each)
 

@@ -12,7 +12,7 @@ every versioned push.
 Output: class_diagram.dot / class_diagram.png / class_diagram.svg
 
 Notation legend (rendered into the image):
-  + public   - private   # protected   & static/shared
+  + public   - private   # protected   underlined = static (course Ch.2)
   {abstract} {override} {virtual} {readonly} tags; italic = abstract/interface.
   Generalization: hollow triangle. Realization: dashed hollow triangle.
   Composition: filled diamond at the WHOLE. Dependency: dashed open arrow.
@@ -112,18 +112,21 @@ CLASSES = [
                   ("#", False, "GetDisplayName() : string {override}"),
                   ("#", False, "ValidateSettings() : bool {override}"),
                   ("#", False, "DoSend(messages : IReadOnlyList<ChatMessage>) : ChatReply {override}"),
-                  ("-", False, "PickReply(input : string) : string")]),
+                  ("-", False, "PickReply(input : string) : string"),
+                  ("-", True, "CountWords(text : string) : int")]),
     # ------------- Providers / OpenRouter + DTOs (v0.4.0) -------------
     dict(name="OpenRouterProvider", ns="DoomalayLite.Providers", kind="class", since="0.4.0",
-         attrs=[("-", False, "_http : HttpClient")],
+         attrs=[("-", False, "_http : HttpClient"),
+                ("-", True, "ReadOptions : JsonSerializerOptions"),
+                ("-", True, "WriteOptions : JsonSerializerOptions")],
          methods=[("+", False, "OpenRouterProvider(settings : ApiSettings)"),
                   ("#", False, "GetDisplayName() : string {override}"),
                   ("#", False, "ValidateSettings() : bool {override}"),
                   ("#", False, "DoSend(messages : IReadOnlyList<ChatMessage>) : ChatReply {override}"),
                   ("-", False, "BuildRequest(messages : IReadOnlyList<ChatMessage>) : ChatCompletionRequest"),
                   ("-", False, "Post(request : ChatCompletionRequest) : string"),
-                  ("-", False, "& ParseResponse(json : string) : ChatReply"),
-                  ("-", False, "& MapMessages(messages : IReadOnlyList<ChatMessage>) : List<RequestMessage>")]),
+                  ("-", True, "ParseResponse(json : string) : ChatReply {internal}"),
+                  ("-", True, "MapMessages(messages : IReadOnlyList<ChatMessage>) : List<RequestMessage> {internal}")]),
     dict(name="TextUtils", ns="DoomalayLite.Providers", kind="class", since="0.4.0",
          attrs=[],
          methods=[("+", True, "Truncate(text : string, max : int) : string")]),
@@ -133,7 +136,8 @@ CLASSES = [
          methods=[]),
     dict(name="RequestMessage", ns="DoomalayLite.Providers.Dto", kind="class", since="0.4.0",
          attrs=[("+", False, "Role : string"),
-                ("+", False, "Content : string")],
+                ("+", False, "Content : string"),
+                ("+", False, "Reasoning : string")],
          methods=[]),
     dict(name="ChatCompletionResponse", ns="DoomalayLite.Providers.Dto", kind="class", since="0.4.0",
          attrs=[("+", False, "Id : string"),
@@ -155,7 +159,8 @@ CLASSES = [
                 ("-", False, "_settings : ApiSettings"),
                 ("+", False, "History : Conversation {readonly}"),
                 ("+", False, "ProviderName : string {readonly}"),
-                ("+", False, "ProviderReady : bool {readonly}")],
+                ("+", False, "ProviderReady : bool {readonly}"),
+                ("+", False, "ModelName : string {readonly}")],
          methods=[("-", False, "ChatService()"),
                   ("+", True, "GetInstance() : ChatService"),
                   ("+", False, "SendUserMessage(text : string) : ChatReply"),
@@ -170,13 +175,17 @@ CLASSES = [
     dict(name="frmChat", ns="DoomalayLite.UI", kind="class", since="0.6.0",
          attrs=[("-", False, "_chat : ChatService"),
                 ("-", False, "_busy : bool"),
+                ("-", False, "_switchingProvider : bool"),
                 ("-", False, "components : IContainer"),
+                ("-", False, "panelTop : Panel"),
+                ("-", False, "panelBottom : Panel"),
                 ("-", False, "cboProvider : ComboBox"),
                 ("-", False, "lblProvider : Label"),
                 ("-", False, "btnSend : Button"),
                 ("-", False, "btnClear : Button"),
                 ("-", False, "txtInput : TextBox"),
                 ("-", False, "txtChat : TextBox"),
+                ("-", False, "statusStrip : StatusStrip"),
                 ("-", False, "status : ToolStripStatusLabel")],
          methods=[("+", False, "frmChat()"),
                   ("-", False, "btnSend_Click(sender : object, e : EventArgs) : void"),
@@ -239,17 +248,17 @@ KIND_STYLE = dict(
 VIS_CHAR = {"+": "+", "-": "-", "#": "#"}
 
 
+def esc(s):
+    return html.escape(s, quote=True)
+
+
 def member_line(vis, static, text):
+    """Course Ch.2 notation: +/#/- visibility, STATIC members are UNDERLINED."""
     prefix = ""
     if vis:
         prefix += VIS_CHAR[vis] + " "
-    if static:
-        prefix += "& "
-    return prefix + text
-
-
-def esc(s):
-    return html.escape(s, quote=True)
+    body = esc(prefix + text)
+    return f"<U>{body}</U>" if static else body
 
 
 def class_node(cls):
@@ -267,7 +276,7 @@ def class_node(cls):
     def compartment(items, bg):
         if not items:
             return ""
-        lines = "".join(f' {esc(member_line(v, s, t))}<BR ALIGN="LEFT"/>' for v, s, t in items)
+        lines = "".join(f' {member_line(v, s, t)}<BR ALIGN="LEFT"/>' for v, s, t in items)
         return (f'<TR><TD BGCOLOR="{bg}" ALIGN="LEFT">'
                 f'<FONT FACE="DejaVu Sans" POINT-SIZE="11" COLOR="{C["text"]}">{lines}</FONT></TD></TR>')
 
@@ -332,7 +341,7 @@ def generate(version):
         '  legend [shape=rect, style="rounded,filled", fillcolor="#F8FAFC", color="#94A3B8", '
         'label=< <FONT FACE="DejaVu Sans" POINT-SIZE="10" COLOR="#243447">'
         '<B>Legend</B><BR ALIGN="LEFT"/>'
-        '+ public&#160;&#160;- private&#160;&#160;# protected&#160;&#160;&amp; static<BR ALIGN="LEFT"/>'
+        '+ public&#160;&#160;- private&#160;&#160;# protected&#160;&#160;underlined = static<BR ALIGN="LEFT"/>'
         '{abstract} {override} {virtual} {readonly}<BR ALIGN="LEFT"/>'
         'hollow triangle = inheritance &#160; dashed = realization / dependency<BR ALIGN="LEFT"/>'
         'filled diamond = composition (at the whole)<BR ALIGN="LEFT"/>'

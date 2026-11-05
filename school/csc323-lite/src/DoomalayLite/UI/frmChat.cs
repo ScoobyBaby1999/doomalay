@@ -17,6 +17,7 @@ namespace DoomalayLite.UI
     {
         private ChatService _chat;
         private bool _busy;
+        private bool _switchingProvider;
 
         public frmChat()
         {
@@ -57,15 +58,14 @@ namespace DoomalayLite.UI
                 return; // guards: no empty sends, no double-fire while thinking
             }
 
-            _busy = true;
             SetBusy(true);
-            txtInput.Clear();
-            AppendLine("You: " + text);
-            AppendLine(_chat.ProviderName + " is thinking...");
-
             string failure = null;
             try
             {
+                txtInput.Clear();
+                AppendLine("You: " + text);
+                AppendLine(_chat.ProviderName + " is thinking...");
+
                 // The network call runs off the UI thread; the form stays alive.
                 ChatReply reply = await Task.Run(() => _chat.SendUserMessage(text));
                 AppendLine("Bot: " + reply.Content);
@@ -81,6 +81,9 @@ namespace DoomalayLite.UI
             }
             finally
             {
+                // SetBusy(false) clears _busy too, so the very next message can
+                // be sent. The whole turn lives inside try/finally: the busy
+                // state can never get stuck again.
                 SetBusy(false);
                 RefreshTranscript(); // transcript re-renders from the real history
                 if (failure != null)
@@ -88,7 +91,7 @@ namespace DoomalayLite.UI
                     AppendLine("[error] " + failure);
                     AppendLine("");
                 }
-                txtInput.Focus();
+                ActiveControl = txtInput; // keyboard focus back in the input box
             }
         }
 
@@ -97,10 +100,15 @@ namespace DoomalayLite.UI
             _chat.Reset();
             RefreshTranscript();
             UpdateProviderStatus();
+            ActiveControl = txtInput;
         }
 
         private void txtInput_KeyDown(object sender, KeyEventArgs e)
         {
+            // AcceptsReturn = true (Designer) makes plain Enter an input key of
+            // the multiline box, so this handler is the live Enter path while
+            // typing; the form's AcceptButton covers Enter when another control
+            // has the focus. Both roads end in btnSend_Click exactly once.
             if (e.KeyCode == Keys.Enter && !e.Shift)
             {
                 e.SuppressKeyPress = true; // no ding, no newline
@@ -129,10 +137,17 @@ namespace DoomalayLite.UI
             txtChat.AppendText(text + Environment.NewLine);
         }
 
+        /// <summary>
+        /// ONE place owns the busy state: the guard flag and the visuals are
+        /// always changed together, so they can never disagree. The input box
+        /// switches to ReadOnly (not Enabled = false) so it never loses
+        /// keyboard focus while a reply is being generated.
+        /// </summary>
         private void SetBusy(bool busy)
         {
+            _busy = busy;
             btnSend.Enabled = !busy;
-            txtInput.Enabled = !busy;
+            txtInput.ReadOnly = busy;
             UseWaitCursor = busy;
             Text = busy ? "Doomalay Lite - thinking..." : "Doomalay Lite";
         }
@@ -148,10 +163,21 @@ namespace DoomalayLite.UI
             status.Text = "No API key. Set OPENROUTER_API_KEY (env var), or use the offline Echo provider.";
 
             // Graceful degradation: without a key, land on the offline twin.
-            if (cboProvider.SelectedItem != null
+            // The guard flag keeps the selection change from re-entering this
+            // method through cboProvider_SelectedIndexChanged.
+            if (!_switchingProvider
+                && cboProvider.SelectedItem != null
                 && (ProviderKind)cboProvider.SelectedItem == ProviderKind.OpenRouter)
             {
-                cboProvider.SelectedItem = ProviderKind.Echo; // re-enters via SelectedIndexChanged
+                _switchingProvider = true;
+                try
+                {
+                    cboProvider.SelectedItem = ProviderKind.Echo; // re-enters via SelectedIndexChanged
+                }
+                finally
+                {
+                    _switchingProvider = false;
+                }
             }
         }
     }

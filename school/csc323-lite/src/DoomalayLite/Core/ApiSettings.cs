@@ -1,8 +1,9 @@
 namespace DoomalayLite.Core
 {
-    /// 
-    /// Endpoint, model, key, timeout and the system prompts
-    /// 
+    /// <summary>
+    /// Endpoint, model, key, timeout and the system prompt.
+    /// Demonstrates constructor overloading with this() chaining (course Ch.3).
+    /// </summary>
     public class ApiSettings
     {
         public string EndpointUrl { get; set; }
@@ -15,22 +16,27 @@ namespace DoomalayLite.Core
 
         public string SystemPrompt { get; set; }
 
-        /// OpenRouter endpoint + a reliable model and a compromised api key. 
+        /// <summary>
+        /// Defaults: OpenRouter endpoint + the one pinned model. The key starts
+        /// empty - real keys NEVER live in source control (env var only).
+        /// </summary>
         public ApiSettings()
         {
             EndpointUrl = "https://openrouter.ai/api/v1/chat/completions";
             ModelName = "recursive/flint-v1.0:free";
             TimeoutSeconds = 90;
-            ApiKey = "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";
+            ApiKey = "";
             SystemPrompt = "You are Doomalay Lite, a concise and helpful assistant. Answer briefly.";
         }
 
+        /// <summary>Chains to the parameterless constructor, then applies the key.</summary>
         public ApiSettings(string apiKey)
             : this()
         {
             ApiKey = apiKey;
         }
 
+        /// <summary>Chains further: key plus an explicit model name.</summary>
         public ApiSettings(string apiKey, string modelName)
             : this(apiKey)
         {

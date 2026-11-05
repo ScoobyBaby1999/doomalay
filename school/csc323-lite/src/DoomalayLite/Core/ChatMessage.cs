@@ -2,9 +2,10 @@ using System;
 
 namespace DoomalayLite.Core
 {
-    /// 
-    /// One message in the conversation 
-    /// 
+    /// <summary>
+    /// One message in the conversation (doomalay lineage: a chat row).
+    /// Demonstrates constructor overloading and method overriding (ToString).
+    /// </summary>
     public class ChatMessage
     {
         private DateTime _createdAt;
@@ -13,19 +14,19 @@ namespace DoomalayLite.Core
 
         public string Content { get; set; }
 
-        /// read-only
+        /// <summary>Read-only property backed by a private field.</summary>
         public DateTime CreatedAt
         {
             get { return _createdAt; }
         }
 
-        /// prototype - defaults the role to User 
+        /// <summary>Convenience constructor: defaults the role to User.</summary>
         public ChatMessage(string content)
             : this(ChatRole.User, content)
         {
         }
 
-        /// the full constructor
+        /// <summary>Full constructor.</summary>
         public ChatMessage(ChatRole role, string content)
         {
             Role = role;

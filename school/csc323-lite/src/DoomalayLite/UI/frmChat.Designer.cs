@@ -104,6 +104,7 @@ namespace DoomalayLite.UI
             //
             // txtInput
             //
+            this.txtInput.AcceptsReturn = true;
             this.txtInput.Dock = System.Windows.Forms.DockStyle.Fill;
             this.txtInput.Font = new Font("Segoe UI", 10F);
             this.txtInput.Location = new System.Drawing.Point(10, 8);
