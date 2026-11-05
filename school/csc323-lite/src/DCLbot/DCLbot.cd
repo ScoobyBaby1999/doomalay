@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <ClassDiagram MajorVersion="1" MinorVersion="1">
   <Font Name="Segoe UI" Size="9" />
-  <!-- DCLbot (CSC 323) - hand-authored for Visual Studio Class Designer.
-       Open in VS: double-click this file inside the DCLbot project.
-       If a shape needs re-binding to code, right-click the designer surface and
-       choose "Sync" - Visual Studio re-reads the source files automatically. -->
+  <!-- Class diagram for the DCLbot project. Open this file inside Visual
+       Studio (double-click it in the Solution Explorer) to see the diagram.
+       If a shape looks out of date, right-click the designer surface and
+       choose "Sync" - Visual Studio re-reads the source files. -->
   <Class Name="DCLbot.Core.ChatRole" Collapsed="true">
     <Position X="0.5" Y="10.5" />
     <TypeIdentifier>

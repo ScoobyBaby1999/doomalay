@@ -5,15 +5,14 @@ using DCLbot.Core;
 
 namespace DCLbot.Providers
 {
-    /// <summary>
-    /// Abstract base (course key concept: abstraction) implementing the shared
-    /// TEMPLATE METHOD Send(): guard inputs, validate readiness, measure the
-    /// elapsed time and translate unexpected failures into ProviderException.
-    /// Subclasses only fill in the provider-specific blanks.
-    /// </summary>
+    // The shared part of every provider. Send() does the checks that
+    // are the same for everyone (is there anything to send, is the
+    // provider ready), measures the time, and turns any unexpected
+    // crash into a ProviderException so the window only ever has to
+    // deal with one kind of error.
     public abstract class ChatProviderBase : IChatProvider, IProviderInfo
     {
-        /// <summary>Shared configuration, visible to subclasses only (#).</summary>
+        // The settings every provider needs, available to subclasses only.
         protected ApiSettings Settings { get; }
 
         public string DisplayName
@@ -31,9 +30,7 @@ namespace DCLbot.Providers
             Settings = settings;
         }
 
-        /// <summary>
-        /// The template method: fixed skeleton, provider-specific blanks below.
-        /// </summary>
+        // Check everything first, then let the subclass do the real work.
         public ChatReply Send(IReadOnlyList<ChatMessage> messages)
         {
             if (messages == null || messages.Count == 0)
@@ -55,7 +52,7 @@ namespace DCLbot.Providers
             }
             catch (ProviderException)
             {
-                throw; // domain errors pass through untouched
+                throw; // my own errors already have a good message
             }
             catch (Exception ex)
             {
@@ -63,13 +60,13 @@ namespace DCLbot.Providers
             }
         }
 
-        /// <summary>Blank 1: how to actually obtain a reply.</summary>
+        // Each provider fills this in with its own way of getting an answer.
         protected abstract ChatReply DoSend(IReadOnlyList<ChatMessage> messages);
 
-        /// <summary>Blank 2: the human-readable provider name.</summary>
+        // The name shown to the user in the window.
         protected abstract string GetDisplayName();
 
-        /// <summary>Blank 3 (optional): whether this provider can run now.</summary>
+        // Whether this provider can be used right now.
         protected virtual bool ValidateSettings()
         {
             return true;

@@ -2,10 +2,8 @@ using System;
 
 namespace DCLbot.Core
 {
-    /// <summary>
-    /// One message in the conversation (doomalay lineage: a chat row).
-    /// Demonstrates constructor overloading and method overriding (ToString).
-    /// </summary>
+    // One message in the chat. It remembers who sent it (the role),
+    // the text itself, and the time it was created.
     public class ChatMessage
     {
         private DateTime _createdAt;
@@ -14,19 +12,19 @@ namespace DCLbot.Core
 
         public string Content { get; set; }
 
-        /// <summary>Read-only property backed by a private field.</summary>
+        // The time can be read from outside but not changed.
         public DateTime CreatedAt
         {
             get { return _createdAt; }
         }
 
-        /// <summary>Convenience constructor: defaults the role to User.</summary>
+        // Shortcut constructor: most messages come from the user.
         public ChatMessage(string content)
             : this(ChatRole.User, content)
         {
         }
 
-        /// <summary>Full constructor.</summary>
+        // Full constructor when I need to set the role myself.
         public ChatMessage(ChatRole role, string content)
         {
             Role = role;
@@ -34,6 +32,7 @@ namespace DCLbot.Core
             _createdAt = DateTime.Now;
         }
 
+        // Shows the message as one line, e.g. "[User] hello".
         public override string ToString()
         {
             return string.Format("[{0}] {1}", Role, Content);

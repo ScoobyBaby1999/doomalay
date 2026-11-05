@@ -4,11 +4,9 @@ using DCLbot.Core;
 
 namespace DCLbot.Providers
 {
-    /// <summary>
-    /// The offline twin: never touches the network, so the classroom demo works
-    /// without Wi-Fi and never dies on free-tier rate limits. Liskov proof:
-    /// it is perfectly substitutable for OpenRouterProvider behind IChatProvider.
-    /// </summary>
+    // The offline provider. It never touches the internet - it just
+    // makes up a simple answer from the message. This way the app
+    // still works with no Wi-Fi or no API key.
     public class EchoProvider : ChatProviderBase
     {
         private Random _random;
@@ -24,7 +22,7 @@ namespace DCLbot.Providers
             return "Echo (offline)";
         }
 
-        /// <summary>Echo is always ready - it needs nothing from the network.</summary>
+        // Echo needs nothing, so it is always ready.
         protected override bool ValidateSettings()
         {
             return true;
@@ -37,7 +35,8 @@ namespace DCLbot.Providers
             return new ChatReply(PickReply(question), "echo-offline");
         }
 
-        /// <summary>Keyword-flavoured canned replies, with a random fallback.</summary>
+        // Look at the words in the message and pick a fitting answer.
+        // If nothing matches, return one of a few random lines.
         private string PickReply(string input)
         {
             string lower = input.ToLowerInvariant();
@@ -69,6 +68,7 @@ namespace DCLbot.Providers
             return fallbacks[_random.Next(fallbacks.Length)];
         }
 
+        // Counts the words by watching when we step over a space.
         private static int CountWords(string text)
         {
             int words = 0;

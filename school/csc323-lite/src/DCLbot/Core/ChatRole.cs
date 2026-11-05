@@ -1,8 +1,6 @@
 namespace DCLbot.Core
 {
-    /// <summary>
-    /// Who authored a chat message. (enum - course key concept)
-    /// </summary>
+    // Who wrote a message: the system prompt, the user, or the bot itself.
     public enum ChatRole
     {
         System,

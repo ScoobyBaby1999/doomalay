@@ -1,15 +1,8 @@
 namespace DCLbot.Core
 {
-    /// <summary>
-    /// Endpoint, model, key, timeout and the system prompt.
-    /// Demonstrates constructor overloading with this() chaining (course Ch.3).
-    ///
-    /// v0.8.0 key rules: real keys NEVER live in source control (v0.7.1 purged
-    /// the accidentally committed one) - the OPENROUTER_API_KEY environment
-    /// variable is the supported path and always wins when set. A blank/null/
-    /// whitespace key argument means "no override - keep the default", so a
-    /// missing env var can never crash or corrupt the configuration.
-    /// </summary>
+    // All the settings the bot needs to talk to the API in one place:
+    // the web address, the model, the API key, a timeout and the
+    // system prompt.
     public class ApiSettings
     {
         public string EndpointUrl { get; set; }
@@ -22,10 +15,10 @@ namespace DCLbot.Core
 
         public string SystemPrompt { get; set; }
 
-        /// <summary>
-        /// Defaults: OpenRouter endpoint + the one pinned model. The key starts
-        /// empty - real keys NEVER live in source control (env var only).
-        /// </summary>
+        // Default settings: the OpenRouter address and the free model
+        // I picked. The key starts empty because keys should never be
+        // written inside the code - I read mine from an environment
+        // variable instead.
         public ApiSettings()
         {
             EndpointUrl = "https://openrouter.ai/api/v1/chat/completions";
@@ -35,11 +28,11 @@ namespace DCLbot.Core
             SystemPrompt = "You are DCLbot, a concise and helpful assistant. Answer briefly.";
         }
 
+        // An empty key means "no key was given", so I keep the default
+        // instead of overwriting the settings with nothing.
         public ApiSettings(string apiKey)
             : this()
         {
-            // v0.8.0: only a REAL key overrides; blank means "nothing
-            // supplied" (the env-var-missing case) and keeps the default.
             if (!string.IsNullOrWhiteSpace(apiKey))
             {
                 ApiKey = apiKey;

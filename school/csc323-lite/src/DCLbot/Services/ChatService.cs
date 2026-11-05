@@ -4,11 +4,11 @@ using DCLbot.Providers;
 
 namespace DCLbot.Services
 {
-    /// <summary>
-    /// SINGLETON + FACADE: exactly one chat brain per application instance, and
-    /// the ONLY type the UI needs to know. It hides the Conversation, the
-    /// provider Strategy, the factory and every DTO behind a 4-method surface.
-    /// </summary>
+    // The middle man between the window and everything else. The window
+    // only talks to this one class - it never touches the providers or
+    // the message classes directly. It keeps the conversation and the
+    // current provider, and there is only ever one instance of it in
+    // the whole app.
     public class ChatService
     {
         private static ChatService _instance;
@@ -19,7 +19,7 @@ namespace DCLbot.Services
         private IProviderInfo _providerInfo;
         private ApiSettings _settings;
 
-        /// <summary>Private constructor: only GetInstance() can build us.</summary>
+        // Private so nobody else can make a second one.
         private ChatService()
         {
             _settings = new ApiSettings(LoadApiKey());
@@ -28,6 +28,7 @@ namespace DCLbot.Services
             SeedSystemPrompt();
         }
 
+        // Always returns the same instance.
         public static ChatService GetInstance()
         {
             lock (_lock)
@@ -60,10 +61,8 @@ namespace DCLbot.Services
             get { return _settings.ModelName; }
         }
 
-        /// <summary>
-        /// One full turn: remember the user line, ask the active provider with
-        /// the WHOLE history (memory), remember the answer, return it.
-        /// </summary>
+        // One full turn: save what the user typed, ask the provider with
+        // the WHOLE history (so it remembers), save the answer, return it.
         public ChatReply SendUserMessage(string text)
         {
             if (string.IsNullOrWhiteSpace(text))
@@ -77,21 +76,18 @@ namespace DCLbot.Services
             return reply;
         }
 
-        /// <summary>
-        /// Strategy switch at runtime. The provider object is reached through
-        /// two narrow interfaces at once (send vs. info) - Interface Segregation.
-        /// v0.8.0: switching is ALWAYS honored - even a not-ready provider can
-        /// be selected; it reports a clean domain error on the next send
-        /// instead of bouncing the selection back.
-        /// </summary>
+        // Swap the current provider when the user picks another one in
+        // the window. The provider might also give status information,
+        // which I keep next to it for the status bar.
         public void SwitchProvider(ProviderKind kind)
         {
             IChatProvider created = new ProviderFactory(_settings).Create(kind);
             _provider = created;
-            _providerInfo = created as IProviderInfo; // 'as' operator: Ch.3
+            _providerInfo = created as IProviderInfo;
         }
 
-        /// <summary>Starts a fresh conversation (system prompt re-seeded).</summary>
+        // Start a fresh chat: forget everything and put the system
+        // prompt back in.
         public void Reset()
         {
             _conversation.Clear();
@@ -103,11 +99,8 @@ namespace DCLbot.Services
             _conversation.Add(new ChatMessage(ChatRole.System, _settings.SystemPrompt));
         }
 
-        /// <summary>
-        /// Key resolution (v0.8.0): the OPENROUTER_API_KEY environment variable
-        /// wins when it is set; a blank result means "no override", and
-        /// ApiSettings then keeps its built-in default key.
-        /// </summary>
+        // I read the API key from the OPENROUTER_API_KEY environment
+        // variable, because keys do not belong inside the code.
         private static string LoadApiKey()
         {
             string key = Environment.GetEnvironmentVariable("OPENROUTER_API_KEY");

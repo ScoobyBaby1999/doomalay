@@ -3,11 +3,8 @@ using DCLbot.Core;
 
 namespace DCLbot.Providers
 {
-    /// <summary>
-    /// The ONE ability every chat provider must have (Interface Segregation:
-    /// kept deliberately small). Interchangeable implementations make this a
-    /// Strategy pattern and the backbone of the Liskov substitution proof.
-    /// </summary>
+    // The one thing every provider must be able to do: take the
+    // conversation so far and give back one reply.
     public interface IChatProvider
     {
         ChatReply Send(IReadOnlyList<ChatMessage> messages);

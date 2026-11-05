@@ -2,10 +2,9 @@ using System.Text.Json.Serialization;
 
 namespace DCLbot.Providers.Dto
 {
-    /// <summary>
-    /// One wire-format message: {"role":"...","content":"..."}.
-    /// Reasoning is response-only (quirk field of reasoning models).
-    /// </summary>
+    // One message in the JSON format: {"role":"...","content":"..."}.
+    // "reasoning" only appears in answers from thinking models, so I
+    // never set it myself when sending.
     public class RequestMessage
     {
         [JsonPropertyName("role")]

@@ -10,18 +10,17 @@ using DCLbot.Providers.Dto;
 
 namespace DCLbot.Providers
 {
-    /// <summary>
-    /// ADAPTER (GoF): translates between our clean domain world
-    /// (IChatProvider / ChatMessage / ChatReply) and OpenRouter's REST/JSON
-    /// contract (ChatCompletionRequest / ChatCompletionResponse DTOs).
-    /// Also carries the "provider quirk" idea ported from doomalay's
-    /// provider_quirks.json: reasoning models can answer with empty content.
-    /// </summary>
+    // The real provider. It sends the whole conversation to OpenRouter
+    // over HTTPS and reads the answer back from the JSON it returns.
     public class OpenRouterProvider : ChatProviderBase
     {
+        // The JSON from OpenRouter uses the same names with different
+        // capitals, so I ignore the case when reading.
         private static readonly JsonSerializerOptions ReadOptions =
             new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
 
+        // Fields that are null (like "reasoning" in a request) are
+        // simply left out of the JSON I send.
         private static readonly JsonSerializerOptions WriteOptions =
             new JsonSerializerOptions { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };
 
@@ -39,7 +38,7 @@ namespace DCLbot.Providers
             return "OpenRouter";
         }
 
-        /// <summary>Ready only when a key was configured.</summary>
+        // Only ready when a key was actually set.
         protected override bool ValidateSettings()
         {
             return !string.IsNullOrWhiteSpace(Settings.ApiKey);
@@ -53,7 +52,7 @@ namespace DCLbot.Providers
         }
 
         // ------------------------------------------------------------------
-        // domain -> wire
+        // my classes -> the JSON OpenRouter wants
         // ------------------------------------------------------------------
 
         private ChatCompletionRequest BuildRequest(IReadOnlyList<ChatMessage> messages)
@@ -65,7 +64,7 @@ namespace DCLbot.Providers
             };
         }
 
-        /// <summary>Static so the smoke suite can pin the exact wire shape.</summary>
+        // Static so I can test the exact JSON shape without internet.
         internal static List<RequestMessage> MapMessages(IReadOnlyList<ChatMessage> messages)
         {
             List<RequestMessage> mapped = new List<RequestMessage>();
@@ -90,7 +89,7 @@ namespace DCLbot.Providers
         }
 
         // ------------------------------------------------------------------
-        // HTTP
+        // the actual web call
         // ------------------------------------------------------------------
 
         private string Post(ChatCompletionRequest request)
@@ -110,8 +109,7 @@ namespace DCLbot.Providers
 
                     if ((int)response.StatusCode == 401)
                     {
-                        // v0.8.0: actionable guidance - this exact text tells the
-                        // user what to do instead of a bare status code.
+                        // Bad key. Say what to do instead of showing a bare code.
                         throw new ProviderException(
                             "OpenRouter rejected the API key (401). The key may be wrong, revoked or "
                             + "expired - create a fresh one at https://openrouter.ai/keys, set the "
@@ -141,10 +139,10 @@ namespace DCLbot.Providers
         }
 
         // ------------------------------------------------------------------
-        // wire -> domain
+        // the JSON OpenRouter sends back -> my classes
         // ------------------------------------------------------------------
 
-        /// <summary>Static + internal so the smoke suite can test the quirk paths offline.</summary>
+        // Static so I can test the reading part offline with saved JSON.
         internal static ChatReply ParseResponse(string json)
         {
             ChatCompletionResponse parsed;
@@ -165,9 +163,9 @@ namespace DCLbot.Providers
             Choice best = parsed.Choices[0];
             string content = (best.Message == null) ? null : best.Message.Content;
 
-            // Provider quirk (ported from doomalay provider_quirks.json):
-            // reasoning models may spend the whole token budget thinking and
-            // return empty content while the answer sits in "reasoning".
+            // Some thinking models answer with an empty "content" but put
+            // their thoughts in the "reasoning" field. When that happens I
+            // show a short piece of the reasoning instead of failing.
             if (string.IsNullOrWhiteSpace(content))
             {
                 string reasoning = (best.Message == null) ? null : best.Message.Reasoning;

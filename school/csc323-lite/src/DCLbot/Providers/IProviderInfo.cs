@@ -1,9 +1,7 @@
 namespace DCLbot.Providers
 {
-    /// <summary>
-    /// Status-only surface (Interface Segregation): consumers that only need
-    /// to display provider metadata never depend on IChatProvider.
-    /// </summary>
+    // Just the status side of a provider: its name and whether it can
+    // be used right now. The main window uses this for the status bar.
     public interface IProviderInfo
     {
         string DisplayName { get; }

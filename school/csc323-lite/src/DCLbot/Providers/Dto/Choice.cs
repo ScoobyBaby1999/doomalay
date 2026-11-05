@@ -2,9 +2,8 @@ using System.Text.Json.Serialization;
 
 namespace DCLbot.Providers.Dto
 {
-    /// <summary>
-    /// One completion alternative. We always read choices[0].
-    /// </summary>
+    // One possible answer. OpenRouter can send several, but I always
+    // use the first one.
     public class Choice
     {
         [JsonPropertyName("index")]

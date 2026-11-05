@@ -1,8 +1,6 @@
 namespace DCLbot.Providers
 {
-    /// <summary>
-    /// Selects a chat provider implementation at runtime (enum - course key concept).
-    /// </summary>
+    // The two providers the user can pick from in the window.
     public enum ProviderKind
     {
         OpenRouter,

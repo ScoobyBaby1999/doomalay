@@ -1,9 +1,7 @@
 namespace DCLbot.Core
 {
-    /// <summary>
-    /// Domain-level answer returned by any IChatProvider.
-    /// DTOs from the vendor world never leak past the provider layer (Adapter).
-    /// </summary>
+    // The answer that comes back from a provider: the text itself,
+    // which model answered, and how many seconds it took.
     public class ChatReply
     {
         public string Content { get; set; }

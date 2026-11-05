@@ -7,17 +7,12 @@ using DCLbot.Services;
 
 namespace DCLbot.Smoke
 {
-    /// <summary>
-    /// Zero-dependency smoke suite. No test framework - a tiny harness only,
-    /// so the course project keeps its dependency list clean.
-    ///
-    ///   dotnet run --project tests/DCLbot.Smoke              (offline)
-    ///   dotnet run --project tests/DCLbot.Smoke -- live      (OpenRouter, needs OPENROUTER_API_KEY)
-    ///
-    /// The live section additionally honors LIVE_WIRE_URL / LIVE_WIRE_KEY /
-    /// LIVE_WIRE_MODEL: point them at ANY OpenAI-compatible endpoint to prove
-    /// the adapter while the OpenRouter key is being replaced.
-    /// </summary>
+    // My little test program. I did not use a test framework - just a
+    // Check helper that counts passes and fails - so the project needs
+    // no extra packages.
+    //
+    //   dotnet run --project tests/DCLbot.Smoke              (offline)
+    //   dotnet run --project tests/DCLbot.Smoke -- live      (needs OPENROUTER_API_KEY)
     internal static class Program
     {
         private static int _passed;
@@ -99,7 +94,7 @@ namespace DCLbot.Smoke
             Check("Clear resets the history", bounded.Count == 0);
 
             Console.WriteLine();
-            Console.WriteLine("[core] ApiSettings (v0.8.0 key rules)");
+            Console.WriteLine("[core] ApiSettings");
 
             ApiSettings defaults = new ApiSettings();
             Check("default endpoint is OpenRouter chat completions",
@@ -109,9 +104,7 @@ namespace DCLbot.Smoke
             Check("default timeout is sane", defaults.TimeoutSeconds >= 30);
             Check("default key is empty (keys never live in source control)", defaults.ApiKey == "");
 
-            // v0.8.0 regression pins: a blank key argument must never throw and
-            // never corrupt the settings (the env-var-missing case used to
-            // wipe keys through the old ctor - the combo-hijack companion bug).
+            // A blank or missing key should not change anything.
             Check("blank string ctor stays keyless", new ApiSettings("").ApiKey == "");
             Check("whitespace ctor stays keyless", new ApiSettings("   ").ApiKey == "");
             Check("null ctor stays keyless", new ApiSettings(null).ApiKey == "");
@@ -138,7 +131,7 @@ namespace DCLbot.Smoke
         // Provider package (offline only - no network in this section)
         // ------------------------------------------------------------------
 
-        /// <summary>Test stub that always explodes (template-method error wrapping).</summary>
+        // A fake provider that always crashes, to test the error handling.
         private class ExplodingProvider : ChatProviderBase
         {
             public ExplodingProvider(ApiSettings settings) : base(settings) { }
@@ -154,7 +147,7 @@ namespace DCLbot.Smoke
             }
         }
 
-        /// <summary>Test stub that always answers (LSP substitution proof).</summary>
+        // A fake provider that always answers, to test the normal path.
         private class LoyalProvider : ChatProviderBase
         {
             public LoyalProvider(ApiSettings settings) : base(settings) { }
@@ -188,8 +181,7 @@ namespace DCLbot.Smoke
             IChatProvider openRouter = factory.Create(ProviderKind.OpenRouter);
             Check("factory creates OpenRouterProvider for kind OpenRouter", openRouter is OpenRouterProvider);
 
-            // v0.7.1+ semantics: the keyless state is the DEFAULT (the
-            // leaked built-in key was purged); a blank ctor argument keeps it.
+            // Without a key, OpenRouter should not be ready.
             IProviderInfo routerInfo = new ProviderFactory(new ApiSettings()).Create(ProviderKind.OpenRouter) as IProviderInfo;
             Check("OpenRouter NOT ready without a key", routerInfo != null && !routerInfo.IsReady);
             IProviderInfo keyedInfo = factory.Create(ProviderKind.OpenRouter) as IProviderInfo;
@@ -208,7 +200,7 @@ namespace DCLbot.Smoke
             Check("echo greets on 'hello'", greeting.Content.Contains("Hello"));
 
             Console.WriteLine();
-            Console.WriteLine("[providers] ChatProviderBase template method");
+            Console.WriteLine("[providers] ChatProviderBase error handling");
 
             ExplodingProvider bomber = new ExplodingProvider(settings);
             bool wrappedCleanly = false;
@@ -225,8 +217,8 @@ namespace DCLbot.Smoke
 
             LoyalProvider loyal = new LoyalProvider(settings);
             ChatReply loyalReply = loyal.Send(BuildSampleHistory());
-            Check("loyal stub answer flows through template", loyalReply.Content == "loyal answer");
-            Check("template stamps elapsed seconds", loyalReply.ElapsedSeconds >= 0);
+            Check("loyal stub answer comes back fine", loyalReply.Content == "loyal answer");
+            Check("elapsed seconds get filled in", loyalReply.ElapsedSeconds >= 0);
 
             bool rejectedEmpty = false;
             try
@@ -251,9 +243,10 @@ namespace DCLbot.Smoke
             Check("keyless OpenRouter send fails with a clean not-ready error", rejectedNotReady);
 
             Console.WriteLine();
-            Console.WriteLine("[providers] Liskov substitution");
+            Console.WriteLine("[providers] both providers behind the interface");
 
-            // Both real providers and stubs behind ONE abstraction reference:
+            // Put different providers in the same variable type and see
+            // that they all work the same way:
             IChatProvider[] pool = { factory.Create(ProviderKind.Echo), new LoyalProvider(settings) };
             bool allAnswered = true;
             foreach (IChatProvider provider in pool)
@@ -261,7 +254,7 @@ namespace DCLbot.Smoke
                 ChatReply r = provider.Send(BuildSampleHistory());
                 allAnswered = allAnswered && !string.IsNullOrEmpty(r.Content);
             }
-            Check("every IChatProvider substitute answers identically-shaped", allAnswered);
+            Check("every provider answers through the same interface", allAnswered);
         }
 
         // ------------------------------------------------------------------
@@ -327,17 +320,17 @@ namespace DCLbot.Smoke
         }
 
         // ------------------------------------------------------------------
-        // Live suite (network + real key). Run with:  -- live
+        // Live tests (need internet and a real key). Run with:  -- live
         // ------------------------------------------------------------------
 
         private static void RunLiveTests()
         {
             Console.WriteLine();
-            Console.WriteLine("[live] foreign OpenAI-compatible endpoint (LIVE_WIRE_*)");
+            Console.WriteLine("[live] other OpenAI-compatible endpoint (LIVE_WIRE_*)");
 
-            // v0.8.0: prove the adapter against ANY OpenAI-compatible endpoint
-            // while the OpenRouter key is being replaced. Reads env vars only -
-            // no key ever enters source control.
+            // I can also point the tests at a different OpenAI-compatible
+            // site with these three variables. The key always comes from the
+            // environment, never from the code.
             string wireUrl = Environment.GetEnvironmentVariable("LIVE_WIRE_URL");
             string wireKey = Environment.GetEnvironmentVariable("LIVE_WIRE_KEY");
             string wireModel = Environment.GetEnvironmentVariable("LIVE_WIRE_MODEL");
@@ -369,10 +362,8 @@ namespace DCLbot.Smoke
             if (string.IsNullOrWhiteSpace(key))
             {
                 Console.WriteLine();
-                Console.WriteLine("[live] OPENROUTER_API_KEY not set - live OpenRouter suite skipped");
-                Console.WriteLine("       (set it to a fresh key from https://openrouter.ai/keys to run");
-                Console.WriteLine("        the live OpenRouter pins; the LIVE_WIRE_* proof above already");
-                Console.WriteLine("        validates the same adapter code path)");
+                Console.WriteLine("[live] OPENROUTER_API_KEY not set - live OpenRouter tests skipped");
+                Console.WriteLine("       (set it to a key from https://openrouter.ai/keys to run them)");
                 return;
             }
 
@@ -403,17 +394,17 @@ namespace DCLbot.Smoke
             {
                 badRejected = ex.Message.Contains("401") && ex.Message.Contains("openrouter.ai/keys");
             }
-            Check("wrong key surfaces a clean, actionable 401 domain error", badRejected);
+            Check("wrong key gives a clear 401 error", badRejected);
         }
 
         // ------------------------------------------------------------------
-        // ChatService (singleton facade) - offline behaviour only
+        // ChatService - offline behaviour only
         // ------------------------------------------------------------------
 
         private static void RunServiceTests()
         {
             Console.WriteLine();
-            Console.WriteLine("[service] ChatService singleton");
+            Console.WriteLine("[service] ChatService");
 
             ChatService first = ChatService.GetInstance();
             ChatService second = ChatService.GetInstance();
@@ -441,8 +432,7 @@ namespace DCLbot.Smoke
             Check("second turn still answered", !string.IsNullOrWhiteSpace(secondReply.Content));
             Check("history keeps growing across turns", first.History.Count == before + 4);
 
-            // v0.8.0 regression: many sends in a row must all land (the
-            // "only one message then the app dies" report).
+            // Several sends in a row should all work.
             for (int i = 0; i < 5; i++)
             {
                 first.SendUserMessage("stress turn " + i);
@@ -460,8 +450,7 @@ namespace DCLbot.Smoke
             first.Reset();
             Check("reset leaves only the system prompt", first.History.Count == 1);
 
-            // v0.8.0: readiness follows the env var (blank = keyless, and the
-            // selection stays FINAL either way - the combo-hijack removal).
+            // OpenRouter is only ready when a key was set.
             string envKey = Environment.GetEnvironmentVariable("OPENROUTER_API_KEY");
             bool expectedReady = !string.IsNullOrWhiteSpace(envKey);
             first.SwitchProvider(ProviderKind.OpenRouter);
@@ -480,7 +469,7 @@ namespace DCLbot.Smoke
             {
                 switchNeverThrows = false;
             }
-            Check("rapid provider switching never throws (selection is final)", switchNeverThrows);
+            Check("rapid provider switching never throws", switchNeverThrows);
             Check("provider settles on the last choice", first.ProviderName == "Echo (offline)");
         }
 

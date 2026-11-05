@@ -3,16 +3,14 @@ using System.Text;
 
 namespace DCLbot.Core
 {
-    /// <summary>
-    /// The in-memory chat history (doomalay lineage: engine/internal/store/chats.go).
-    /// Owns the List&lt;ChatMessage&gt; collection and renders the transcript.
-    /// </summary>
+    // The chat history. It keeps every message in a list and can also
+    // draw the whole conversation as one big text for the chat window.
     public class Conversation
     {
         private List<ChatMessage> _messages;
         private int _maxMessages;
 
-        /// <summary>Defaults to keeping the last 40 messages.</summary>
+        // By default I keep the last 40 messages.
         public Conversation()
             : this(40)
         {
@@ -34,7 +32,7 @@ namespace DCLbot.Core
             get { return _maxMessages; }
         }
 
-        /// <summary>Exposed read-only so callers cannot bypass Add/Trim.</summary>
+        // A read-only view, so nobody can change my list from outside.
         public IReadOnlyList<ChatMessage> Messages
         {
             get { return _messages; }
@@ -61,7 +59,7 @@ namespace DCLbot.Core
             _messages.Clear();
         }
 
-        /// <summary>foreach loop (course key concept) building the visible transcript.</summary>
+        // Builds the text shown in the chat window, one line per message.
         public string Render()
         {
             StringBuilder sb = new StringBuilder();
@@ -72,7 +70,7 @@ namespace DCLbot.Core
             return sb.ToString();
         }
 
-        /// <summary>Keeps memory bounded: drops the oldest messages first.</summary>
+        // If the list gets too long, drop the oldest messages first.
         private void Trim()
         {
             while (_messages.Count > _maxMessages)

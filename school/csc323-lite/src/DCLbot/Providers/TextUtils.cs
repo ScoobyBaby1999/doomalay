@@ -1,10 +1,9 @@
 namespace DCLbot.Providers
 {
-    /// <summary>
-    /// Shared string helpers (DRY: one home instead of copies per provider).
-    /// </summary>
+    // Small string helpers that more than one class needs.
     internal static class TextUtils
     {
+        // Cuts a long text and adds "..." at the end.
         public static string Truncate(string text, int max)
         {
             if (text == null || text.Length <= max)

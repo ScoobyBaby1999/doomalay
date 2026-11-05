@@ -3,10 +3,8 @@ using System.Windows.Forms;
 
 namespace DCLbot
 {
-    /// <summary>
-    /// Application entry point (composition root).
-    /// Builds the object graph and starts the Windows Forms message loop.
-    /// </summary>
+    // Where the program starts. It gets the window ready and starts
+    // the Windows Forms message loop.
     internal static class Program
     {
         [STAThread]
@@ -15,12 +13,9 @@ namespace DCLbot
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
 
-            // v0.8.0 - the safety net: an unexpected exception on the UI thread
-            // (including inside async/await continuations) now shows a message
-            // box and the application KEEPS RUNNING. Before this, one bad
-            // hiccup anywhere silently killed the whole process - the reported
-            // "app completely exits after one message" class of failure is
-            // structurally impossible now.
+            // If something unexpected goes wrong while the window is
+            // running, show a message and keep going instead of closing
+            // the whole app.
             Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
             Application.ThreadException += (sender, e) =>
             {

@@ -3,9 +3,8 @@ using System.Text.Json.Serialization;
 
 namespace DCLbot.Providers.Dto
 {
-    /// <summary>
-    /// Response of POST /api/v1/chat/completions - only the fields we consume.
-    /// </summary>
+    // The JSON OpenRouter sends back. I only kept the fields I
+    // actually read.
     public class ChatCompletionResponse
     {
         [JsonPropertyName("id")]

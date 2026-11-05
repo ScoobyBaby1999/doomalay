@@ -4,11 +4,8 @@ using DCLbot.Core;
 
 namespace DCLbot.Providers
 {
-    /// <summary>
-    /// The single composition point: turns a ProviderKind into a live provider.
-    /// Adding a provider tomorrow = one new case here, nothing else changes
-    /// (Open-Closed in practice).
-    /// </summary>
+    // Makes whichever provider the user asked for. If I ever add a new
+    // provider, it is just one more case here.
     public class ProviderFactory
     {
         private ApiSettings _settings;
