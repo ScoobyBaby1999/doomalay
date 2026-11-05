@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DoomalayLite UML class diagram generator.
+DCLbot UML class diagram generator.
 
 Single source of truth: the CLASSES / RELATIONS spec below carries a "since"
 version per element. Rendering a given version shows exactly the types that
@@ -39,9 +39,9 @@ C = dict(
 # enum values ride in attrs with vis="" e.g. ("", False, "System")
 CLASSES = [
     # ------------- Core (v0.2.0) -------------
-    dict(name="ChatRole", ns="DoomalayLite.Core", kind="enum", since="0.2.0",
+    dict(name="ChatRole", ns="DCLbot.Core", kind="enum", since="0.2.0",
          attrs=[("", False, "System"), ("", False, "User"), ("", False, "Assistant")], methods=[]),
-    dict(name="ChatMessage", ns="DoomalayLite.Core", kind="class", since="0.2.0",
+    dict(name="ChatMessage", ns="DCLbot.Core", kind="class", since="0.2.0",
          attrs=[("-", False, "_createdAt : DateTime"),
                 ("+", False, "Role : ChatRole {readonly}"),
                 ("+", False, "Content : string"),
@@ -49,7 +49,7 @@ CLASSES = [
          methods=[("+", False, "ChatMessage(content : string)"),
                   ("+", False, "ChatMessage(role : ChatRole, content : string)"),
                   ("+", False, "ToString() : string {override}")]),
-    dict(name="Conversation", ns="DoomalayLite.Core", kind="class", since="0.2.0",
+    dict(name="Conversation", ns="DCLbot.Core", kind="class", since="0.2.0",
          attrs=[("-", False, "_messages : List<ChatMessage>"),
                 ("-", False, "_maxMessages : int"),
                 ("+", False, "Count : int {readonly}"),
@@ -63,7 +63,7 @@ CLASSES = [
                   ("+", False, "Clear() : void"),
                   ("+", False, "Render() : string"),
                   ("-", False, "Trim() : void")]),
-    dict(name="ApiSettings", ns="DoomalayLite.Core", kind="class", since="0.2.0",
+    dict(name="ApiSettings", ns="DCLbot.Core", kind="class", since="0.2.0",
          attrs=[("+", False, "EndpointUrl : string"),
                 ("+", False, "ModelName : string"),
                 ("+", False, "ApiKey : string"),
@@ -72,7 +72,7 @@ CLASSES = [
          methods=[("+", False, "ApiSettings()"),
                   ("+", False, "ApiSettings(apiKey : string)"),
                   ("+", False, "ApiSettings(apiKey : string, modelName : string)")]),
-    dict(name="ChatReply", ns="DoomalayLite.Core", kind="class", since="0.2.0",
+    dict(name="ChatReply", ns="DCLbot.Core", kind="class", since="0.2.0",
          attrs=[("+", False, "Content : string"),
                 ("+", False, "ModelUsed : string"),
                 ("+", False, "ElapsedSeconds : double")],
@@ -80,14 +80,14 @@ CLASSES = [
                   ("+", False, "ChatReply(content : string, modelUsed : string, elapsedSeconds : double)"),
                   ("+", False, "ToString() : string {override}")]),
     # ------------- Providers (v0.3.0) -------------
-    dict(name="IChatProvider", ns="DoomalayLite.Providers", kind="interface", since="0.3.0",
+    dict(name="IChatProvider", ns="DCLbot.Providers", kind="interface", since="0.3.0",
          attrs=[],
          methods=[("+", False, "Send(messages : IReadOnlyList<ChatMessage>) : ChatReply {abstract}")]),
-    dict(name="IProviderInfo", ns="DoomalayLite.Providers", kind="interface", since="0.3.0",
+    dict(name="IProviderInfo", ns="DCLbot.Providers", kind="interface", since="0.3.0",
          attrs=[],
          methods=[("+", False, "DisplayName : string {abstract}"),
                   ("+", False, "IsReady : bool {abstract}")]),
-    dict(name="ChatProviderBase", ns="DoomalayLite.Providers", kind="abstract", since="0.3.0",
+    dict(name="ChatProviderBase", ns="DCLbot.Providers", kind="abstract", since="0.3.0",
          attrs=[("#", False, "Settings : ApiSettings {readonly}"),
                 ("+", False, "DisplayName : string {readonly}"),
                 ("+", False, "IsReady : bool {readonly}")],
@@ -96,17 +96,17 @@ CLASSES = [
                   ("#", False, "DoSend(messages : IReadOnlyList<ChatMessage>) : ChatReply {abstract}"),
                   ("#", False, "GetDisplayName() : string {abstract}"),
                   ("#", False, "ValidateSettings() : bool {virtual}")]),
-    dict(name="ProviderKind", ns="DoomalayLite.Providers", kind="enum", since="0.3.0",
+    dict(name="ProviderKind", ns="DCLbot.Providers", kind="enum", since="0.3.0",
          attrs=[("", False, "OpenRouter"), ("", False, "Echo")], methods=[]),
-    dict(name="ProviderFactory", ns="DoomalayLite.Providers", kind="class", since="0.3.0",
+    dict(name="ProviderFactory", ns="DCLbot.Providers", kind="class", since="0.3.0",
          attrs=[("-", False, "_settings : ApiSettings")],
          methods=[("+", False, "ProviderFactory(settings : ApiSettings)"),
                   ("+", False, "Create(kind : ProviderKind) : IChatProvider")]),
-    dict(name="ProviderException", ns="DoomalayLite.Providers", kind="class", since="0.3.0",
+    dict(name="ProviderException", ns="DCLbot.Providers", kind="class", since="0.3.0",
          attrs=[],
          methods=[("+", False, "ProviderException(message : string)"),
                   ("+", False, "ProviderException(message : string, inner : Exception)")]),
-    dict(name="EchoProvider", ns="DoomalayLite.Providers", kind="class", since="0.3.0",
+    dict(name="EchoProvider", ns="DCLbot.Providers", kind="class", since="0.3.0",
          attrs=[("-", False, "_random : Random")],
          methods=[("+", False, "EchoProvider(settings : ApiSettings)"),
                   ("#", False, "GetDisplayName() : string {override}"),
@@ -115,7 +115,7 @@ CLASSES = [
                   ("-", False, "PickReply(input : string) : string"),
                   ("-", True, "CountWords(text : string) : int")]),
     # ------------- Providers / OpenRouter + DTOs (v0.4.0) -------------
-    dict(name="OpenRouterProvider", ns="DoomalayLite.Providers", kind="class", since="0.4.0",
+    dict(name="OpenRouterProvider", ns="DCLbot.Providers", kind="class", since="0.4.0",
          attrs=[("-", False, "_http : HttpClient"),
                 ("-", True, "ReadOptions : JsonSerializerOptions"),
                 ("-", True, "WriteOptions : JsonSerializerOptions")],
@@ -127,30 +127,30 @@ CLASSES = [
                   ("-", False, "Post(request : ChatCompletionRequest) : string"),
                   ("-", True, "ParseResponse(json : string) : ChatReply {internal}"),
                   ("-", True, "MapMessages(messages : IReadOnlyList<ChatMessage>) : List<RequestMessage> {internal}")]),
-    dict(name="TextUtils", ns="DoomalayLite.Providers", kind="class", since="0.4.0",
+    dict(name="TextUtils", ns="DCLbot.Providers", kind="class", since="0.4.0",
          attrs=[],
          methods=[("+", True, "Truncate(text : string, max : int) : string")]),
-    dict(name="ChatCompletionRequest", ns="DoomalayLite.Providers.Dto", kind="class", since="0.4.0",
+    dict(name="ChatCompletionRequest", ns="DCLbot.Providers.Dto", kind="class", since="0.4.0",
          attrs=[("+", False, "Model : string"),
                 ("+", False, "Messages : List<RequestMessage>")],
          methods=[]),
-    dict(name="RequestMessage", ns="DoomalayLite.Providers.Dto", kind="class", since="0.4.0",
+    dict(name="RequestMessage", ns="DCLbot.Providers.Dto", kind="class", since="0.4.0",
          attrs=[("+", False, "Role : string"),
                 ("+", False, "Content : string"),
                 ("+", False, "Reasoning : string")],
          methods=[]),
-    dict(name="ChatCompletionResponse", ns="DoomalayLite.Providers.Dto", kind="class", since="0.4.0",
+    dict(name="ChatCompletionResponse", ns="DCLbot.Providers.Dto", kind="class", since="0.4.0",
          attrs=[("+", False, "Id : string"),
                 ("+", False, "Model : string"),
                 ("+", False, "Choices : List<Choice>")],
          methods=[]),
-    dict(name="Choice", ns="DoomalayLite.Providers.Dto", kind="class", since="0.4.0",
+    dict(name="Choice", ns="DCLbot.Providers.Dto", kind="class", since="0.4.0",
          attrs=[("+", False, "Index : int"),
                 ("+", False, "Message : RequestMessage"),
                 ("+", False, "FinishReason : string")],
          methods=[]),
     # ------------- Services (v0.5.0) -------------
-    dict(name="ChatService", ns="DoomalayLite.Services", kind="class", since="0.5.0",
+    dict(name="ChatService", ns="DCLbot.Services", kind="class", since="0.5.0",
          attrs=[("-", True, "_instance : ChatService"),
                 ("-", True, "_lock : object"),
                 ("-", False, "_conversation : Conversation"),
@@ -169,13 +169,12 @@ CLASSES = [
                   ("-", False, "SeedSystemPrompt() : void"),
                   ("-", True, "LoadApiKey() : string")]),
     # ------------- UI (v0.1.0 scaffold, full in v0.6.0) -------------
-    dict(name="Program", ns="DoomalayLite", kind="class", since="0.1.0",
+    dict(name="Program", ns="DCLbot", kind="class", since="0.1.0",
          attrs=[],
          methods=[("-", True, "Main(args : string[]) : void")]),
-    dict(name="frmChat", ns="DoomalayLite.UI", kind="class", since="0.6.0",
+    dict(name="frmChat", ns="DCLbot.UI", kind="class", since="0.6.0",
          attrs=[("-", False, "_chat : ChatService"),
                 ("-", False, "_busy : bool"),
-                ("-", False, "_switchingProvider : bool"),
                 ("-", False, "components : IContainer"),
                 ("-", False, "panelTop : Panel"),
                 ("-", False, "panelBottom : Panel"),
@@ -331,7 +330,7 @@ def generate(version):
         namespaces.setdefault(c["ns"], []).append(c["name"])
 
     out = []
-    out.append("digraph DoomalayLite {\n")
+    out.append("digraph DCLbot {\n")
     out.append('  graph [rankdir="BT", splines="spline", nodesep="0.55", ranksep="1.0", '
                f'fontname="DejaVu Sans", bgcolor="white", compound="true"];\n')
     out.append(f'  node [fontname="DejaVu Sans"];\n')

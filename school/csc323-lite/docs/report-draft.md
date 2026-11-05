@@ -4,13 +4,13 @@
 
 ## Project Description (around 500 words)
 
-Doomalay Lite is a Windows Forms chat application written in C# on .NET 8. It
-is the deliberately barebones miniature of our production chatbot "doomalay",
-a large multi-component assistant (Go engine, Python brain, web app), rebuilt
-here with only the essential conversation core so that every line of code can
-be studied, tested and defended at the scale of a course project. The user
-types a message, the message joins a persistent conversation history, and an
-AI provider returns an answer that is appended to the transcript - a classic
+DCLbot is a Windows Forms chat application written in C# on .NET 8. It is the
+deliberately barebones miniature of our production chatbot "doomalay", a large
+multi-component assistant (Go engine, Python brain, web app), rebuilt here
+with only the essential conversation core so that every line of code can be
+studied, tested and defended at the scale of a course project. The user types
+a message, the message joins a persistent conversation history, and an AI
+provider returns an answer that is appended to the transcript - a classic
 back-and-forth chat with full memory of the dialogue.
 
 The application talks to exactly one provider (OpenRouter) with exactly one
@@ -20,7 +20,9 @@ provider, Echo, never touches the network: it answers with local canned
 replies so the application remains fully demonstrable without internet access
 or when the free model pool is rate-limited. Switching between the two
 providers at runtime through a combo box is deliberate: it is the living
-proof that both implementations are substitutable for the same abstraction.
+proof that both implementations are substitutable for the same abstraction,
+and the selection is always respected - readiness is reported in the status
+bar, never by bouncing the combo back.
 
 Architecturally the solution is layered in five namespaces. Core holds the
 domain: ChatRole (an enum), ChatMessage, the Conversation collection with
@@ -35,9 +37,11 @@ reasoning-style models sometimes answer with empty content while the actual
 text sits in a reasoning field, and the adapter degrades gracefully in that
 case. Services holds ChatService, a Singleton facade that owns the
 conversation and the active provider, exposes four methods to the outside
-world, and loads the API key from the environment so no secret ever reaches
-source control. UI holds frmChat, a thin form that only paints state and
-captures input, plus Program as the entry point.
+world, and resolves the API key from the environment (a real key never lives
+in source control). UI holds frmChat, a thin
+form that only paints state and captures input, plus Program as the entry
+point, which also installs a global unhandled-exception net so an unexpected
+hiccup shows a message box instead of killing the process.
 
 In total the design contains twenty-one types related in a coherent,
 meaningful structure, not demos bolted together. The five SOLID principles
@@ -49,18 +53,18 @@ inversion with the high-level modules depending only on abstractions. Three
 GoF patterns from the course catalogue are realized for real features:
 Strategy (interchangeable providers), Adapter (REST/JSON world to domain
 interface) and Singleton (the single chat brain). A zero-dependency smoke
-suite of sixty-five offline tests plus five live API tests protects the
+suite of seventy-two offline tests plus live API tests protects the
 behavior, and the same suite runs on every push in GitHub Actions.
 
-(~495 words)
+(~500 words)
 
 ## Class Diagram (UML)
 
-Figure 1. Doomalay Lite class diagram - 21 types in 5 namespaces; legend:
+Figure 1. DCLbot class diagram - 21 types in 5 namespaces; legend:
 + public, - private, # protected, underlined = static; hollow triangle =
 inheritance, dashed triangle = interface realization, filled diamond =
 composition. (File: docs/diagram/class_diagram.png, editable source in
-src/DoomalayLite/DoomalayLite.cd)
+src/DCLbot/DCLbot.cd)
 
 ## Source Code (C#)
 
@@ -73,7 +77,7 @@ Planned figures (each with caption):
   reasoning-quirk fallback; EchoProvider with keyword replies
 - Figure 5. Singleton facade: ChatService (private ctor, GetInstance, SwitchProvider)
 - Figure 6. UI: frmChat event handlers (async send with try/finally busy
-  state, graceful degradation to Echo, guarded provider switching)
+  state, honest status reporting, selection-final provider switching)
 
 ## Key concepts (around 30 words each)
 
@@ -81,7 +85,7 @@ Planned figures (each with caption):
 |---|---|
 | Abstraction (abstract classes and/or interfaces) | IChatProvider and IProviderInfo are pure contracts; ChatProviderBase is an abstract class implementing the shared Send() template while leaving DoSend() and GetDisplayName() abstract. |
 | Concrete classes | ChatMessage, Conversation, EchoProvider, OpenRouterProvider, ChatService and frmChat are instantiable classes with real state and behavior that together form the running chatbot. |
-| Namespaces | Code is organized into DoomalayLite.Core, .Providers, .Providers.Dto, .Services and .UI, mirroring the architecture and separating domain, vendors, orchestration and UI. |
+| Namespaces | Code is organized into DCLbot.Core, .Providers, .Providers.Dto, .Services and .UI, mirroring the architecture and separating domain, vendors, orchestration and UI. |
 | Methods | Conversation.Render() builds the transcript, OpenRouterProvider.Post() performs the HTTP call, ChatService.SendUserMessage() orchestrates a full turn with memory. |
 | Properties | ChatMessage.Role/Content/CreatedAt, ApiSettings.ModelName and ChatProviderBase.DisplayName/IsReady use accessors; CreatedAt is read-only over a private DateTime field. |
 | Overriding of methods and/or properties | EchoProvider and OpenRouterProvider override abstract DoSend()/GetDisplayName() and virtual ValidateSettings(); ChatMessage and ChatReply override Object.ToString() for the transcript. |
@@ -110,18 +114,19 @@ Planned figures (each with caption):
 
 ## User Interface (Windows Forms)
 
-Figure 7. Doomalay Lite main window: provider combo (OpenRouter / Echo),
-read-only transcript, input box with Send (or Enter), New chat button, status
-bar showing the active provider and pinned model - or the offline fallback hint.
+Figure 7. DCLbot main window: provider combo (OpenRouter / Echo), read-only
+transcript, input box with Send (or Enter), New chat button, status bar
+showing the active provider and pinned model - or an honest readiness hint.
 
 Brief description (around 50 words): The single form hosts a provider combo
 box, a read-only transcript, a multiline input with Send/Enter and a New chat
-button; a status strip reports provider readiness. Without an API key the app
-auto-selects the offline Echo provider, so the demo always works.
+button; a status strip reports provider readiness. The provider selection is
+always respected, the input stays editable while a reply is being computed,
+and unexpected problems show a message box without closing the app.
 
 ## Submission checklist (Blackboard)
 
 - [ ] Report .docx from the faculty template (this draft formatted in)
-- [ ] Class diagram file: src/DoomalayLite/DoomalayLite.cd (StarUML/VS requirement)
-- [ ] Visual Studio solution + project: school/csc323-lite (zip DoomalayLite.sln tree)
+- [ ] Class diagram file: src/DCLbot/DCLbot.cd (StarUML/VS requirement)
+- [ ] Visual Studio solution + project: school/csc323-lite (zip DCLbot.sln tree)
 - [ ] One zip, submitted through Blackboard before the deadline

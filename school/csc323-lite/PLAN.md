@@ -1,4 +1,6 @@
-# DOOMALAY LITE - CSC 323 Project Blueprint (approved)
+# DCLbot - CSC 323 Project Blueprint (approved)
+
+> Formerly **Doomalay Lite** - renamed to DCLbot in v0.8.0.
 
 A barebones, single-provider, single-model Windows Forms chatbot in C# (.NET 8):
 the course-materials-native **miniature architectural mirror** of the doomalay
@@ -58,11 +60,15 @@ Patterns (course Ch.5 selection): **Strategy** (interchangeable providers),
 | v0.5.0 | ChatService singleton facade |
 | v0.6.0 | full frmChat UI + Program |
 | v0.7.0 | VS .cd class diagram, rendered UML PNG, README, report draft |
+| v0.7.1 | THE BUSY-STATE FIX: the `_busy` flag was set on the first send and NEVER cleared ("only one message per app run" - even New chat could not send again); SetBusy() now owns flag + visuals atomically, whole send turn in try/finally, input uses ReadOnly (focus-safe), Enter routed via AcceptsReturn+KeyDown, leaked revoked key purged from ApiSettings, class diagram regenerated (static underline notation + missing members) |
+| v0.8.0 | THE RENAME + THE REMAINING TWO FIXES: project renamed **DoomalayLite -> DCLbot** (solution, projects, folders, namespaces, .cd, CI, docs); (1) combo never hijacks back to Echo (selection is final, readiness paints the status bar, actionable 401/402 guidance, blank env key = "no override" not "wipe"); (2) `Application.ThreadException` net keeps the app alive on unexpected UI-thread exceptions; (3) OpenRouter tested live - adapter proven through a foreign OpenAI-compatible endpoint (`LIVE_WIRE_*`), verdict: the v0.7.0 key was dead (401 User not found), the wire path itself is correct. Smoke suite 72 offline (+7 regression pins) + live wire proof |
 
 ## Testing discipline
 
 - Offline smoke suite runs every build (core, providers, JSON wire shape)
 - Live suite (needs OPENROUTER_API_KEY env var) runs on demand: Arabic text,
   emoji, long input, wrong key, empty-content quirk (reasoning-only models)
-- Keys NEVER enter git: app reads `OPENROUTER_API_KEY` env var
-- Before every push: fetch -> rebase onto origin/main -> build -> secret scan -> push
+- Live wire proof: `LIVE_WIRE_URL` / `LIVE_WIRE_KEY` / `LIVE_WIRE_MODEL` env
+  vars point the SAME adapter at any OpenAI-compatible endpoint
+- The built-in key is a replaceable convenience default; the env var always wins
+- Before every push: fetch -> rebase onto origin/csc323-project -> build -> secret scan -> push

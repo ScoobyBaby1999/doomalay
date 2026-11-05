@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!--
+      Plain net8.0 (no WindowsForms): the smoke suite compiles the domain sources
+      (Core, Providers, Services) directly, so the offline suite runs anywhere,
+      including Linux CI. The UI (frmChat) is intentionally NOT included.
+    -->
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <RootNamespace>DCLbot.Smoke</RootNamespace>
+    <AssemblyName>DCLbot.Smoke</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="../../src/DCLbot/Core/**/*.cs" LinkBase="DCLbot/Core" />
+    <Compile Include="../../src/DCLbot/Providers/**/*.cs" LinkBase="DCLbot/Providers" />
+    <Compile Include="../../src/DCLbot/Services/**/*.cs" LinkBase="DCLbot/Services" />
+  </ItemGroup>
+
+</Project>

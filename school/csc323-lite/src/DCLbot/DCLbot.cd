@@ -1,0 +1,155 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ClassDiagram MajorVersion="1" MinorVersion="1">
+  <Font Name="Segoe UI" Size="9" />
+  <!-- DCLbot (CSC 323) - hand-authored for Visual Studio Class Designer.
+       Open in VS: double-click this file inside the DCLbot project.
+       If a shape needs re-binding to code, right-click the designer surface and
+       choose "Sync" - Visual Studio re-reads the source files automatically. -->
+  <Class Name="DCLbot.Core.ChatRole" Collapsed="true">
+    <Position X="0.5" Y="10.5" />
+    <TypeIdentifier>
+      <FileName>Core\ChatRole.cs</FileName>
+      <HashCode>0000000000000000</HashCode>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="DCLbot.Core.ChatMessage" Collapsed="true">
+    <Position X="2.5" Y="10.5" />
+    <TypeIdentifier>
+      <FileName>Core\ChatMessage.cs</FileName>
+      <HashCode>0000000000000000</HashCode>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="DCLbot.Core.Conversation" Collapsed="true">
+    <Position X="0.5" Y="6.0" />
+    <TypeIdentifier>
+      <FileName>Core\Conversation.cs</FileName>
+      <HashCode>0000000000000000</HashCode>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="DCLbot.Core.ApiSettings" Collapsed="true">
+    <Position X="4.5" Y="10.5" />
+    <TypeIdentifier>
+      <FileName>Core\ApiSettings.cs</FileName>
+      <HashCode>0000000000000000</HashCode>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="DCLbot.Core.ChatReply" Collapsed="true">
+    <Position X="2.5" Y="6.0" />
+    <TypeIdentifier>
+      <FileName>Core\ChatReply.cs</FileName>
+      <HashCode>0000000000000000</HashCode>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="DCLbot.Providers.IChatProvider" Collapsed="true">
+    <Position X="6.5" Y="0.5" />
+    <TypeIdentifier>
+      <FileName>Providers\IChatProvider.cs</FileName>
+      <HashCode>0000000000000000</HashCode>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="DCLbot.Providers.IProviderInfo" Collapsed="true">
+    <Position X="9.0" Y="0.5" />
+    <TypeIdentifier>
+      <FileName>Providers\IProviderInfo.cs</FileName>
+      <HashCode>0000000000000000</HashCode>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="DCLbot.Providers.ChatProviderBase" Collapsed="true">
+    <Position X="6.5" Y="3.0" />
+    <TypeIdentifier>
+      <FileName>Providers\ChatProviderBase.cs</FileName>
+      <HashCode>0000000000000000</HashCode>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="DCLbot.Providers.ProviderKind" Collapsed="true">
+    <Position X="6.5" Y="10.5" />
+    <TypeIdentifier>
+      <FileName>Providers\ProviderKind.cs</FileName>
+      <HashCode>0000000000000000</HashCode>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="DCLbot.Providers.ProviderFactory" Collapsed="true">
+    <Position X="9.0" Y="3.0" />
+    <TypeIdentifier>
+      <FileName>Providers\ProviderFactory.cs</FileName>
+      <HashCode>0000000000000000</HashCode>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="DCLbot.Providers.ProviderException" Collapsed="true">
+    <Position X="9.0" Y="6.0" />
+    <TypeIdentifier>
+      <FileName>Providers\ProviderException.cs</FileName>
+      <HashCode>0000000000000000</HashCode>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="DCLbot.Providers.EchoProvider" Collapsed="true">
+    <Position X="4.5" Y="8.25" />
+    <TypeIdentifier>
+      <FileName>Providers\EchoProvider.cs</FileName>
+      <HashCode>0000000000000000</HashCode>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="DCLbot.Providers.OpenRouterProvider" Collapsed="true">
+    <Position X="6.5" Y="8.25" />
+    <TypeIdentifier>
+      <FileName>Providers\OpenRouterProvider.cs</FileName>
+      <HashCode>0000000000000000</HashCode>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="DCLbot.Providers.TextUtils" Collapsed="true">
+    <Position X="9.0" Y="10.5" />
+    <TypeIdentifier>
+      <FileName>Providers\TextUtils.cs</FileName>
+      <HashCode>0000000000000000</HashCode>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="DCLbot.Providers.Dto.ChatCompletionRequest" Collapsed="true">
+    <Position X="11.5" Y="6.0" />
+    <TypeIdentifier>
+      <FileName>Providers\Dto\ChatCompletionRequest.cs</FileName>
+      <HashCode>0000000000000000</HashCode>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="DCLbot.Providers.Dto.RequestMessage" Collapsed="true">
+    <Position X="11.5" Y="8.25" />
+    <TypeIdentifier>
+      <FileName>Providers\Dto\RequestMessage.cs</FileName>
+      <HashCode>0000000000000000</HashCode>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="DCLbot.Providers.Dto.ChatCompletionResponse" Collapsed="true">
+    <Position X="14.0" Y="6.0" />
+    <TypeIdentifier>
+      <FileName>Providers\Dto\ChatCompletionResponse.cs</FileName>
+      <HashCode>0000000000000000</HashCode>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="DCLbot.Providers.Dto.Choice" Collapsed="true">
+    <Position X="14.0" Y="8.25" />
+    <TypeIdentifier>
+      <FileName>Providers\Dto\Choice.cs</FileName>
+      <HashCode>0000000000000000</HashCode>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="DCLbot.Services.ChatService" Collapsed="true">
+    <Position X="2.5" Y="3.0" />
+    <TypeIdentifier>
+      <FileName>Services\ChatService.cs</FileName>
+      <HashCode>0000000000000000</HashCode>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="DCLbot.UI.frmChat" Collapsed="true">
+    <Position X="0.5" Y="0.5" />
+    <TypeIdentifier>
+      <FileName>UI\frmChat.cs</FileName>
+      <HashCode>0000000000000000</HashCode>
+    </TypeIdentifier>
+  </Class>
+  <Class Name="DCLbot.Program" Collapsed="true">
+    <Position X="0.5" Y="3.0" />
+    <TypeIdentifier>
+      <FileName>Program.cs</FileName>
+      <HashCode>0000000000000000</HashCode>
+    </TypeIdentifier>
+  </Class>
+</ClassDiagram>
