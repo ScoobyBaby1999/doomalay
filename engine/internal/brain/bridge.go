@@ -46,6 +46,10 @@ type Brain struct {
         probeCli  *http.Client
         chatCli   *http.Client
         modelsCli *http.Client
+
+        // v1.76.3 THE SINGLE RE-PROBE LAW: true while a re-probe loop is
+        // in flight (guarded by mu) — MarkUnhealthy's single-flight guard.
+        reprobing bool
 }
 
 // Start spawns `python brain/server.py --port <port>` in brainDir.
@@ -358,13 +362,13 @@ func (b *Brain) Models(ctx context.Context) (json.RawMessage, error) {
         if b == nil || !b.Healthy() {
                 return nil, fmt.Errorf("brain not healthy")
         }
-        req, _ := http.NewRequestWithContext(ctx, "GET", b.url+"/models", nil)
-        // v1.76.1: the header injection moved into the RetryDo request
-        // builder (a fresh request per attempt); the pre-existing refresh
-        // check below is left verbatim for its v1.76.3 funeral.
-        if q := req.URL.Query(); q.Get("refresh") != "" {
-                // pass through
-        }
+        // v1.76.3 THE DEAD-CODE FUNERAL: the refresh query check that lived
+        // here never fired in its life — this method builds its own
+        // queryless URL (the query param it polled was never present), and
+        // it has had zero callers since v1.55.3 retired the /api/models
+        // brain proxy. The v1.76.1 rewrite moved header injection into the
+        // RetryDo request builder; the dead block is buried, not passed
+        // through.
         // v1.76.1: GET /models is idempotent — ride netx.RetryDo (THE
         // PATIENT WIRE, v1.61.2) so a 1s Wi-Fi hiccup or a brain 5xx
         // survives; validation-class errors never re-hammer. The request
@@ -405,6 +409,13 @@ func (b *Brain) Models(ctx context.Context) (json.RawMessage, error) {
 // with dial tcp ::1:9090 while the engine's own direct pipeline sat
 // ready). A quiet re-probe timer flips it back the moment the brain
 // answers /health again (e.g. the engine supervisor respawns it).
+//
+// v1.76.3 THE SINGLE RE-PROBE LAW: the re-probe loop is SINGLE-FLIGHT —
+// exactly one background probe loop may exist per Brain. The pile shape:
+// loop #1 sleeps its 15s, a Chat 200 heals the flag mid-sleep, a fresh
+// failure flips it again → the old code spawned loop #2 (and each repeat
+// stacked another). Now the in-flight loop OWNS the revival: the flag
+// still flips false on every conviction, but no second loop is ever born.
 func (b *Brain) MarkUnhealthy() {
         if b == nil {
                 return
@@ -415,8 +426,18 @@ func (b *Brain) MarkUnhealthy() {
                 return
         }
         b.healthy = false
+        reprobe := !b.reprobing
+        b.reprobing = true
         b.mu.Unlock()
+        if !reprobe {
+                return // an in-flight loop owns the revival — never a second one
+        }
         go func() {
+                defer func() {
+                        b.mu.Lock()
+                        b.reprobing = false
+                        b.mu.Unlock()
+                }()
                 // re-probe every 15s until the brain answers again
                 // (v1.76.1: through the dedicated probe client — the bare
                 // http.Get had no timeout, so a black-holed probe slept
