@@ -8,11 +8,13 @@
 package brain
 
 import (
+        "bufio"
         "bytes"
         "context"
         "encoding/json"
         "fmt"
         "io"
+        "log"
         "net/http"
         "os"
         "os/exec"
@@ -301,56 +303,67 @@ func (b *Brain) Chat(ctx context.Context, req map[string]any) (<-chan map[string
                 if wd != nil {
                         src = newFeedReader(src, wd.feed)
                 }
-                // Parse SSE stream.
-                buf := make([]byte, 0, 4096)
-                tmp := make([]byte, 4096)
-                for {
-                        n, err := src.Read(tmp)
-                        if n > 0 {
-                                buf = append(buf, tmp[:n]...)
-                                // Process complete lines.
-                                for {
-                                        idx := bytes.IndexByte(buf, '\n')
-                                        if idx < 0 {
-                                                break
-                                        }
-                                        line := strings.TrimSpace(string(buf[:idx]))
-                                        buf = buf[idx+1:]
-                                        if !strings.HasPrefix(line, "data: ") {
-                                                continue
-                                        }
-                                        data := line[6:]
-                                        if data == "[DONE]" {
-                                                return
-                                        }
-                                        var ev map[string]any
-                                        if err := json.Unmarshal([]byte(data), &ev); err == nil {
-                                                select {
-                                                case events <- ev:
-                                                case <-streamCtx.Done():
-                                                        return
-                                                }
-                                        }
-                                }
+                // v1.76.4 THE HONEST SCANNER: bufio.Scanner replaces the
+                // hand-rolled IndexByte loop — native \r\n handling, one
+                // reusable buffer, no repeated slice reallocation on long
+                // responses, and a hard 2MiB line cap (the old loop grew
+                // buf without bound on a hostile or hung stream). Malformed
+                // data lines are LOUD now: the first is logged with its
+                // payload, every stream end reports the total — network
+                // truncation and Python serialization bugs surface
+                // instead of vanishing (the old Unmarshal error was
+                // discarded outright). One deliberate strictness gain: a
+                // final partial line at EOF is now DELIVERED where the old
+                // loop silently dropped it.
+                sc := bufio.NewScanner(src)
+                sc.Buffer(make([]byte, 64*1024), 2*1024*1024)
+                var malformed int
+                // the summary rides a defer so EVERY exit path reports it
+                // ([DONE], ctx cancel, watchdog, error, EOF alike).
+                defer func() {
+                        if malformed > 0 {
+                                log.Printf("brain stream ended: %d malformed SSE data lines total", malformed)
                         }
-                        if err != nil {
-                                // v1.76.2: a read error after the watchdog
-                                // tripped is THE STALL — the typed sentinel
-                                // rides errs (the server layer persists an
-                                // honest error event; forwardEvents would
-                                // otherwise only log it) and the brain flips
-                                // dead for the quiet 15s re-probe.
-                                if wd != nil && wd.didTrip() {
-                                        b.MarkUnhealthy()
-                                        errs <- fmt.Errorf("%w: no SSE bytes for %ds — the brain's stream froze mid-turn (provider black-hole or a stuck agent); the quiet 15s re-probe revives the brain when it answers (knob: DOOMALAY_BRAIN_STALL_KILL)", ErrStreamStalled, killSecs)
-                                        return
+                }()
+                for sc.Scan() {
+                        line := strings.TrimSpace(sc.Text())
+                        if !strings.HasPrefix(line, "data: ") {
+                                continue // SSE comments/keep-alives — same law as before
+                        }
+                        data := line[6:]
+                        if data == "[DONE]" {
+                                return
+                        }
+                        var ev map[string]any
+                        if err := json.Unmarshal([]byte(data), &ev); err != nil {
+                                if malformed == 0 {
+                                        log.Printf("brain: malformed SSE data line #1 (network truncation or a serialization bug): %.200s — %v", data, err)
                                 }
-                                if err != io.EOF {
-                                        errs <- err
-                                }
+                                malformed++
+                                continue
+                        }
+                        select {
+                        case events <- ev:
+                        case <-streamCtx.Done():
                                 return
                         }
                 }
+                if err := sc.Err(); err != nil {
+                        // v1.76.2: a read error after the watchdog
+                        // tripped is THE STALL — the typed sentinel
+                        // rides errs (the server layer persists an
+                        // honest error event; forwardEvents would
+                        // otherwise only log it) and the brain flips
+                        // dead for the quiet 15s re-probe.
+                        if wd != nil && wd.didTrip() {
+                                b.MarkUnhealthy()
+                                errs <- fmt.Errorf("%w: no SSE bytes for %ds — the brain's stream froze mid-turn (provider black-hole or a stuck agent); the quiet 15s re-probe revives the brain when it answers (knob: DOOMALAY_BRAIN_STALL_KILL)", ErrStreamStalled, killSecs)
+                                return
+                        }
+                        errs <- err
+                        return
+                }
+                return
         }()
         return events, errs, nil
 }
