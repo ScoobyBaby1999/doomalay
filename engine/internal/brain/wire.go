@@ -10,24 +10,118 @@
 // Shapes (one factory, three users — the remote-twin convention of
 // per-call construction, so knobs are read live and tests inject clients):
 //
-//	probe  — total timeout, DisableKeepAlives (a stale pooled socket must
-//	         never answer a health check with a false positive)
-//	models — total timeout (one bounded JSON fetch)
-//	chat   — NO total timeout (a long streaming AI answer is legitimate),
-//	         ResponseHeaderTimeout instead: if the brain never even starts
-//	         replying, the request fails cleanly instead of hanging forever
+//      probe  — total timeout, DisableKeepAlives (a stale pooled socket must
+//               never answer a health check with a false positive)
+//      models — total timeout (one bounded JSON fetch)
+//      chat   — NO total timeout (a long streaming AI answer is legitimate),
+//               ResponseHeaderTimeout instead: if the brain never even starts
+//               replying, the request fails cleanly instead of hanging forever
 //
 // Knobs are seconds, mirroring stallKillSeconds (DOOMALAY_HF_STALL_KILL):
 // integer seconds via env, invalid/absent → the documented default.
 package brain
 
 import (
+        "errors"
+        "io"
         "net/http"
         "os"
         "strconv"
         "strings"
+        "sync/atomic"
         "time"
 )
+
+// ErrStreamStalled — the v1.76.2 stall sentinel. When the no-bytes
+// watchdog kills a frozen SSE stream, this typed error (wrapped via %w,
+// matched via errors.Is) rides the errs channel so the server layer can
+// turn it into an honest, persisted error event instead of a dead
+// spinner. Transport-level failures stay their own class.
+var ErrStreamStalled = errors.New("brain stream stalled")
+
+// streamWatchdog — the no-BYTES stall sentinel (v1.76.2, PLAN-V176
+// §v1.76.2). The Python side deliberately has no kill (the v0.80.1
+// no-kill law, litellm timeout=86400) — the engine is the only place a
+// watchdog can live. The remote twin got one in v1.10.2 (guardFirstByte,
+// the first-byte class); the local bridge now gets the between-bytes
+// class: a stream that produced NOTHING for the whole window is a frozen
+// connection (the brain's own 25s progress heartbeat — agent.py v0.76.6 —
+// keeps healthy multi-minute tool turns 20s clear of the 45s default).
+type streamWatchdog struct {
+        timeout time.Duration
+        onTrip  func()
+        fed     chan struct{}
+        stop    chan struct{}
+        tripped atomic.Bool
+}
+
+// newStreamWatchdog arms the sentinel; onTrip fires (once) the instant the
+// timeout elapses with no feed. feed resets the window; stop releases the
+// goroutine. Byte-level discipline is the CALLER's law — feed on every
+// Read that returns n > 0 (see feedReader): a slow-dripping long line is
+// still a LIVE stream and must never trip it.
+func newStreamWatchdog(timeout time.Duration, onTrip func()) *streamWatchdog {
+        w := &streamWatchdog{
+                timeout: timeout,
+                onTrip:  onTrip,
+                fed:     make(chan struct{}, 1),
+                stop:    make(chan struct{}),
+        }
+        go func() {
+                timer := time.NewTimer(w.timeout)
+                defer timer.Stop()
+                for {
+                        select {
+                        case <-w.stop:
+                                return
+                        case <-w.fed:
+                                timer.Reset(w.timeout) // pending timer — the reset-only-in-this-goroutine law
+                        case <-timer.C:
+                                w.tripped.Store(true)
+                                w.onTrip()
+                                return
+                        }
+                }
+        }()
+        return w
+}
+
+// feed resets the stall window (coalescing: a pending feed signal is
+// enough — byte storms never queue).
+func (w *streamWatchdog) feed() {
+        select {
+        case w.fed <- struct{}{}:
+        default:
+        }
+}
+
+// didTrip reports whether the sentinel fired (used to classify the read
+// error after the stream dies).
+func (w *streamWatchdog) didTrip() bool { return w.tripped.Load() }
+
+// kill releases the watchdog goroutine (stream end, [DONE], ctx done).
+func (w *streamWatchdog) kill() { close(w.stop) }
+
+// feedReader wraps a body so every Read that yields bytes feeds the
+// watchdog — the byte-level (not line-level) honesty law: a 100KB tool
+// result arriving 1KB at a time over a slow link is ALIVE, even though
+// bufio.Scanner would not yield a single line until the last byte lands.
+type feedReader struct {
+        r    io.Reader
+        feed func()
+}
+
+func newFeedReader(r io.Reader, feed func()) io.Reader {
+        return &feedReader{r: r, feed: feed}
+}
+
+func (f *feedReader) Read(p []byte) (int, error) {
+        n, err := f.r.Read(p)
+        if n > 0 {
+                f.feed()
+        }
+        return n, err
+}
 
 // Env knobs (seconds; ""/invalid → default).
 const (

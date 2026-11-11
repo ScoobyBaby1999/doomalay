@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -2221,6 +2222,59 @@ func guardFirstByte(events <-chan map[string]any, killAfterSec int, onFire func(
 	return out, func() bool { return fired.Load() }
 }
 
+// guardBrainStall (v1.76.2, PLAN-V176) — the local twin of guardFirstByte's
+// honesty law. When the bridge's no-bytes watchdog kills a frozen stream,
+// the typed sentinel rides errs; forwardEvents only LOGS a raw errs value,
+// so the mid-turn death shape used to be the endless spinner (the turn
+// ends, no terminal state, the UI waits forever). The guard turns the
+// sentinel into a PERSISTED error event — the red bubble + terminal state
+// — riding the wrapped stream (guardFirstByte's architecture: synthetic
+// events ride the stream itself so forwardEvents persists them like any
+// other). Buffered events drain out FIRST (order law: the stall error is
+// the last word); the sentinel still rides the errs channel for the log.
+func guardBrainStall(events <-chan map[string]any, errs <-chan error) (<-chan map[string]any, <-chan error) {
+	out := make(chan map[string]any)
+	outErrs := make(chan error, 1)
+	go func() {
+		defer close(out)
+		defer close(outErrs)
+		evCh, errCh := events, errs
+		var stall error
+		for evCh != nil || errCh != nil {
+			select {
+			case ev, ok := <-evCh:
+				if !ok {
+					evCh = nil
+					continue
+				}
+				out <- ev
+			case e, ok := <-errCh:
+				if !ok {
+					errCh = nil
+					continue
+				}
+				if errors.Is(e, brain.ErrStreamStalled) {
+					stall = e // rides out AFTER the buffered events (order law)
+					errCh = nil
+					continue
+				}
+				if e != nil {
+					outErrs <- e
+				}
+			}
+		}
+		if stall != nil {
+			out <- map[string]any{
+				"type":    "error",
+				"error":   "brain_stall",
+				"message": stall.Error(),
+			}
+			outErrs <- stall
+		}
+	}()
+	return out, outErrs
+}
+
 // streamFromBrain proxies the chat turn through the Python brain (full
 // agent: Strands, tools, panel, templates). Used when the brain is available.
 func (s *Server) streamFromBrain(ctx context.Context, pipe *chatPipe, sessionID string, sess *store.Session, brainReq map[string]any, userText string, terminal *bool) {
@@ -2249,6 +2303,12 @@ func (s *Server) streamFromBrain(ctx context.Context, pipe *chatPipe, sessionID 
 		s.streamFromDirectProxy(ctx, pipe, sessionID, sess, userText, tplID, tplBrief, bundManifest, terminal, nil) // v1.50.5: nil = the classic send shape
 		return
 	}
+	// v1.76.2 THE STALL SENTINEL (PLAN-V176 §v1.76.2): the bridge's
+	// no-bytes watchdog kills a frozen stream with the typed sentinel;
+	// the guard turns it into a persisted error event so the turn ends
+	// with the honest red bubble + terminal state — never the dead
+	// spinner (guardFirstByte's architecture, local twin).
+	events, errs = guardBrainStall(events, errs)
 	s.forwardEvents(ctx, pipe, sessionID, sess, userText, s.synthesizeRounds(sessionID, events), errs, terminal)
 }
 

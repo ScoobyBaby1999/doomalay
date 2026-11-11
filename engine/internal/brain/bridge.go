@@ -223,8 +223,15 @@ func (b *Brain) Chat(ctx context.Context, req map[string]any) (<-chan map[string
         if err != nil {
                 return nil, nil, err
         }
-        httpReq, err := http.NewRequestWithContext(ctx, "POST", b.url+"/chat", bytes.NewReader(body))
+        // v1.76.2 THE STALL SENTINEL: the stream owns a cancelable child
+        // context so the no-bytes watchdog can kill a frozen stream even
+        // when the parent ctx would happily wait forever (the Python side
+        // has no kill by its own v0.80.1 law — the engine is the only
+        // place a watchdog can live).
+        streamCtx, cancelStream := context.WithCancel(ctx)
+        httpReq, err := http.NewRequestWithContext(streamCtx, "POST", b.url+"/chat", bytes.NewReader(body))
         if err != nil {
+                cancelStream()
                 return nil, nil, err
         }
         httpReq.Header.Set("Content-Type", "application/json")
@@ -247,12 +254,14 @@ func (b *Brain) Chat(ctx context.Context, req map[string]any) (<-chan map[string
                 // hole) — the same failure class MarkUnhealthy exists for.
                 // The remote twin has wired this since v0.46; the local
                 // bridge never did. The quiet 15s re-probe revives it.
+                cancelStream()
                 b.MarkUnhealthy()
                 return nil, nil, err
         }
         if resp.StatusCode != 200 {
                 bts, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
                 resp.Body.Close()
+                cancelStream()
                 return nil, nil, fmt.Errorf("brain chat %d: %s", resp.StatusCode, string(bts))
         }
         // v1.76.1: the brain answered — heal the flag without waiting for
@@ -261,17 +270,38 @@ func (b *Brain) Chat(ctx context.Context, req map[string]any) (<-chan map[string
         b.healthy = true
         b.mu.Unlock()
 
+        // v1.76.2: arm the no-bytes watchdog (0 = disabled — the pure
+        // v0.80.1 no-kill mode). BYTES, not lines, feed it (a slow-dripping
+        // long line is a LIVE stream); the brain's own 25s progress
+        // heartbeat (agent.py v0.76.6) keeps healthy multi-minute tool
+        // turns 20s clear of the 45s default.
+        killSecs := brainStallKill()
+        var wd *streamWatchdog
+        if killSecs > 0 {
+                wd = newStreamWatchdog(time.Duration(killSecs)*time.Second, cancelStream)
+        }
+
         events := make(chan map[string]any, 64)
         errs := make(chan error, 1)
         go func() {
+                defer cancelStream() // v1.76.2: the stream context dies with the stream
+                if wd != nil {
+                        defer wd.kill()
+                }
                 defer resp.Body.Close()
                 defer close(events)
                 defer close(errs)
+                // v1.76.2: the byte-level feed wraps the body INSIDE the
+                // reader goroutine (resp.Body stays the pristine closer).
+                src := io.Reader(resp.Body)
+                if wd != nil {
+                        src = newFeedReader(src, wd.feed)
+                }
                 // Parse SSE stream.
                 buf := make([]byte, 0, 4096)
                 tmp := make([]byte, 4096)
                 for {
-                        n, err := resp.Body.Read(tmp)
+                        n, err := src.Read(tmp)
                         if n > 0 {
                                 buf = append(buf, tmp[:n]...)
                                 // Process complete lines.
@@ -293,13 +323,24 @@ func (b *Brain) Chat(ctx context.Context, req map[string]any) (<-chan map[string
                                         if err := json.Unmarshal([]byte(data), &ev); err == nil {
                                                 select {
                                                 case events <- ev:
-                                                case <-ctx.Done():
+                                                case <-streamCtx.Done():
                                                         return
                                                 }
                                         }
                                 }
                         }
                         if err != nil {
+                                // v1.76.2: a read error after the watchdog
+                                // tripped is THE STALL — the typed sentinel
+                                // rides errs (the server layer persists an
+                                // honest error event; forwardEvents would
+                                // otherwise only log it) and the brain flips
+                                // dead for the quiet 15s re-probe.
+                                if wd != nil && wd.didTrip() {
+                                        b.MarkUnhealthy()
+                                        errs <- fmt.Errorf("%w: no SSE bytes for %ds — the brain's stream froze mid-turn (provider black-hole or a stuck agent); the quiet 15s re-probe revives the brain when it answers (knob: DOOMALAY_BRAIN_STALL_KILL)", ErrStreamStalled, killSecs)
+                                        return
+                                }
                                 if err != io.EOF {
                                         errs <- err
                                 }
