@@ -52,10 +52,24 @@ type Brain struct {
         // v1.76.3 THE SINGLE RE-PROBE LAW: true while a re-probe loop is
         // in flight (guarded by mu) — MarkUnhealthy's single-flight guard.
         reprobing bool
+
+        // v1.76.5 THE SINGLE PASS startup state:
+        stderr   *memRing     // bounded early-stderr capture (the diagnosis ring)
+        done     chan struct{} // closed exactly once when the process exits
+        waitErr  error        // cmd.Wait()'s result (readable after done closes)
 }
 
 // Start spawns `python brain/server.py --port <port>` in brainDir.
 // Returns nil if Python is unavailable (caller falls back to direct proxy).
+//
+// v1.76.5 THE SINGLE PASS: the separate deps-check interpreter boot
+// ("import fastapi, uvicorn, litellm" — a whole SECOND Python start,
+// 1-3s of pure latency on slow devices like Android Termux) is GONE:
+// server.py boots directly, its early stderr is tee'd into a bounded
+// diagnosis ring (live logs keep flowing to the engine console), and a
+// process that dies young fails the start in milliseconds carrying its
+// own ImportError tail + the same pip remedy the old pre-check gave —
+// the same honest error, one boot sooner.
 func Start(brainDir string, port int) (*Brain, error) {
         if brainDir == "" {
                 brainDir = "./brain"
@@ -76,16 +90,12 @@ func Start(brainDir string, port int) (*Brain, error) {
         if err != nil {
                 return nil, fmt.Errorf("python not found: %w", err)
         }
-        // Verify deps installed.
-        check := exec.Command(pythonBin, "-c", "import fastapi, uvicorn, litellm")
-        if err := check.Run(); err != nil {
-                return nil, fmt.Errorf("python deps missing (run: pip install -r brain/requirements.txt): %w", err)
-        }
 
         cmd := exec.Command(pythonBin, serverPath, "--port", fmt.Sprintf("%d", port))
         cmd.Dir = brainDir
-        cmd.Stdout = os.Stdout
-        cmd.Stderr = os.Stderr
+        stderrRing := newMemRing(8 * 1024)
+        cmd.Stdout = os.Stdout // live brain logs keep flowing to the engine console
+        cmd.Stderr = io.MultiWriter(os.Stderr, stderrRing) // …AND the diagnosis ring
         if err := cmd.Start(); err != nil {
                 return nil, fmt.Errorf("spawn brain: %w", err)
         }
@@ -94,10 +104,29 @@ func Start(brainDir string, port int) (*Brain, error) {
                 cmd:       cmd,
                 url:       fmt.Sprintf("http://localhost:%d", port),
                 pythonBin: pythonBin,
+                stderr:    stderrRing,
+                done:      make(chan struct{}),
         }
-        if err := b.waitHealthy(10 * time.Second); err != nil {
+        // v1.76.5 THE PERSISTENT REAPER: cmd.Wait runs exactly once, for the
+        // process's whole life (the old Stop-only Wait left an exited child
+        // a zombie until Stop happened to run). done closes the moment the
+        // process exits; waitErr is readable after (channel-close
+        // happens-before).
+        go func() {
+                b.waitErr = cmd.Wait()
+                close(b.done)
+        }()
+
+        if err := b.waitHealthy(brainBootTimeout()); err != nil {
                 b.Stop()
-                return nil, fmt.Errorf("brain health check: %w", err)
+                tail := strings.TrimSpace(b.stderr.tail())
+                if hint := brainDepsHint(tail); hint != "" {
+                        return nil, fmt.Errorf("%w — %s; stderr: %.400s", err, hint, tail)
+                }
+                if tail != "" {
+                        return nil, fmt.Errorf("%w; stderr: %.400s", err, tail)
+                }
+                return nil, err
         }
         return b, nil
 }
@@ -158,6 +187,14 @@ func (b *Brain) probeHealth() bool {
 func (b *Brain) waitHealthy(timeout time.Duration) error {
         deadline := time.Now().Add(timeout)
         for time.Now().Before(deadline) {
+                // v1.76.5 EARLY EXIT: a process that died young fails the
+                // start in milliseconds — with its own captured tail riding
+                // Start's error — never after the whole window.
+                select {
+                case <-b.done:
+                        return fmt.Errorf("brain exited during startup: %v", b.waitErr)
+                default:
+                }
                 if b.probeHealth() {
                         return nil
                 }
@@ -172,12 +209,18 @@ func (b *Brain) Stop() {
                 return
         }
         _ = b.cmd.Process.Signal(os.Interrupt)
-        done := make(chan error, 1)
-        go func() { done <- b.cmd.Wait() }()
+        // v1.76.5: the persistent reaper owns cmd.Wait — Stop just signals
+        // and watches done (idempotent: an already-dead brain closes it
+        // instantly; a second Stop is a no-op; Stop is never a second Wait).
         select {
-        case <-done:
+        case <-b.done:
         case <-time.After(3 * time.Second):
                 _ = b.cmd.Process.Kill()
+                select {
+                case <-b.done:
+                case <-time.After(3 * time.Second):
+                        // unreachable in practice (Kill + the reaper); Stop never hangs
+                }
         }
 }
 

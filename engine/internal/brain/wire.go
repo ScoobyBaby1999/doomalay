@@ -28,6 +28,7 @@ import (
         "os"
         "strconv"
         "strings"
+        "sync"
         "sync/atomic"
         "time"
 )
@@ -121,6 +122,45 @@ func (f *feedReader) Read(p []byte) (int, error) {
                 f.feed()
         }
         return n, err
+}
+
+// memRing — a bounded, concurrency-safe byte ring (v1.76.5 THE SINGLE
+// PASS). The brain's early stderr is tee'd into one so a process that dies
+// young can report its own ImportError tail — without the engine buffering
+// a runaway process's whole lifetime of logs (8KB: the diagnosis window,
+// not a log; the live stream keeps flowing to the engine console too).
+type memRing struct {
+        mu  sync.Mutex
+        buf []byte
+        max int
+}
+
+func newMemRing(max int) *memRing { return &memRing{max: max} }
+
+func (r *memRing) Write(p []byte) (int, error) {
+        r.mu.Lock()
+        r.buf = append(r.buf, p...)
+        if len(r.buf) > r.max {
+                r.buf = r.buf[len(r.buf)-r.max:]
+        }
+        r.mu.Unlock()
+        return len(p), nil
+}
+
+func (r *memRing) tail() string {
+        r.mu.Lock()
+        defer r.mu.Unlock()
+        return string(r.buf)
+}
+
+// brainDepsHint reports the pip remedy when a captured stderr tail carries
+// the ImportError signature — the old pre-boot deps check's error message,
+// now derived from the ACTUAL boot failure instead of a second Python boot.
+func brainDepsHint(tail string) string {
+        if strings.Contains(tail, "ModuleNotFoundError") || strings.Contains(tail, "ImportError") {
+                return "python deps missing (run: pip install -r brain/requirements.txt)"
+        }
+        return ""
 }
 
 // Env knobs (seconds; ""/invalid → default).
